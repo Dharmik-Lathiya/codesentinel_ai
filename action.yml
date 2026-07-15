@@ -1,0 +1,62 @@
+name: "CodeSentinel AI"
+description: "AI-powered code review, fix, audit, scoring, and test generation."
+author: "CodeSentinel"
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  mode:
+    description: "Operation mode: review | fix | audit | score | testgen | chat"
+    required: false
+    default: "review"
+  max_iterations:
+    description: "Max fix iterations"
+    required: false
+    default: "5"
+  enable_auto_fix:
+    description: "Apply fixes automatically (true/false)"
+    required: false
+    default: "false"
+  enable_scoring:
+    description: "Compute code quality score (true/false)"
+    required: false
+    default: "true"
+  enable_test_generation:
+    description: "Generate missing tests (true/false)"
+    required: false
+    default: "false"
+  test_runner:
+    description: "jest or vitest"
+    required: false
+    default: "vitest"
+  project_context:
+    description: "Free-form context injected into prompts"
+    required: false
+    default: ""
+  config_path:
+    description: "Path to a codesentinel config file"
+    required: false
+    default: ""
+  openai_api_key:
+    description: "OpenAI API key"
+    required: false
+  anthropic_api_key:
+    description: "Anthropic API key"
+    required: false
+  gemini_api_key:
+    description: "Gemini API key"
+    required: false
+  opencode_api_key:
+    description: "OpenCode API key"
+    required: false
+
+outputs:
+  score:
+    description: "Overall quality score (0-100) when scoring is enabled"
+  findings:
+    description: "Number of findings detected"
+
+runs:
+  using: "node20"
+  main: "dist/github/action.js"

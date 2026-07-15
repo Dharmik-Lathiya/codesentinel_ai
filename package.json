@@ -1,0 +1,49 @@
+{
+  "name": "codesentinel-ai",
+  "version": "0.1.0",
+  "description": "AI-powered code review, fix, audit, scoring, and test generation engine with multi-provider model support.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "codesentinel": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "action.yml",
+    "prompts"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/index.js",
+    "action": "node dist/github/action.js"
+  },
+  "keywords": [
+    "ai",
+    "code-review",
+    "static-analysis",
+    "github-action",
+    "probot"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "@google/generative-ai": "^0.21.0",
+    "openai": "^4.56.0",
+    "probot": "^13.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

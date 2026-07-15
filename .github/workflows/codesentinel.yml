@@ -1,0 +1,43 @@
+name: CodeSentinel AI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Operation mode"
+        required: false
+        default: "review"
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  codesentinel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run CodeSentinel
+        uses: ./ # or: uses: your-org/codesentinel-ai@v1
+        with:
+          mode: ${{ github.event.inputs.mode || 'review' }}
+          enable_scoring: "true"
+          enable_auto_fix: "false"
+          project_context: "This is a TypeScript backend service using Fastify."
+          opencode_api_key: ${{ secrets.OPENCODE_API_KEY }}
+          # Uncomment to use a different provider:
+          # openai_api_key: ${{ secrets.OPENAI_API_KEY }}
