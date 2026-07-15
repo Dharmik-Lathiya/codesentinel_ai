@@ -1,0 +1,38 @@
+{
+  "mode": "review",
+  "max_iterations": 5,
+  "enable_auto_fix": false,
+  "enable_scoring": true,
+  "enable_test_generation": false,
+  "include_positive_feedback": true,
+  "project_context": "TypeScript monorepo. Business logic lives in src/domain. Keep functions pure.",
+  "default_model": {
+    "provider": "opencode",
+    "model": "opencode/default"
+  },
+  "models": {
+    "review": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
+    "fix": { "provider": "openai", "model": "gpt-4o" },
+    "audit": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
+    "score": { "provider": "opencode", "model": "opencode/default" },
+    "testgen": { "provider": "openai", "model": "gpt-4o" },
+    "chat": { "provider": "opencode", "model": "opencode/default" }
+  },
+  "test_runner": "vitest",
+  "include": ["**/*.{ts,tsx,js,jsx}"],
+  "exclude": [
+    "node_modules/**",
+    "dist/**",
+    "**/*.test.*",
+    "**/*.spec.*"
+  ],
+  "output": {
+    "postGithubComments": true,
+    "createGithubIssues": false,
+    "writeReportFile": true,
+    "reportDir": "codesentinel-reports"
+  },
+  "enable_cache": true,
+  "cache_dir": ".codesentinel-cache",
+  "plugins": []
+}

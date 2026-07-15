@@ -1,0 +1,6 @@
+node_modules/
+dist/
+codesentinel-reports/
+.codesentinel-cache/
+*.log
+.DS_Store
