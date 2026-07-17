@@ -77,9 +77,15 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets): Pr
     writeFileSync(summaryPath, renderSummary(report), "utf8");
   }
 
-  // Metrics as workflow outputs (::set-output style).
-  logger.info(`SCORE=${report.score?.overall ?? "n/a"}`);
-  logger.info(`FINDINGS=${report.findings.length}`);
+  // Metrics as workflow outputs via GITHUB_OUTPUT (legacy ::set-output is deprecated).
+  const outputPath = process.env.GITHUB_OUTPUT;
+  if (outputPath) {
+    const { appendFileSync } = await import("node:fs");
+    const score = report.score?.overall ?? "n/a";
+    const findings = String(report.findings.length);
+    appendFileSync(outputPath, `score=${score}\n`);
+    appendFileSync(outputPath, `findings=${findings}\n`);
+  }
 }
 
 function renderSummary(report: EngineReport): string {

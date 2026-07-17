@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
 
@@ -30,10 +31,16 @@ export async function collectDiff(
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
   const baseRef = base || (await defaultBaseRef(cwd));
-  const nameStatus = await git(
-    ["diff", "--name-status", "--no-renames", baseRef + "..."],
-    cwd,
-  ).catch(() => "");
+  let nameStatus: string;
+  try {
+    nameStatus = await git(
+      ["diff", "--name-status", "--no-renames", baseRef + "..."],
+      cwd,
+    );
+  } catch (err) {
+    logger.warn(`Failed to collect diff against "${baseRef}":`, err);
+    return [];
+  }
 
   const lines = nameStatus
     .split("\n")
@@ -43,14 +50,22 @@ export async function collectDiff(
   const files: DiffFile[] = [];
   for (const line of lines) {
     const [statusCode, path] = line.split(/\t/);
+    if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     let content = "";
     if (status !== "deleted") {
-      content = await git(["show", `:${path}`], cwd).catch(() => "");
+      try {
+        content = await git(["show", `:${path}`], cwd);
+      } catch {
+        logger.debug(`Could not read content for ${path}`);
+      }
     }
-    const diff = await git(["diff", baseRef + "...", "--", path], cwd).catch(
-      () => "",
-    );
+    let diff = "";
+    try {
+      diff = await git(["diff", baseRef + "...", "--", path], cwd);
+    } catch {
+      logger.debug(`Could not collect diff for ${path}`);
+    }
     files.push({ path, status, content, diff });
   }
   return files;

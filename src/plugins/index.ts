@@ -42,7 +42,18 @@ export class PluginManager {
       try {
         const mod = (await import(p)) as { default?: CodeSentinelPlugin };
         const plugin = mod.default;
-        if (!plugin) continue;
+        if (!plugin) {
+          this.ctx.logger.warn(
+            `Plugin "${p}" does not export a default CodeSentinelPlugin.`,
+          );
+          continue;
+        }
+        if (typeof plugin.name !== "string" || plugin.name.length === 0) {
+          this.ctx.logger.warn(
+            `Plugin "${p}" is missing a valid "name" property.`,
+          );
+          continue;
+        }
         this.plugins.push(plugin);
         await plugin.init?.(this.ctx);
         this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);

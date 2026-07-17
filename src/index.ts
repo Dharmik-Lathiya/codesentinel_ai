@@ -1,9 +1,72 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Engine } from "./engine/index.js";
 import type { Mode, RuntimeSecrets } from "./config/types.js";
 import { logger } from "./utils/logger.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+function showHelp(): void {
+  const pkg = JSON.parse(
+    readFileSync(join(__dirname, "..", "package.json"), "utf8"),
+  );
+  process.stdout.write(`CodeSentinel AI v${pkg.version}
+AI-powered code review, fix, audit, scoring, and test generation.
+
+Usage:
+  codesentinel [mode] [options]
+
+Modes:
+  review      Analyze code for bugs, security, performance, smells (default)
+  fix         Auto-fix issues with verification loop
+  audit       Full repo security/performance/architecture audit
+  score       Compute 0-100 quality score across 4 dimensions
+  testgen     Generate unit tests for untested functions
+  chat        Ask questions about the codebase (--ask required)
+
+Options:
+  -m, --mode <mode>           Operational mode
+  -c, --config <path>         Path to codesentinel.config.json
+  --provider <name>           AI provider (openai | anthropic | gemini | opencode)
+  --max-iterations <n>        Max fix iterations (default: 5)
+  --auto-fix                  Apply fixes automatically
+  --scoring / --no-scoring    Enable/disable scoring (default: enabled)
+  --test-gen                  Enable test generation
+  --ask <question>            Ask a question (activates chat mode)
+  --context <text>            Free-form project context for prompts
+  --dry-run                   Show what would be fixed without writing (fix mode)
+  --log-level <level>         Log level: debug | info | warn | error
+  --version                   Show version number
+  --help                      Show this help message
+
+Environment Variables:
+  GITHUB_TOKEN                GitHub token for PR comments / issues
+  OPENAI_API_KEY              OpenAI API key
+  ANTHROPIC_API_KEY           Anthropic API key
+  GEMINI_API_KEY              Google Gemini API key
+  OPENCODE_API_KEY            OpenCode API key
+  OPENCODE_BASE_URL           Custom OpenCode endpoint URL
+  CODESENTINEL_LOG_LEVEL      Default log level
+
+Examples:
+  codesentinel review --config ./codesentinel.config.json
+  codesentinel fix --auto-fix --dry-run
+  codesentinel score --provider openai
+  codesentinel chat --ask "How does auth work?"
+  codesentinel audit --context "Node.js REST API"
+`);
+}
+
+function showVersion(): void {
+  const pkg = JSON.parse(
+    readFileSync(join(__dirname, "..", "package.json"), "utf8"),
+  );
+  process.stdout.write(`${pkg.version}\n`);
+}
 
 /**
  * Command-line interface. Usage:
@@ -21,12 +84,24 @@ async function main(): Promise<void> {
       scoring: { type: "boolean", default: true },
       "test-gen": { type: "boolean", default: false },
       provider: { type: "string" },
-      "ask": { type: "string" },
+      ask: { type: "string" },
       context: { type: "string" },
       "log-level": { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      help: { type: "boolean", default: false },
+      version: { type: "boolean", default: false },
     },
     args: process.argv.slice(2),
   });
+
+  if (values.help) {
+    showHelp();
+    return;
+  }
+  if (values.version) {
+    showVersion();
+    return;
+  }
 
   if (values["log-level"]) {
     logger.level = values["log-level"] as any;
@@ -51,6 +126,7 @@ async function main(): Promise<void> {
   if (values.provider) {
     overrides.default_model = { provider: values.provider as any, model: "default" };
   }
+  if (values["dry-run"]) overrides.enable_auto_fix = false;
 
   const engine = Engine.fromInputs({
     configPath: values.config,
@@ -68,6 +144,9 @@ async function main(): Promise<void> {
 
   // Human-readable console output.
   process.stdout.write(`\n=== CodeSentinel [${report.mode}] ===\n`);
+  if (values["dry-run"] && report.mode === "fix") {
+    process.stdout.write("[DRY RUN] No files were modified.\n");
+  }
   process.stdout.write(report.summary + "\n");
   if (report.score) {
     process.stdout.write(
@@ -82,6 +161,13 @@ async function main(): Promise<void> {
     process.stdout.write(`\nFindings (${report.findings.length}):\n`);
     for (const f of report.findings) {
       process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${f.comment}\n`);
+    }
+  }
+  if (report.fixAttempts.length) {
+    process.stdout.write(`\nFix attempts (${report.fixAttempts.length}):\n`);
+    for (const a of report.fixAttempts) {
+      const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
+      process.stdout.write(`  #${a.iteration} ${a.file} — ${status}: ${a.explanation}\n`);
     }
   }
   if (report.generatedTests.length) {

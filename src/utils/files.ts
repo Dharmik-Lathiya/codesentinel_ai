@@ -20,10 +20,14 @@ export function globToRegExp(glob: string): RegExp {
       re += "[^/]";
     } else if (c === "{") {
       const end = glob.indexOf("}", i);
-      const opts = glob.slice(i + 1, end).split(",");
-      re += "(?:" + opts.map(escapeRe).join("|") + ")";
-      i = end + 1;
-      continue;
+      if (end === -1) {
+        re += "\\{";
+      } else {
+        const opts = glob.slice(i + 1, end).split(",");
+        re += "(?:" + opts.map(escapeRe).join("|") + ")";
+        i = end + 1;
+        continue;
+      }
     } else if (c === "." || c === "+" || c === "^" || c === "$") {
       re += "\\" + c;
     } else if (c === "/") {
@@ -37,7 +41,7 @@ export function globToRegExp(glob: string): RegExp {
 }
 
 function escapeRe(s: string): string {
-  return s.replace(/[.+^$]/g, "\\$&");
+  return s.replace(/[.+^$*?{}|\\]/g, "\\$&");
 }
 
 /** Recursively walk a directory yielding file paths (relative to root). */
@@ -67,14 +71,31 @@ export function walk(root: string): string[] {
   return out;
 }
 
+/** Read a .codesentinelignore file and return its patterns (one per line). */
+export function readIgnoreFile(root: string): string[] {
+  const ignorePath = resolve(root, ".codesentinelignore");
+  if (!existsSync(ignorePath)) return [];
+  try {
+    const content = readFileSync(ignorePath, "utf8");
+    return content
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith("#"));
+  } catch {
+    return [];
+  }
+}
+
 /** Collect files under `root` matching include globs and not exclude globs. */
 export function collectFiles(
   root: string,
   include: string[],
   exclude: string[],
 ): string[] {
+  const ignorePatterns = readIgnoreFile(root);
+  const allExclude = [...exclude, ...ignorePatterns];
   const incRe = include.map(globToRegExp);
-  const excRe = exclude.map(globToRegExp);
+  const excRe = allExclude.map(globToRegExp);
   const all = walk(root);
   return all.filter((rel) => {
     const normalized = rel.split("\\").join("/");

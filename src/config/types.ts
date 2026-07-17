@@ -32,8 +32,114 @@ export interface OutputConfig {
   createGithubIssues: boolean;
   /** Emit a local markdown report file. */
   writeReportFile: boolean;
+  /** Emit an HTML dashboard report. */
+  writeHtmlReport: boolean;
   /** Directory to write reports into (relative to cwd). */
   reportDir: string;
+}
+
+/**
+ * Configuration for dynamic severity adjustment.
+ */
+export interface SeverityAdjustmentConfig {
+  /** File patterns that should have increased severity (e.g., production code). */
+  highRiskPatterns: string[];
+  /** File patterns that should have decreased severity (e.g., test files). */
+  lowRiskPatterns: string[];
+  /** Adjustments based on file history (frequency of changes). */
+  historyBasedAdjustment: boolean;
+  /** Multiplier for files with high change frequency. */
+  changeFrequencyMultiplier: number;
+}
+
+/**
+ * Configuration for confidence thresholds per analysis type.
+ */
+export interface ConfidenceThresholds {
+  /** Minimum confidence threshold for security findings. */
+  security: number;
+  /** Minimum confidence threshold for bug findings. */
+  bug: number;
+  /** Minimum confidence threshold for performance findings. */
+  performance: number;
+  /** Minimum confidence threshold for smell findings. */
+  smell: number;
+  /** Minimum confidence threshold for style findings. */
+  style: number;
+}
+
+/**
+ * Custom rule definition for user-defined patterns.
+ */
+export interface CustomRule {
+  /** Unique rule identifier. */
+  id: string;
+  /** Human-readable rule name. */
+  name: string;
+  /** Regular expression pattern to match. */
+  pattern: string;
+  /** Severity of findings from this rule. */
+  severity: Severity;
+  /** Category of findings from this rule. */
+  category: "bug" | "security" | "performance" | "smell" | "style" | "praise";
+  /** Human-readable comment for findings. */
+  comment: string;
+  /** Optional suggestion for fixing the issue. */
+  suggestion?: string;
+  /** File patterns where this rule applies. */
+  filePatterns?: string[];
+  /** Confidence threshold for this rule (0-1). */
+  confidence?: number;
+}
+
+/**
+ * Configuration for progressive analysis.
+ */
+export interface ProgressiveAnalysisConfig {
+  /** Quick scan: only critical and high severity rules. */
+  quickScanRules: string[];
+  /** Standard scan: all rules except experimental. */
+  standardScanRules: string[];
+  /** Deep scan: all rules including experimental. */
+  deepScanRules: string[];
+  /** Whether to automatically escalate if quick scan finds issues. */
+  autoEscalate: boolean;
+  /** Threshold for auto-escalation (number of findings). */
+  escalationThreshold: number;
+}
+
+/**
+ * Configuration for multi-file analysis.
+ */
+export interface MultiFileAnalysisConfig {
+  /** Maximum number of files to analyze concurrently. */
+  maxConcurrentFiles: number;
+  /** Whether to analyze cross-file dependencies. */
+  analyzeDependencies: boolean;
+  /** Whether to analyze import/export relationships. */
+  analyzeImports: boolean;
+  /** Whether to analyze code patterns across files. */
+  analyzePatterns: boolean;
+  /** File patterns to group for analysis. */
+  fileGroupPatterns: string[];
+}
+
+/**
+ * Enhanced analyzer configuration.
+ */
+export interface AnalyzerConfig {
+  /** Enable enhanced analysis features. */
+  enableEnhancedAnalysis: boolean;
+  /** Severity adjustment configuration. */
+  severityAdjustment: SeverityAdjustmentConfig;
+  /** Confidence thresholds per analysis type. */
+  confidenceThresholds: ConfidenceThresholds;
+  /** Custom rules for user-defined patterns. */
+  customRules: CustomRule[];
+  /** Progressive analysis configuration. */
+  progressiveAnalysis: ProgressiveAnalysisConfig;
+  /** Multi-file analysis configuration. */
+  multiFileAnalysis: MultiFileAnalysisConfig;
 }
 
 /** Full, normalized configuration object used by the engine. */
@@ -50,6 +156,8 @@ export interface CodeSentinelConfig {
   enable_test_generation: boolean;
   /** Include praise / positive notes in review output. */
   include_positive_feedback: boolean;
+  /** Show what would be fixed without writing files. */
+  dry_run: boolean;
   /** Custom prompt override paths keyed by prompt name. */
   custom_prompt_paths: Record<string, string>;
   /** Free-form project context injected into prompts. */
@@ -83,6 +191,9 @@ export interface CodeSentinelConfig {
 
   /** Comma-separated list of plugin module paths to load. */
   plugins: string[];
+
+  /** Enhanced analyzer configuration. */
+  analyzer: AnalyzerConfig;
 }
 
 /** Environment-derived secrets and runtime values (never logged). */
