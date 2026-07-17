@@ -89,7 +89,8 @@ export class Scorer {
   ): ScoreBreakdown {
     const readability = ai.readability ?? baseline.readability;
     const maintainability = ai.maintainability ?? baseline.maintainability;
-    // Keep the better of the two security numbers (defense-in-depth).
+    // Keep the more conservative (lower) security number: static analysis
+    // is more reliable for security, so we take the stricter assessment.
     const security = Math.min(
       ai.security ?? 100,
       baseline.security,

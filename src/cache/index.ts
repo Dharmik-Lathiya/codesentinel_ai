@@ -1,14 +1,21 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+
+/** Default TTL for cache entries (24 hours). */
+const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
  * FileCache stores AI responses on disk keyed by a hash of the request so that
  * repeated analyses (e.g. re-running review on the same diff) are free. It is
- * intentionally simple and safe: a cache miss simply returns null.
+ * intentionally simple and safe: a cache miss simply returns null. Entries
+ * older than the TTL are treated as misses.
  */
 export class FileCache {
-  constructor(private dir: string) {
+  private ttlMs: number;
+
+  constructor(private dir: string, ttlMs?: number) {
+    this.ttlMs = ttlMs ?? DEFAULT_TTL_MS;
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 
@@ -25,6 +32,8 @@ export class FileCache {
     const path = join(this.dir, this.key(namespace, payload));
     if (!existsSync(path)) return null;
     try {
+      const stat = statSync(path);
+      if (Date.now() - stat.mtimeMs > this.ttlMs) return null;
       return JSON.parse(readFileSync(path, "utf8")) as T;
     } catch {
       return null;

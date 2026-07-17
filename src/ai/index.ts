@@ -12,13 +12,15 @@ import type {
   ModelConfig,
   RuntimeSecrets,
 } from "../config/types.js";
+import { retry } from "../utils/retry.js";
 
 export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat";
 
 /**
  * AIHub wires together provider factories and resolves the correct model for a
  * given task. It caches provider instances and exposes a single `complete`
- * entry point used by the engine.
+ * entry point used by the engine. Transient API errors (rate limits, 5xx) are
+ * retried automatically with exponential backoff.
  */
 export class AIHub {
   private providers = new Map<string, AIProvider>();
@@ -58,7 +60,7 @@ export class AIHub {
     return provider;
   }
 
-  /** Run a completion for a task with the resolved model. */
+  /** Run a completion for a task with the resolved model. Retries on transient errors. */
   async complete(
     task: TaskName,
     messages: CompletionRequest["messages"],
@@ -66,11 +68,13 @@ export class AIHub {
   ): Promise<CompletionResult> {
     const model = this.modelForTask(task);
     const provider = this.providerFor(model);
-    return provider.complete({
-      model,
-      messages,
-      temperature: opts.temperature,
-      maxTokens: opts.maxTokens,
-    });
+    return retry(() =>
+      provider.complete({
+        model,
+        messages,
+        temperature: opts.temperature,
+        maxTokens: opts.maxTokens,
+      }),
+    );
   }
 }

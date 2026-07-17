@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve } from "node:path";
 
 import { loadConfig, configFromInputs } from "../config/index.js";
 import type {
@@ -18,6 +18,7 @@ import { collectDiff, type DiffFile } from "../utils/git.js";
 import { collectFiles, readText, ensureDir } from "../utils/files.js";
 import { logger } from "../utils/logger.js";
 import { extractJson } from "../ai/provider.js";
+import { renderHtmlReport } from "../utils/html-report.js";
 
 /** A comment to post back to a PR (inline or summary). */
 export interface ReviewComment {
@@ -63,7 +64,7 @@ export class Engine {
   readonly config: CodeSentinelConfig;
   private ai: AIHub;
   private prompts: PromptRegistry;
-  private analyzer = new StaticAnalyzer();
+  private analyzer: StaticAnalyzer;
   private scorer = new Scorer();
   private cache: FileCache;
   private plugins: PluginManager;
@@ -80,6 +81,12 @@ export class Engine {
     this.prompts = new PromptRegistry(config);
     this.cache = new FileCache(resolve(root, config.cache_dir));
     this.plugins = new PluginManager({ config, logger });
+    
+    // Initialize analyzer with configuration
+    this.analyzer = new StaticAnalyzer(
+      config.analyzer,
+      resolve(root, config.cache_dir, "analysis"),
+    );
   }
 
   /** Convenience factory used by CLI / Action. */
@@ -254,8 +261,8 @@ export class Engine {
     for (let iteration = 1; iteration <= limit; iteration++) {
       const attempt = await this.applyFix(actionable[iteration - 1], iteration);
       fixAttempts.push(attempt);
-      // If fixes are not actually being written, one successful attempt is enough.
-      if (attempt.fixed && attempt.verified && !this.config.enable_auto_fix) break;
+      // In dry-run or non-auto-fix mode, one attempt is sufficient since no files are written.
+      if (attempt.fixed && !this.config.enable_auto_fix) break;
     }
 
     const summary = this.buildSummary("fix", findings, fixAttempts);
@@ -301,7 +308,7 @@ export class Engine {
     }>(res.content);
 
     let verified = false;
-    if (parsed.fixed && this.config.enable_auto_fix) {
+    if (parsed.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
       writeFileSync(filePath, parsed.content, "utf8");
       verified = await this.runVerification();
     }
@@ -559,6 +566,97 @@ export class Engine {
     const path = resolve(this.root, this.config.output.reportDir, name);
     writeFileSync(path, JSON.stringify(report, null, 2), "utf8");
     logger.info(`Wrote report: ${path}`);
+
+    if (this.config.output.writeHtmlReport) {
+      const htmlName = name.replace(".json", ".html");
+      const htmlPath = resolve(this.root, this.config.output.reportDir, htmlName);
+      writeFileSync(htmlPath, renderHtmlReport(report), "utf8");
+      logger.info(`Wrote HTML report: ${htmlPath}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Enhanced analysis features.
+  // ---------------------------------------------------------------------------
+  
+  /**
+   * Perform progressive analysis (quick scan → deep analysis).
+   */
+  async analyzeProgressive(): Promise<{
+    results: import("../analyzer/progressive.js").ProgressiveAnalysisResult[];
+    findings: Finding[];
+  }> {
+    const files = await this.collectedFiles();
+    const results = await this.analyzer.analyzeProgressive(files);
+    const findings = results.flatMap(r => r.findings);
+    return { results, findings };
+  }
+
+  /**
+   * Perform multi-file analysis with cross-file insights.
+   */
+  async analyzeMultiFile(): Promise<import("../analyzer/progressive.js").MultiFileAnalysisResult> {
+    const files = await this.collectedFiles();
+    return this.analyzer.analyzeMultiFile(files);
+  }
+
+  /**
+   * Compare analysis results between two runs.
+   */
+  compareAnalyses(
+    previousFindings: Finding[],
+    currentFindings: Finding[],
+  ): import("../analyzer/cache.js").AnalysisComparison | null {
+    return this.analyzer.compareAnalyses(previousFindings, currentFindings);
+  }
+
+  /**
+   * Add a custom analysis rule.
+   */
+  addCustomRule(rule: import("../config/types.js").CustomRule): void {
+    this.analyzer.addCustomRule(rule);
+  }
+
+  /**
+   * Remove a custom analysis rule.
+   */
+  removeCustomRule(ruleId: string): void {
+    this.analyzer.removeCustomRule(ruleId);
+  }
+
+  /**
+   * Update confidence thresholds for analysis.
+   */
+  updateConfidenceThresholds(thresholds: Partial<import("../config/types.js").ConfidenceThresholds>): void {
+    this.analyzer.updateConfidenceThresholds(thresholds);
+  }
+
+  /**
+   * Update severity adjustment configuration.
+   */
+  updateSeverityConfig(config: Partial<import("../config/types.js").SeverityAdjustmentConfig>): void {
+    this.analyzer.updateSeverityConfig(config);
+  }
+
+  /**
+   * Get analyzer configuration.
+   */
+  getAnalyzerConfig(): import("../config/types.js").AnalyzerConfig {
+    return this.analyzer.getConfig();
+  }
+
+  /**
+   * Get analysis cache statistics.
+   */
+  getAnalysisCacheStats(): { memoryEntries: number; diskEntries: number; totalSizeBytes: number } | null {
+    return this.analyzer.getCacheStats();
+  }
+
+  /**
+   * Clear analysis cache.
+   */
+  clearAnalysisCache(): void {
+    this.analyzer.clearCache();
   }
 }
 

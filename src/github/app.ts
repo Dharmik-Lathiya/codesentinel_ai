@@ -80,7 +80,11 @@ function formatReport(report: EngineReport): string {
 
 /** Factory used when running the app standalone. */
 export function createApp(): Probot {
-  const app = new Probot({ appId: Number(process.env.APP_ID!), privateKey: process.env.PRIVATE_KEY! });
+  const appId = process.env.APP_ID;
+  const privateKey = process.env.PRIVATE_KEY;
+  if (!appId) throw new Error("APP_ID environment variable is required");
+  if (!privateKey) throw new Error("PRIVATE_KEY environment variable is required");
+  const app = new Probot({ appId: Number(appId), privateKey });
   codesentinelApp(app);
   return app;
 }

@@ -39,7 +39,8 @@ export class OpenCodeProvider implements AIProvider {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`OpenCode API error ${res.status}: ${body}`);
+      const snippet = body.slice(0, 200);
+      throw new Error(`OpenCode API error ${res.status}: ${snippet}`);
     }
 
     const data = (await res.json()) as any;

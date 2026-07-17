@@ -136,7 +136,7 @@ export class TestGenerator {
     const dir = dirname(abs);
     const base = srcPath.replace(/\.[^.]+$/, "");
     if (this.config.test_runner === "jest") {
-      return join(dir, "__tests__", base.split("/").pop()! + ".test.ts");
+      return join(dir, "__tests__", (base.split("/").pop() ?? "index") + ".test.ts");
     }
     return join(root, base + ".test.ts");
   }

@@ -25,6 +25,19 @@ export class GitHubReporter {
     };
   }
 
+  private async request(method: string, url: string, body?: Record<string, unknown>): Promise<unknown> {
+    const res = await fetch(url, {
+      method,
+      headers: this.headers(),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`GitHub API ${res.status} ${res.statusText}: ${text}`);
+    }
+    return res.json().catch(() => null);
+  }
+
   /** Post a single review comment on a PR (inline if line+file provided). */
   async postReviewComment(opts: {
     body: string;
@@ -35,19 +48,14 @@ export class GitHubReporter {
     if (!this.coords.pullNumber) return;
     const base = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/pulls/${this.coords.pullNumber}/comments`;
     if (opts.file && opts.line && opts.commitId) {
-      await fetch(base, {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify({
-          body: opts.body,
-          path: opts.file,
-          line: opts.line,
-          commit_id: opts.commitId,
-          side: "RIGHT",
-        }),
+      await this.request("POST", base, {
+        body: opts.body,
+        path: opts.file,
+        line: opts.line,
+        commit_id: opts.commitId,
+        side: "RIGHT",
       });
     } else {
-      // Fall back to a top-level PR comment.
       await this.postIssueComment(opts.body);
     }
   }
@@ -55,22 +63,13 @@ export class GitHubReporter {
   /** Post a top-level comment on the PR / issue. */
   async postIssueComment(body: string): Promise<void> {
     if (!this.coords.pullNumber) return;
-    await fetch(
-      `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues/${this.coords.pullNumber}/comments`,
-      {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify({ body }),
-      },
-    );
+    const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues/${this.coords.pullNumber}/comments`;
+    await this.request("POST", url, { body });
   }
 
   /** Create a GitHub issue (used by audit mode). */
   async createIssue(title: string, body: string): Promise<void> {
-    await fetch(`${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({ title, body }),
-    });
+    const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues`;
+    await this.request("POST", url, { title, body });
   }
 }
