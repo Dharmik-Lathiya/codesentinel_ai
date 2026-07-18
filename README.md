@@ -219,6 +219,121 @@ Environment variables (API keys): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 
 ## 🤖 GitHub Action
 
+### Option 1: Use in other projects via PR comments
+
+Other projects can use CodeSentinel by commenting slash commands on PRs:
+
+```
+/review   → AI code review + report posted as PR comment
+/fix      → propose fixes + post report as PR comment
+/audit    → full repo audit
+/score    → quality score (0-100)
+/testgen  → generate missing tests
+```
+
+**Setup for other projects — copy this workflow to `.github/workflows/codesentinel.yml`:**
+
+```yaml
+name: CodeSentinel PR Command
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: |
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/review') ||
+      startsWith(github.event.comment.body, '/fix') ||
+      startsWith(github.event.comment.body, '/audit') ||
+      startsWith(github.event.comment.body, '/score') ||
+      startsWith(github.event.comment.body, '/testgen')
+    runs-on: self-hosted
+    steps:
+      - name: Extract command
+        id: cmd
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.comment.body.trim();
+            const match = body.match(/^\/(review|fix|audit|score|testgen)\b/i);
+            if (!match) {
+              core.setFailed('No valid command found');
+              return;
+            }
+            core.setOutput('mode', match[1].toLowerCase());
+
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.issue.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install CodeSentinel
+        run: npm install -g @dharmiklathiya/codesentinel_ai
+
+      - name: Run CodeSentinel
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          npx codesentinel ${{ steps.cmd.outputs.mode }} \
+            --provider opencode \
+            2>&1 | tee /tmp/codesentinel-output.txt || true
+
+      - name: Post review comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let output = '';
+            try {
+              output = fs.readFileSync('/tmp/codesentinel-output.txt', 'utf8');
+            } catch {
+              output = 'CodeSentinel ran but produced no output.';
+            }
+            const mode = '${{ steps.cmd.outputs.mode }}';
+            const body = `### CodeSentinel — ${mode}\n\n\`\`\`\n${output}\n\`\`\``;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body,
+            });
+
+      - name: Cleanup
+        if: always()
+        run: rm -f /tmp/codesentinel-output.txt
+```
+
+**Required repository secrets:**
+- None required for OpenCode (default) — it runs locally on your machine
+- If using OpenAI/Anthropic/Gemini: set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`
+
+**Then comment on any PR:**
+```
+/review   → runs code review, posts report
+/fix      → proposes fixes, posts report
+/audit    → full repo audit
+/score    → quality score
+/testgen  → generates missing tests
+```
+
+### Option 2: Use as a reusable Action
+
 See [`action.yml`](action.yml) and the example workflow in
 [`.github/workflows/codesentinel.yml`](.github/workflows/codesentinel.yml).
 

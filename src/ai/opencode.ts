@@ -13,10 +13,7 @@ export class OpenCodeProvider implements AIProvider {
   private readonly apiKey: string;
 
   constructor(secrets: RuntimeSecrets) {
-    if (!secrets.opencode_api_key) {
-      throw new ProviderUnavailableError("opencode", "missing OPENCODE_API_KEY");
-    }
-    this.apiKey = secrets.opencode_api_key;
+    this.apiKey = secrets.opencode_api_key || "opencode";
     this.baseUrl = (
       secrets.opencode_base_url || "http://localhost:4096"
     ).replace(/\/$/, "");
