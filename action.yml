@@ -34,6 +34,10 @@ inputs:
     description: "Free-form context injected into prompts"
     required: false
     default: ""
+  provider:
+    description: "AI provider: opencode | openai | anthropic | gemini (overrides all task models)"
+    required: false
+    default: "opencode"
   config_path:
     description: "Path to a codesentinel config file"
     required: false

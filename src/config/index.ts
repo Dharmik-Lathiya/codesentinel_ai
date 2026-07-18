@@ -173,5 +173,17 @@ export function configFromInputs(
     out.enable_test_generation = inputs.enable_test_generation === "true";
   if (inputs.project_context) out.project_context = inputs.project_context;
   if (inputs.test_runner) out.test_runner = inputs.test_runner as "jest" | "vitest";
+  if (inputs.provider) {
+    const providerModel = { provider: inputs.provider, model: "default" };
+    out.default_model = providerModel;
+    out.models = {
+      review: providerModel,
+      fix: providerModel,
+      audit: providerModel,
+      score: providerModel,
+      testgen: providerModel,
+      chat: providerModel,
+    };
+  }
   return out as Partial<CodeSentinelConfig>;
 }

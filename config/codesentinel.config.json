@@ -11,11 +11,11 @@
     "model": "opencode/default"
   },
   "models": {
-    "review": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
-    "fix": { "provider": "openai", "model": "gpt-4o" },
-    "audit": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
+    "review": { "provider": "opencode", "model": "opencode/default" },
+    "fix": { "provider": "opencode", "model": "opencode/default" },
+    "audit": { "provider": "opencode", "model": "opencode/default" },
     "score": { "provider": "opencode", "model": "opencode/default" },
-    "testgen": { "provider": "openai", "model": "gpt-4o" },
+    "testgen": { "provider": "opencode", "model": "opencode/default" },
     "chat": { "provider": "opencode", "model": "opencode/default" }
   },
   "test_runner": "vitest",

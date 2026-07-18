@@ -1,0 +1,13 @@
+src/
+tests/
+.github/
+.git/
+.vscode/
+*.tgz
+tsconfig.json
+vitest.config.ts
+config/
+codesentinel-reports/
+.codesentinel-cache/
+*.log
+.DS_Store
