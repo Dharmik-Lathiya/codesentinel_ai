@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,6 +9,94 @@ import type { Mode, RuntimeSecrets } from "./config/types.js";
 import { logger } from "./utils/logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const WORKFLOW_CONTENT = [
+  "name: CodeSentinel AI",
+  "",
+  "on:",
+  "  issue_comment:",
+  "    types: [created]",
+  "",
+  "permissions:",
+  "  contents: read",
+  "  pull-requests: write",
+  "",
+  "jobs:",
+  "  codesentinel:",
+  "    if: >",
+  "      github.event.issue.pull_request &&",
+  "      (startsWith(github.event.comment.body, '/review') ||",
+  "       startsWith(github.event.comment.body, '/fix') ||",
+  "       startsWith(github.event.comment.body, '/audit') ||",
+  "       startsWith(github.event.comment.body, '/score') ||",
+  "       startsWith(github.event.comment.body, '/testgen'))",
+  "    runs-on: ubuntu-latest",
+  "    steps:",
+  "      - name: Extract command",
+  "        id: cmd",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            const body = context.payload.comment.body.trim();",
+  "            const match = body.match(/^\\/(review|fix|audit|score|testgen)\\b/i);",
+  "            if (!match) { core.setFailed('No valid command'); return; }",
+  "            core.setOutput('mode', match[1].toLowerCase());",
+  "",
+  "      - name: Checkout PR",
+  "        uses: actions/checkout@v4",
+  "        with:",
+  "          ref: ${{ github.event.issue.pull_request.head.ref }}",
+  "          fetch-depth: 0",
+  "",
+  "      - name: Setup Node",
+  "        uses: actions/setup-node@v4",
+  "        with:",
+  "          node-version: 20",
+  "",
+  "      - name: Run CodeSentinel",
+  "        run: |",
+  "          npx @dharmiklathiya/codesentinel_ai@latest ${{ steps.cmd.outputs.mode }} 2>&1 | tee /tmp/cs-out.txt || true",
+  "",
+  "      - name: Post comment",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            const fs = require('fs');",
+  "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
+  "            const mode = '${{ steps.cmd.outputs.mode }}';",
+  "            await github.rest.issues.createComment({",
+  "              owner: context.repo.owner, repo: context.repo.repo,",
+  "              issue_number: context.issue.number,",
+  "              body: `### CodeSentinel — ${mode}\\n\\n```\\n${out}\\n```",
+  "            });",
+].join("\n");
+
+function runSetup(): void {
+  const cwd = process.cwd();
+  const workflowDir = join(cwd, ".github", "workflows");
+  const workflowPath = join(workflowDir, "codesentinel.yml");
+
+  if (existsSync(workflowPath)) {
+    process.stdout.write(`✅ Workflow already exists: ${workflowPath}\n`);
+    process.stdout.write("Nothing to do.\n");
+    return;
+  }
+
+  mkdirSync(workflowDir, { recursive: true });
+  writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
+
+  process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n\n`);
+  process.stdout.write("Next steps:\n");
+  process.stdout.write("  git add .github/workflows/codesentinel.yml\n");
+  process.stdout.write('  git commit -m "Add CodeSentinel AI"\n');
+  process.stdout.write("  git push\n\n");
+  process.stdout.write("Then comment on any PR:\n");
+  process.stdout.write("  /review   — AI code review\n");
+  process.stdout.write("  /fix      — propose fixes\n");
+  process.stdout.write("  /audit    — full repo audit\n");
+  process.stdout.write("  /score    — quality score\n");
+  process.stdout.write("  /testgen  — generate tests\n");
+}
 
 function showHelp(): void {
   const pkg = JSON.parse(
@@ -19,6 +107,10 @@ AI-powered code review, fix, audit, scoring, and test generation.
 
 Usage:
   codesentinel [mode] [options]
+  codesentinel setup
+
+Commands:
+  setup               Create GitHub Actions workflow in current project
 
 Modes:
   review      Analyze code for bugs, security, performance, smells (default)
@@ -54,9 +146,10 @@ Environment Variables:
   CODESENTINEL_LOG_LEVEL      Default log level
 
 Examples:
+  codesentinel setup
   codesentinel review --config ./codesentinel.config.json
   codesentinel fix --auto-fix --dry-run
-  codesentinel score --provider openai
+  codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
 `);
@@ -76,6 +169,14 @@ function showVersion(): void {
  *   codesentinel chat --ask "How does auth work?"
  */
 async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+
+  // Handle "setup" command
+  if (args[0] === "setup") {
+    runSetup();
+    return;
+  }
+
   const { values } = parseArgs({
     options: {
       mode: { type: "string", short: "m" },

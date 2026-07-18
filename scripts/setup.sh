@@ -1,3 +1,17 @@
+#!/usr/bin/env bash
+set -e
+
+echo "🔧 CodeSentinel AI — Setup"
+echo ""
+
+if [ ! -d ".git" ]; then
+  echo "❌ Not a git repo. Run this from your project root."
+  exit 1
+fi
+
+mkdir -p .github/workflows
+
+cat > .github/workflows/codesentinel.yml << 'WORKFLOW'
 name: CodeSentinel AI
 
 on:
@@ -56,3 +70,19 @@ jobs:
               issue_number: context.issue.number,
               body: `### CodeSentinel — ${mode}\n\n\`\`\`\n${out}\n\`\`\``
             });
+WORKFLOW
+
+echo "✅ Created .github/workflows/codesentinel.yml"
+echo ""
+echo "🚀 Commit and push:"
+echo ""
+echo "   git add .github/workflows/codesentinel.yml"
+echo "   git commit -m 'Add CodeSentinel AI'"
+echo "   git push"
+echo ""
+echo "💬 Then comment on any PR:"
+echo "   /review   — AI code review"
+echo "   /fix      — propose fixes"
+echo "   /audit    — full repo audit"
+echo "   /score    — quality score"
+echo "   /testgen  — generate tests"
