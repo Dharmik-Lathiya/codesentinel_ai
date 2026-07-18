@@ -1,11 +1,26 @@
 {
-  "name": "codesentinel-ai",
+  "name": "@dharmiklathiya/codesentinel_ai",
   "version": "0.1.0",
   "description": "AI-powered code review, fix, audit, scoring, and test generation engine with multi-provider model support.",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/lib.js",
+  "types": "dist/lib.d.ts",
   "bin": {
     "codesentinel": "dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/lib.d.ts",
+        "default": "./dist/lib.js"
+      }
+    },
+    "./cli": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
   },
   "files": [
     "dist",
@@ -19,17 +34,34 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "start": "node dist/index.js",
-    "action": "node dist/github/action.js"
+    "action": "node dist/github/action.js",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/codesentinel-ai.git"
+  },
+  "homepage": "https://github.com/your-org/codesentinel-ai#readme",
+  "bugs": {
+    "url": "https://github.com/your-org/codesentinel-ai/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "ai",
     "code-review",
     "static-analysis",
     "github-action",
-    "probot"
+    "probot",
+    "code-quality",
+    "lint",
+    "security",
+    "test-generation"
   ],
   "license": "MIT",
   "dependencies": {
+    "codesentinel-ai": "^1.0.0",
     "zod": "^3.23.8"
   },
   "optionalDependencies": {

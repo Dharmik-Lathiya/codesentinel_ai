@@ -21,6 +21,7 @@ export async function runAction(): Promise<void> {
     enable_test_generation: get("enable_test_generation"),
     project_context: get("project_context"),
     test_runner: get("test_runner"),
+    provider: get("provider"),
   };
 
   const configOverrides = configFromInputs(inputs);

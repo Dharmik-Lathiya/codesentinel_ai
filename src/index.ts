@@ -32,6 +32,7 @@ Options:
   -m, --mode <mode>           Operational mode
   -c, --config <path>         Path to codesentinel.config.json
   --provider <name>           AI provider (openai | anthropic | gemini | opencode)
+                              Overrides all task models at once
   --max-iterations <n>        Max fix iterations (default: 5)
   --auto-fix                  Apply fixes automatically
   --scoring / --no-scoring    Enable/disable scoring (default: enabled)
@@ -124,7 +125,16 @@ async function main(): Promise<void> {
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
   if (values.provider) {
-    overrides.default_model = { provider: values.provider as any, model: "default" };
+    const providerModel = { provider: values.provider as any, model: "default" };
+    overrides.default_model = providerModel;
+    overrides.models = {
+      review: providerModel,
+      fix: providerModel,
+      audit: providerModel,
+      score: providerModel,
+      testgen: providerModel,
+      chat: providerModel,
+    };
   }
   if (values["dry-run"]) overrides.enable_auto_fix = false;
 

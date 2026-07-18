@@ -42,6 +42,96 @@ Optional provider SDKs are installed automatically, but you only need the one(s)
 
 ---
 
+## 📚 Use as a Library
+
+Install in your project:
+```bash
+npm install codesentinel-ai
+```
+
+### Quick start
+```ts
+import { Engine } from "codesentinel-ai";
+
+const engine = Engine.fromInputs({
+  configPath: "./codesentinel.config.json",
+  secrets: {
+    opencode_api_key: process.env.OPENCODE_API_KEY,
+    opencode_base_url: process.env.OPENCODE_BASE_URL, // optional
+  },
+  root: "/path/to/your/project",
+});
+
+// Run any mode
+const report = await engine.run();
+console.log(report.score?.overall); // 0-100
+console.log(report.findings);       // Finding[]
+```
+
+### Chat mode
+```ts
+const answer = await engine.ask("How does authentication work?");
+console.log(answer);
+```
+
+### Switch provider in code
+```ts
+import { Engine, mergeConfig, DEFAULT_CONFIG } from "codesentinel-ai";
+
+const config = mergeConfig(DEFAULT_CONFIG, {
+  default_model: { provider: "openai", model: "gpt-4o" },
+  models: {
+    review: { provider: "anthropic", model: "claude-3-5-sonnet" },
+  },
+});
+
+const engine = new Engine(config, { openai_api_key: "..." });
+const report = await engine.run();
+```
+
+### Custom plugin
+```ts
+import type { CodeSentinelPlugin, Finding } from "codesentinel-ai";
+
+const myPlugin: CodeSentinelPlugin = {
+  name: "no-console-log",
+  analyze(files) {
+    const findings: Finding[] = [];
+    for (const f of files) {
+      if (f.content.includes("console.log")) {
+        findings.push({
+          severity: "low",
+          category: "smell",
+          file: f.path,
+          line: null,
+          comment: "Avoid console.log in production",
+          source: "static",
+        });
+      }
+    }
+    return findings;
+  },
+};
+```
+
+### Available exports
+```ts
+// Core
+import { Engine } from "codesentinel-ai";
+import { loadConfig, configFromInputs, DEFAULT_CONFIG, mergeConfig } from "codesentinel-ai";
+
+// AI
+import { AIHub, extractJson } from "codesentinel-ai";
+
+// Types
+import type {
+  CodeSentinelConfig, EngineReport, Finding, ScoreBreakdown,
+  ModelConfig, Provider, Mode, RuntimeSecrets, CodeSentinelPlugin,
+} from "codesentinel-ai";
+```
+
+---
+
 ## ⚙️ Configuration
 
 Create `codesentinel.config.json` (see [`config/codesentinel.config.json`](config/codesentinel.config.json)):
@@ -57,8 +147,8 @@ Create `codesentinel.config.json` (see [`config/codesentinel.config.json`](confi
   "project_context": "TypeScript monorepo. Keep functions pure.",
   "default_model": { "provider": "opencode", "model": "opencode/default" },
   "models": {
-    "review": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
-    "fix":    { "provider": "openai",   "model": "gpt-4o" }
+    "review": { "provider": "opencode", "model": "opencode/default" },
+    "fix":    { "provider": "opencode", "model": "opencode/default" }
   },
   "test_runner": "vitest",
   "include": ["**/*.{ts,tsx,js,jsx}"],
@@ -72,16 +162,48 @@ Create `codesentinel.config.json` (see [`config/codesentinel.config.json`](confi
 
 Config is resolved by layering: **defaults → config file → overrides** (CLI flags / Action inputs).
 
+### Switching providers
+
+OpenCode is the **default provider** for all tasks. To switch:
+
+**CLI** — use `--provider` to override all tasks at once:
+```bash
+codesentinel review --provider openai
+codesentinel fix --provider anthropic
+```
+
+**Config file** — set `default_model` or override per-task:
+```jsonc
+{
+  "default_model": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
+  "models": {
+    "review": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
+    "fix":    { "provider": "openai", "model": "gpt-4o" }
+  }
+}
+```
+
+**Environment variables**:
+```bash
+export OPENCODE_API_KEY=...    # for opencode (default)
+export OPENAI_API_KEY=...      # for openai
+export ANTHROPIC_API_KEY=...   # for anthropic
+export GEMINI_API_KEY=...      # for gemini
+```
+
 ---
 
 ## 🖥️ CLI usage
 
 ```bash
-# Review the current branch's diff
+# Review using default opencode provider
 node dist/index.js --mode review --config ./codesentinel.config.json
 
-# Score the whole repo
-node dist/index.js --mode score --provider opencode
+# Score the whole repo using OpenAI
+node dist/index.js --mode score --provider openai
+
+# Switch all tasks to Anthropic
+node dist/index.js fix --auto-fix --provider anthropic
 
 # Ask a question (chat mode)
 node dist/index.js chat --ask "How does authentication work?" --context "Node service"
@@ -186,6 +308,59 @@ prompts/        markdown prompt templates (overridable)
 config/         example configuration
 tests/          vitest suites
 ```
+
+---
+
+## 🚀 Publish to npm
+
+### 1. Login to npm
+```bash
+npm login
+```
+
+### 2. Update repository URLs
+Edit `package.json` — replace `your-org/codesentinel-ai` with your actual GitHub repo.
+
+### 3. Build and test
+```bash
+npm run build
+npm test
+```
+
+### 4. Dry run (preview what gets published)
+```bash
+npm pack --dry-run
+```
+
+### 5. Publish
+```bash
+# First time
+npm publish
+
+# Subsequent (bump version first)
+npm version patch   # 0.1.0 → 0.1.1
+npm version minor   # 0.1.0 → 0.2.0
+npm version major   # 0.1.0 → 1.0.0
+npm publish
+```
+
+### 6. Install in other projects
+```bash
+npm install codesentinel-ai
+```
+
+Or use directly without installing:
+```bash
+npx codesentinel-ai review --provider opencode
+```
+
+### What gets published
+Only these files are included in the npm package:
+- `dist/` — compiled JS + type declarations
+- `action.yml` — GitHub Action manifest
+- `prompts/` — prompt templates
+
+Source code, tests, and config files are excluded via `.npmignore`.
 
 ---
 

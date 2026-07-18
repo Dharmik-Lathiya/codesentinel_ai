@@ -71,7 +71,14 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   project_context: "",
 
   default_model: { provider: "opencode", model: "opencode/default" },
-  models: {},
+  models: {
+    review: { provider: "opencode", model: "opencode/default" },
+    fix: { provider: "opencode", model: "opencode/default" },
+    audit: { provider: "opencode", model: "opencode/default" },
+    score: { provider: "opencode", model: "opencode/default" },
+    testgen: { provider: "opencode", model: "opencode/default" },
+    chat: { provider: "opencode", model: "opencode/default" },
+  },
 
   test_runner: "vitest",
 
