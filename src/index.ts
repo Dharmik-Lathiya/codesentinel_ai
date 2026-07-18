@@ -67,7 +67,7 @@ const WORKFLOW_CONTENT = [
   "            await github.rest.issues.createComment({",
   "              owner: context.repo.owner, repo: context.repo.repo,",
   "              issue_number: context.issue.number,",
-  "              body: `### CodeSentinel — ${mode}\\n\\n```\\n${out}\\n```",
+  "              body: `### CodeSentinel — ${mode}\\n\\n\\`\\`\\`\\n${out}\\n\\`\\`\\`",
   "            });",
 ].join("\n");
 
