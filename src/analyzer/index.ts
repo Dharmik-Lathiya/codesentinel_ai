@@ -14,7 +14,7 @@ export interface Finding {
   comment: string;
   suggestion?: string;
   /** Source of the finding: local heuristic or the AI model. */
-  source: "static" | "ai";
+  source: "static" | "ai" | "linter" | "scanner";
   /** Confidence score for this finding (0-1). */
   confidence?: number;
 }

@@ -1,4 +1,4 @@
-import type { CodeSentinelConfig, AnalyzerConfig, SeverityAdjustmentConfig, ConfidenceThresholds, ProgressiveAnalysisConfig, MultiFileAnalysisConfig, GateConfig, SecretPattern, DashboardConfig } from "./types.js";
+import type { CodeSentinelConfig, AnalyzerConfig, SeverityAdjustmentConfig, ConfidenceThresholds, ProgressiveAnalysisConfig, MultiFileAnalysisConfig, GateConfig, SecretPattern, DashboardConfig, LinterConfig } from "./types.js";
 
 /**
  * Default severity adjustment configuration.
@@ -82,6 +82,12 @@ export const DEFAULT_DASHBOARD_CONFIG: DashboardConfig = {
   dataDir: ".codesentinel-dashboard",
 };
 
+export const DEFAULT_LINTER_CONFIG: LinterConfig = {
+  enabled: true,
+  tools: ["eslint", "biome", "pylint"],
+  args: {},
+};
+
 /**
  * Default configuration. Values here are safe fallbacks; users are expected to
  * override via a config file, environment variables, or CLI flags.
@@ -105,6 +111,7 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
     score: { provider: "opencode", model: "opencode/default" },
     testgen: { provider: "opencode", model: "opencode/default" },
     chat: { provider: "opencode", model: "opencode/default" },
+    describe: { provider: "opencode", model: "opencode/default" },
   },
 
   test_runner: "vitest",
@@ -138,6 +145,8 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   secretPatterns: DEFAULT_SECRET_PATTERNS,
   dismissalsFile: ".codesentinel/dismissals.json",
   dashboard: DEFAULT_DASHBOARD_CONFIG,
+  linters: DEFAULT_LINTER_CONFIG,
+  enableSecretScanner: false,
 };
 
 /** Deep-merge two configs (shallow per top-level key, special-cased objects/arrays). */
@@ -179,6 +188,16 @@ export function mergeConfig(
   }
   if (override.dashboard) {
     merged.dashboard = { ...base.dashboard, ...override.dashboard };
+  }
+  if (override.linters) {
+    merged.linters = {
+      ...base.linters,
+      ...override.linters,
+      args: { ...base.linters.args, ...override.linters.args },
+    };
+  }
+  if (override.enableSecretScanner !== undefined) {
+    merged.enableSecretScanner = override.enableSecretScanner;
   }
   if (override.analyzer) {
     merged.analyzer = {

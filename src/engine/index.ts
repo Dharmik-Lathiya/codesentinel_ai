@@ -25,6 +25,8 @@ import { DashboardServer } from "../dashboard/index.js";
 import { detectDeadCode } from "../deadcode/index.js";
 import { buildSuggestionsComment } from "../suggestions/index.js";
 import { evaluateGate } from "../gate/index.js";
+import { runLinters } from "../linters/index.js";
+import { runThirdPartySecrets } from "../scanners/index.js";
 
 /** A comment to post back to a PR (inline or summary). */
 export interface ReviewComment {
@@ -178,6 +180,9 @@ export class Engine {
       case "gate":
         report = await this.runGate();
         break;
+      case "describe":
+        report = await this.runDescribe();
+        break;
       case "chat":
         report = await this.runChat("(no prompt supplied; use ask())");
         break;
@@ -309,10 +314,28 @@ export class Engine {
     const secretFindings = files.flatMap((f) =>
       scanSecrets(f.path, f.content, this.config.secretPatterns),
     );
+
+    // External linters (ESLint, Biome, Pylint, etc.)
+    let linterFindings: Finding[] = [];
+    if (this.config.linters.enabled) {
+      linterFindings = runLinters(this.root, {
+        tools: this.config.linters.tools,
+        args: this.config.linters.args,
+      });
+    }
+
+    // 3rd-party secret scanners (gitleaks, trufflehog)
+    let scannerFindings: Finding[] = [];
+    if (this.config.enableSecretScanner) {
+      scannerFindings = runThirdPartySecrets(this.root);
+    }
+
     return this.dismissals.filterDismissed([
       ...staticFindings,
       ...pluginFindings,
       ...secretFindings,
+      ...linterFindings,
+      ...scannerFindings,
     ]);
   }
 
@@ -625,6 +648,58 @@ export class Engine {
     return {
       mode: "chat",
       summary: res.content,
+      findings: [],
+      score: null,
+      comments: [],
+      generatedTests: [],
+      fixAttempts: [],
+      metrics: { filesAnalyzed: files.length, findingsBySeverity: {}, durationMs: 0 },
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // DESCRIBE
+  // ---------------------------------------------------------------------------
+  private async runDescribe(): Promise<EngineReport> {
+    const files = await this.collectedFiles();
+    const diff = files
+      .map((f) => `### ${f.path}${f.diff ? `\n\`\`\`diff\n${f.diff}\n\`\`\`` : ""}`)
+      .join("\n\n")
+      .slice(0, 60000);
+
+    const prompt = this.prompts.render("describe", {
+      project_context: this.config.project_context || "(none)",
+      diff,
+    });
+    const res = await this.ai.complete("describe", [
+      { role: "system", content: "You write concise, structured PR descriptions." },
+      { role: "user", content: prompt },
+    ]);
+    const parsed = extractJson<{
+      title: string;
+      description: string;
+      type: string;
+      breakingChanges: boolean;
+      highlights: string[];
+      todo: string[];
+    }>(res.content);
+
+    const summary = [
+      `## ${parsed.title ?? "PR Description"}`,
+      "",
+      `**Type:** ${parsed.type ?? "chore"}`,
+      parsed.breakingChanges ? "**⚠ Breaking Changes**" : "",
+      "",
+      parsed.description ?? "",
+      "",
+      parsed.highlights?.length ? "### Highlights\n- " + parsed.highlights.join("\n- ") : "",
+      "",
+      parsed.todo?.length ? "### TODO\n- " + parsed.todo.join("\n- ") : "",
+    ].filter(Boolean).join("\n");
+
+    return {
+      mode: "describe",
+      summary,
       findings: [],
       score: null,
       comments: [],

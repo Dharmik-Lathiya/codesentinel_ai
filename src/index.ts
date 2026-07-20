@@ -204,6 +204,7 @@ Examples:
   codesentinel init-hook
   codesentinel dashboard
   codesentinel deadcode
+  codesentinel describe
 `);
 }
 
@@ -350,6 +351,7 @@ async function main(): Promise<void> {
       score: providerModel,
       testgen: providerModel,
       chat: providerModel,
+      describe: providerModel,
     };
   }
   if (values["dry-run"]) overrides.enable_auto_fix = false;

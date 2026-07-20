@@ -7,7 +7,7 @@
  */
 
 /** Supported operational modes. */
-export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate";
+export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe";
 
 /** Supported AI providers. */
 export type Provider = "openai" | "anthropic" | "gemini" | "opencode";
@@ -173,6 +173,7 @@ export interface CodeSentinelConfig {
     score?: ModelConfig;
     testgen?: ModelConfig;
     chat?: ModelConfig;
+    describe?: ModelConfig;
   };
 
   /** Test runner to generate tests for. */
@@ -206,6 +207,22 @@ export interface CodeSentinelConfig {
 
   /** Dashboard configuration. */
   dashboard: DashboardConfig;
+
+  /** External linter integration. */
+  linters: LinterConfig;
+
+  /** Enable 3rd-party secret scanner (gitleaks/trufflehog). */
+  enableSecretScanner: boolean;
+}
+
+/** External linter configuration. */
+export interface LinterConfig {
+  /** Enable running external linters. */
+  enabled: boolean;
+  /** Linter tools to run, e.g. "eslint", "oxlint", "pylint", "biome". */
+  tools: string[];
+  /** Extra CLI arguments per tool (keyed by tool name). */
+  args: Record<string, string[]>;
 }
 
 /** Quality gate threshold configuration. */
