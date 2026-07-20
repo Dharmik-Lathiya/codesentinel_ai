@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Engine } from "./engine/index.js";
 import type { Mode, RuntimeSecrets } from "./config/types.js";
 import { logger } from "./utils/logger.js";
+import { collectFiles, readText } from "./utils/files.js";
+import { installHook } from "./hook/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -127,11 +129,13 @@ function runSetup(): void {
   process.stdout.write('  git commit -m "Add CodeSentinel AI"\n');
   process.stdout.write("  git push\n\n");
   process.stdout.write("Then comment on any PR:\n");
-  process.stdout.write("  /review   — AI code review\n");
-  process.stdout.write("  /fix      — propose fixes\n");
-  process.stdout.write("  /audit    — full repo audit\n");
-  process.stdout.write("  /score    — quality score\n");
-  process.stdout.write("  /testgen  — generate tests\n");
+  process.stdout.write("  /review    — AI code review\n");
+  process.stdout.write("  /fix       — propose fixes\n");
+  process.stdout.write("  /audit     — full repo audit\n");
+  process.stdout.write("  /score     — quality score\n");
+  process.stdout.write("  /testgen   — generate tests\n");
+  process.stdout.write("  /gate      — quality gate check\n");
+  process.stdout.write("  /deadcode  — detect unused exports\n");
 }
 
 function showHelp(): void {
@@ -147,6 +151,9 @@ Usage:
 
 Commands:
   setup               Create GitHub Actions workflow in current project
+  init-hook           Install pre-commit git hook
+  dashboard           Start web dashboard
+  dismiss <finding>   Dismiss a false positive finding
 
 Modes:
   review      Analyze code for bugs, security, performance, smells (default)
@@ -155,6 +162,8 @@ Modes:
   score       Compute 0-100 quality score across 4 dimensions
   testgen     Generate unit tests for untested functions
   chat        Ask questions about the codebase (--ask required)
+  gate        Run quality gate (exit non-zero on threshold breach)
+  deadcode    Detect unused exports across files
 
 Options:
   -m, --mode <mode>           Operational mode
@@ -169,6 +178,9 @@ Options:
   --context <text>            Free-form project context for prompts
   --dry-run                   Show what would be fixed without writing (fix mode)
   --log-level <level>         Log level: debug | info | warn | error
+  --min-score <n>             Minimum score to pass gate (0-100)
+  --max-critical <n>          Max critical findings allowed in gate
+  --max-high <n>              Max high findings allowed in gate
   --version                   Show version number
   --help                      Show this help message
 
@@ -188,6 +200,10 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
+  codesentinel gate --min-score 70 --max-critical 0
+  codesentinel init-hook
+  codesentinel dashboard
+  codesentinel deadcode
 `);
 }
 
@@ -207,9 +223,54 @@ function showVersion(): void {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
-  // Handle "setup" command
+  // Handle top-level commands
   if (args[0] === "setup") {
     runSetup();
+    return;
+  }
+
+  if (args[0] === "init-hook") {
+    const root = process.cwd();
+    const hookPath = installHook(root);
+    process.stdout.write(`✅ Pre-commit hook installed at ${hookPath}\n`);
+    return;
+  }
+
+  if (args[0] === "dashboard") {
+    const secrets: RuntimeSecrets = {
+      github_token: process.env.GITHUB_TOKEN,
+      openai_api_key: process.env.OPENAI_API_KEY,
+      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+      gemini_api_key: process.env.GEMINI_API_KEY,
+      opencode_api_key: process.env.OPENCODE_API_KEY,
+      opencode_base_url: process.env.OPENCODE_BASE_URL,
+    };
+    const engine = Engine.fromInputs({ secrets });
+    engine.getDashboard().start();
+    process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
+    process.stdout.write("Press Ctrl+C to stop.\n");
+    await new Promise(() => {});
+    return;
+  }
+
+  if (args[0] === "dismiss") {
+    const secrets: RuntimeSecrets = {
+      github_token: process.env.GITHUB_TOKEN,
+      openai_api_key: process.env.OPENAI_API_KEY,
+      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+      gemini_api_key: process.env.GEMINI_API_KEY,
+      opencode_api_key: process.env.OPENCODE_API_KEY,
+      opencode_base_url: process.env.OPENCODE_BASE_URL,
+    };
+    const engine = Engine.fromInputs({ secrets });
+    const reason = args.slice(2).join(" ") || "dismissed by user";
+    if (args[1] === "--rule" && args[2]) {
+      engine.getDismissalManager().dismissByRule(args[2], reason);
+      process.stdout.write(`✅ Dismissed rule: ${args[2]}\n`);
+    } else {
+      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+    }
     return;
   }
 
@@ -226,6 +287,9 @@ async function main(): Promise<void> {
       context: { type: "string" },
       "log-level": { type: "string" },
       "dry-run": { type: "boolean", default: false },
+      "min-score": { type: "string" },
+      "max-critical": { type: "string" },
+      "max-high": { type: "string" },
       help: { type: "boolean", default: false },
       version: { type: "boolean", default: false },
     },
@@ -265,6 +329,17 @@ async function main(): Promise<void> {
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
+
+  if (values["min-score"]) {
+    overrides.gate = { ...(overrides.gate as any || {}), minScore: Number(values["min-score"]) };
+  }
+  if (values["max-critical"]) {
+    overrides.gate = { ...(overrides.gate as any || {}), maxCritical: Number(values["max-critical"]) };
+  }
+  if (values["max-high"]) {
+    overrides.gate = { ...(overrides.gate as any || {}), maxHigh: Number(values["max-high"]) };
+  }
+
   if (values.provider) {
     const providerModel = { provider: values.provider as any, model: "default" };
     overrides.default_model = providerModel;
@@ -288,6 +363,27 @@ async function main(): Promise<void> {
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     const answer = await engine.ask(values["ask"]);
     process.stdout.write(answer + "\n");
+    return;
+  }
+
+  // Special handling for deadcode mode — run in-process without AI
+  if (modeArg === "deadcode") {
+    const root = process.cwd();
+    const rels = collectFiles(root, engine.config.include, engine.config.exclude);
+    const files = rels.map((path) => ({
+      path,
+      content: readText(resolve(root, path)),
+    }));
+    const findings = await engine.runDeadCode(files);
+    if (findings.length === 0) {
+      process.stdout.write("✅ No unused exports detected.\n");
+    } else {
+      process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
+      process.stdout.write(`Unused exports (${findings.length}):\n`);
+      for (const f of findings) {
+        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${f.comment}\n`);
+      }
+    }
     return;
   }
 
@@ -328,6 +424,11 @@ async function main(): Promise<void> {
     }
   }
   process.stdout.write(`\nDone in ${report.metrics.durationMs}ms.\n`);
+
+  // Exit non-zero if gate fails
+  if (report.mode === "gate" && !report.summary.includes("PASSED")) {
+    process.exit(1);
+  }
 }
 
 main().catch((err) => {
