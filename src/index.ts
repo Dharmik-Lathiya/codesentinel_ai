@@ -187,7 +187,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     options: {
       mode: { type: "string", short: "m" },
       config: { type: "string", short: "c" },
@@ -204,7 +204,11 @@ async function main(): Promise<void> {
       version: { type: "boolean", default: false },
     },
     args: process.argv.slice(2),
+    allowPositionals: true,
   });
+
+  // Use positional arg as mode if --mode not provided
+  const modeArg = values.mode || positionals[0];
 
   if (values.help) {
     showHelp();
@@ -229,7 +233,7 @@ async function main(): Promise<void> {
   };
 
   const overrides: Record<string, unknown> = {};
-  if (values.mode) overrides.mode = values.mode as Mode;
+  if (modeArg) overrides.mode = modeArg as Mode;
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
@@ -255,7 +259,7 @@ async function main(): Promise<void> {
     secrets,
   });
 
-  if (values["ask"] && (values.mode === "chat" || !values.mode)) {
+  if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     const answer = await engine.ask(values["ask"]);
     process.stdout.write(answer + "\n");
     return;
