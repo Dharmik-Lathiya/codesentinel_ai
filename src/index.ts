@@ -53,20 +53,32 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          node-version: 20",
   "",
+  "      - name: Loading comment",
+  "        id: loading",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            const { data: comment } = await github.rest.issues.createComment({",
+  "              owner: context.repo.owner, repo: context.repo.repo,",
+  "              issue_number: context.issue.number,",
+  "              body: '🔄 **CodeSentinel** is reviewing... please wait.'",
+  "            });",
+  "            core.setOutput('comment_id', comment.id);",
+  "",
   "      - name: Run CodeSentinel",
   "        run: |",
   "          npx @dharmiklathiya/codesentinel_ai@latest ${{ steps.cmd.outputs.mode }} 2>&1 | tee /tmp/cs-out.txt || true",
   "",
-  "      - name: Post comment",
+  "      - name: Update comment",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
   "            const fs = require('fs');",
   "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
   "            const mode = '${{ steps.cmd.outputs.mode }}';",
-  "            await github.rest.issues.createComment({",
+  "            await github.rest.issues.updateComment({",
   "              owner: context.repo.owner, repo: context.repo.repo,",
-  "              issue_number: context.issue.number,",
+  "              comment_id: ${{ steps.loading.outputs.comment_id }},",
   "              body: `### CodeSentinel — ${mode}\\n\\n\\`\\`\\`\\n${out}\\n\\`\\`\\`",
   "            });",
 ].join("\n");
@@ -77,9 +89,7 @@ function runSetup(): void {
   const workflowPath = join(workflowDir, "codesentinel.yml");
 
   if (existsSync(workflowPath)) {
-    process.stdout.write(`✅ Workflow already exists: ${workflowPath}\n`);
-    process.stdout.write("Nothing to do.\n");
-    return;
+    process.stdout.write(`Overwriting existing workflow...\n`);
   }
 
   mkdirSync(workflowDir, { recursive: true });
