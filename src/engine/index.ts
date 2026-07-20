@@ -225,21 +225,25 @@ export class Engine {
   ): Promise<Finding[]> {
     const out: Finding[] = [];
     for (const file of files) {
-      const cacheKey = { task: "review", path: file.path, content: file.content };
-      const cached = this.config.enable_cache
-        ? this.cache.get<{ findings: any[] }>("review", cacheKey)
-        : null;
-      const parsed = cached ?? (await this.callAI("review", "review", file));
-      if (!cached && this.config.enable_cache) {
-        this.cache.set("review", cacheKey, parsed);
+      try {
+        const cacheKey = { task: "review", path: file.path, content: file.content };
+        const cached = this.config.enable_cache
+          ? this.cache.get<{ findings: any[] }>("review", cacheKey)
+          : null;
+        const parsed = cached ?? (await this.callAI("review", "review", file));
+        if (!cached && this.config.enable_cache) {
+          this.cache.set("review", cacheKey, parsed);
+        }
+        out.push(
+          ...(parsed.findings ?? []).map((f: any) => ({
+            ...f,
+            file: f.file || file.path,
+            source: "ai" as const,
+          })),
+        );
+      } catch (err) {
+        logger.warn(`AI review failed for ${file.path}:`, err);
       }
-      out.push(
-        ...(parsed.findings ?? []).map((f: any) => ({
-          ...f,
-          file: f.file || file.path,
-          source: "ai" as const,
-        })),
-      );
     }
     return out;
   }
@@ -489,10 +493,11 @@ export class Engine {
     promptName: PromptName,
     file: { path: string; content: string; diff?: string },
   ): Promise<{ findings: any[] }> {
+    const code = file.diff && file.diff.trim() ? file.diff : file.content;
     const prompt = this.prompts.render(promptName, {
       project_context: this.config.project_context || "(none)",
       language: file.path.split(".").pop() ?? "text",
-      code: file.content,
+      code,
       positive_feedback_instruction: this.config.include_positive_feedback
         ? "Also include up to 2 praise findings where the code is exemplary."
         : "Do not include positive/praise feedback.",

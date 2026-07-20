@@ -73,6 +73,14 @@ export async function collectDiff(
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
 async function defaultBaseRef(cwd: string): Promise<string> {
+  // In GitHub Actions, use the PR base branch
+  const githubBaseRef = process.env.GITHUB_BASE_REF;
+  if (githubBaseRef) {
+    const remoteBase = `origin/${githubBaseRef}`;
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+  }
+
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
     if (await refExists(ref, cwd)) return ref;

@@ -93,6 +93,9 @@ export class StaticAnalyzer {
     const lines = content.split("\n");
 
     lines.forEach((line, idx) => {
+      const trimmed = line.trim();
+      const isComment = trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*");
+
       // 1. Hardcoded secrets / API keys.
       if (/api[_-]?key\s*=\s*["'][A-Za-z0-9_\-]{16,}/i.test(line)) {
         findings.push({
@@ -106,7 +109,7 @@ export class StaticAnalyzer {
         });
       }
       // 2. console.log left in source (smell, not for tests).
-      if (/\bconsole\.(log|debug)\(/.test(line) && !path.includes(".test.")) {
+      if (!isComment && /\bconsole\.(log|debug)\(/.test(line) && !path.includes(".test.")) {
         findings.push({
           severity: "low",
           category: "smell",
@@ -118,7 +121,7 @@ export class StaticAnalyzer {
         });
       }
       // 3. eval usage (security).
-      if (/\beval\s*\(/.test(line)) {
+      if (!isComment && /\beval\s*\(/.test(line)) {
         findings.push({
           severity: "critical",
           category: "security",
@@ -142,7 +145,7 @@ export class StaticAnalyzer {
         });
       }
       // 5. Hardcoded passwords.
-      if (/password\s*=\s*["'][^"']+["']/i.test(line)) {
+      if (!isComment && /password\s*=\s*["'][^"']+["']/i.test(line)) {
         findings.push({
           severity: "high",
           category: "security",
@@ -154,7 +157,7 @@ export class StaticAnalyzer {
         });
       }
       // 6. process.exit() usage.
-      if (/\bprocess\.exit\s*\(/.test(line)) {
+      if (!isComment && /\bprocess\.exit\s*\(/.test(line)) {
         findings.push({
           severity: "medium",
           category: "smell",
@@ -165,18 +168,126 @@ export class StaticAnalyzer {
           source: "static",
         });
       }
+      // 7. == instead of === (loose equality).
+      if (!isComment && /[^!=!]==[^=]/.test(line) && !/===/.test(line)) {
+        findings.push({
+          severity: "medium",
+          category: "bug",
+          file: path,
+          line: idx + 1,
+          comment: "Loose equality (==) used instead of strict equality (===).",
+          suggestion: "Use === to avoid unexpected type coercion.",
+          source: "static",
+        });
+      }
+      // 8. var usage (should use let/const).
+      if (!isComment && /\bvar\s+\w+/.test(line)) {
+        findings.push({
+          severity: "low",
+          category: "smell",
+          file: path,
+          line: idx + 1,
+          comment: "Use of 'var' detected.",
+          suggestion: "Use 'let' or 'const' for block scoping.",
+          source: "static",
+        });
+      }
+      // 9. typeof without quotes (typeof x === undefined).
+      if (!isComment && /typeof\s+\w+\s*===?\s*[^"']undefined/.test(line)) {
+        findings.push({
+          severity: "medium",
+          category: "bug",
+          file: path,
+          line: idx + 1,
+          comment: "Incorrect typeof comparison — should compare against string 'undefined'.",
+          suggestion: "Use: typeof x === 'undefined'",
+          source: "static",
+        });
+      }
+      // 10. JSON.parse without try/catch.
+      if (!isComment && /JSON\.parse\s*\(/.test(line) && !/\btry\b/.test(content.split("\n").slice(Math.max(0, idx - 3), idx + 1).join("\n"))) {
+        findings.push({
+          severity: "medium",
+          category: "bug",
+          file: path,
+          line: idx + 1,
+          comment: "JSON.parse() without nearby error handling.",
+          suggestion: "Wrap in try/catch to handle malformed JSON.",
+          source: "static",
+        });
+      }
+      // 11. parseInt without radix.
+      if (!isComment && /\bparseInt\s*\([^,)]+\)/.test(line) && !/parseInt\s*\([^,]+,\s*\d+/.test(line)) {
+        findings.push({
+          severity: "low",
+          category: "bug",
+          file: path,
+          line: idx + 1,
+          comment: "parseInt() called without explicit radix parameter.",
+          suggestion: "Use parseInt(value, 10) to avoid unexpected results.",
+          source: "static",
+        });
+      }
+      // 12. setTimeout/setInterval with string (acts like eval).
+      if (!isComment && /\b(setTimeout|setInterval)\s*\(\s*["']/.test(line)) {
+        findings.push({
+          severity: "high",
+          category: "security",
+          file: path,
+          line: idx + 1,
+          comment: "String passed to setTimeout/setInterval (acts like eval).",
+          suggestion: "Pass a function reference instead of a string.",
+          source: "static",
+        });
+      }
+      // 13. new Date() without arguments (timezone dependent).
+      if (!isComment && /\bnew\s+Date\s*\(\s*\)/.test(line)) {
+        findings.push({
+          severity: "low",
+          category: "smell",
+          file: path,
+          line: idx + 1,
+          comment: "new Date() without arguments is timezone-dependent.",
+          suggestion: "Consider using a timezone-aware date library or explicit timezone.",
+          source: "static",
+        });
+      }
+      // 14. Math.random() for security-sensitive contexts.
+      if (!isComment && /\bMath\.random\s*\(/.test(line) && /(token|secret|password|key|auth|session)/i.test(line)) {
+        findings.push({
+          severity: "high",
+          category: "security",
+          file: path,
+          line: idx + 1,
+          comment: "Math.random() is not cryptographically secure.",
+          suggestion: "Use crypto.randomBytes() or crypto.randomUUID() instead.",
+          source: "static",
+        });
+      }
+      // 15. await inside forEach (common async bug).
+      if (!isComment && /\bawait\b/.test(line) && /\.(forEach|each)\s*\(/.test(content.split("\n").slice(Math.max(0, idx - 2), idx + 1).join(" "))) {
+        findings.push({
+          severity: "high",
+          category: "bug",
+          file: path,
+          line: idx + 1,
+          comment: "await inside forEach does not work — forEach ignores returned promises.",
+          suggestion: "Use for...of or Promise.all() with map() instead.",
+          source: "static",
+        });
+      }
     });
 
-    // 7. Deep nesting detection.
+    // 16. Deep nesting detection.
     findings.push(...this.detectDeepNesting(path, lines));
 
-    // 8. Magic numbers detection.
+    // 17. Magic numbers detection.
     findings.push(...this.detectMagicNumbers(path, lines));
 
-    // 9. Missing error handling (bare await without try/catch).
+    // 18. Missing error handling (bare await without try/catch).
     findings.push(...this.detectMissingErrorHandling(path, content));
 
-    // 10. Long functions detection (> 50 lines).
+    // 19. Long functions detection (> 50 lines).
     findings.push(...this.detectLongFunctions(path, lines));
 
     return findings;
