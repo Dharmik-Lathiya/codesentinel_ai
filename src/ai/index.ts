@@ -13,6 +13,7 @@ import type {
   RuntimeSecrets,
 } from "../config/types.js";
 import { retry } from "../utils/retry.js";
+import { logger } from "../utils/logger.js";
 
 export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat";
 
@@ -68,6 +69,7 @@ export class AIHub {
   ): Promise<CompletionResult> {
     const model = this.modelForTask(task);
     const provider = this.providerFor(model);
+    logger.info(`AIHub.complete: task=${task} provider=${provider.name} model=${model.model}`);
     return retry(() =>
       provider.complete({
         model,
