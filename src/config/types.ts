@@ -7,7 +7,7 @@
  */
 
 /** Supported operational modes. */
-export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat";
+export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate";
 
 /** Supported AI providers. */
 export type Provider = "openai" | "anthropic" | "gemini" | "opencode";
@@ -194,6 +194,59 @@ export interface CodeSentinelConfig {
 
   /** Enhanced analyzer configuration. */
   analyzer: AnalyzerConfig;
+
+  /** Quality gate configuration. */
+  gate: GateConfig;
+
+  /** Secret scanning patterns (built-in + custom). */
+  secretPatterns: SecretPattern[];
+
+  /** Path to false-positive dismissals file. */
+  dismissalsFile: string;
+
+  /** Dashboard configuration. */
+  dashboard: DashboardConfig;
+}
+
+/** Quality gate threshold configuration. */
+export interface GateConfig {
+  /** Minimum overall score (0-100) required to pass. */
+  minScore: number;
+  /** Maximum number of critical findings allowed. */
+  maxCritical: number;
+  /** Maximum number of high findings allowed. */
+  maxHigh: number;
+  /** Fail on any security findings. */
+  blockOnSecurity: boolean;
+  /** Fail on any bug findings. */
+  blockOnBugs: boolean;
+}
+
+/** Secret scanning pattern configuration. */
+export interface SecretPattern {
+  id: string;
+  name: string;
+  regex: string;
+  severity: Severity;
+  message: string;
+  suggestion: string;
+}
+
+/** False positive dismissal record. */
+export interface Dismissal {
+  file: string;
+  line: number | null;
+  ruleId: string;
+  reason: string;
+  dismissedAt: string;
+}
+
+/** Dashboard configuration. */
+export interface DashboardConfig {
+  /** Port to serve the dashboard on. */
+  port: number;
+  /** Directory to persist dashboard data. */
+  dataDir: string;
 }
 
 /** Environment-derived secrets and runtime values (never logged). */

@@ -12,7 +12,7 @@ import type { CodeSentinelConfig, Mode, AnalyzerConfig } from "./types.js";
 const userConfigSchema = z
   .object({
     mode: z
-      .enum(["review", "fix", "audit", "score", "testgen", "chat"])
+      .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate"])
       .optional(),
     max_iterations: z.number().int().positive().optional(),
     enable_auto_fix: z.boolean().optional(),
@@ -86,6 +86,32 @@ const userConfigSchema = z
             fileGroupPatterns: z.array(z.string()).optional(),
           })
           .optional(),
+      })
+      .optional(),
+    gate: z
+      .object({
+        minScore: z.number().min(0).max(100).optional(),
+        maxCritical: z.number().min(0).optional(),
+        maxHigh: z.number().min(0).optional(),
+        blockOnSecurity: z.boolean().optional(),
+        blockOnBugs: z.boolean().optional(),
+      })
+      .optional(),
+    secretPatterns: z
+      .array(z.object({
+        id: z.string(),
+        name: z.string(),
+        regex: z.string(),
+        severity: z.enum(["info", "low", "medium", "high", "critical"]),
+        message: z.string(),
+        suggestion: z.string().optional(),
+      }))
+      .optional(),
+    dismissalsFile: z.string().optional(),
+    dashboard: z
+      .object({
+        port: z.number().optional(),
+        dataDir: z.string().optional(),
       })
       .optional(),
   })
