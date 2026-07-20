@@ -87,6 +87,32 @@ export class Engine {
       config.analyzer,
       resolve(root, config.cache_dir, "analysis"),
     );
+
+    logger.info(`Configured AI model: ${config.default_model.provider}/${config.default_model.model}`);
+    logger.info(`Review model: ${(config.models.review ?? config.default_model).provider}/${(config.models.review ?? config.default_model).model}`);
+    this.checkAIProvider();
+  }
+
+  /** Best-effort health check: log whether the AI provider is reachable. */
+  private async checkAIProvider(): Promise<void> {
+    const model = this.ai.modelForTask("review");
+    const baseUrl = this.secrets.opencode_base_url || "http://localhost:4096";
+    if (model.provider === "opencode") {
+      try {
+        const res = await fetch(`${baseUrl}/v1/models`, { signal: AbortSignal.timeout(3000) });
+        if (res.ok) {
+          logger.info(`OpenCode is REACHABLE at ${baseUrl}`);
+        } else {
+          logger.warn(`OpenCode at ${baseUrl} returned status ${res.status} — AI review will fail`);
+        }
+      } catch {
+        logger.warn(`OpenCode at ${baseUrl} is NOT reachable — AI review will be skipped (this is expected unless you have opencode running locally)`);
+      }
+    } else {
+      const keyName = `${model.provider}_api_key` as keyof RuntimeSecrets;
+      const hasKey = !!this.secrets[keyName];
+      logger.info(`AI provider: ${model.provider}, API key ${hasKey ? "SET" : "NOT SET"}`);
+    }
   }
 
   /** Convenience factory used by CLI / Action. */
@@ -224,7 +250,9 @@ export class Engine {
     files: { path: string; content: string; diff?: string }[],
   ): Promise<Finding[]> {
     const out: Finding[] = [];
+    logger.info(`aiReview: starting AI review for ${files.length} files`);
     for (const file of files) {
+      logger.info(`aiReview: processing ${file.path} (diff_len=${(file.diff ?? "").length}, content_len=${file.content.length})`);
       try {
         const cacheKey = { task: "review", path: file.path, content: file.content };
         const cached = this.config.enable_cache
@@ -234,17 +262,18 @@ export class Engine {
         if (!cached && this.config.enable_cache) {
           this.cache.set("review", cacheKey, parsed);
         }
-        out.push(
-          ...(parsed.findings ?? []).map((f: any) => ({
-            ...f,
-            file: f.file || file.path,
-            source: "ai" as const,
-          })),
-        );
+        const fileFindings = (parsed.findings ?? []).map((f: any) => ({
+          ...f,
+          file: f.file || file.path,
+          source: "ai" as const,
+        }));
+        logger.info(`aiReview: ${file.path} -> ${fileFindings.length} findings (cached=${!!cached})`);
+        out.push(...fileFindings);
       } catch (err) {
         logger.warn(`AI review failed for ${file.path}:`, err);
       }
     }
+    logger.info(`aiReview: total AI findings = ${out.length}`);
     return out;
   }
 
@@ -261,12 +290,27 @@ export class Engine {
     const actionable = findings.filter((f) => f.category !== "praise");
     const fixAttempts: FixAttempt[] = [];
     const limit = Math.min(this.config.max_iterations, actionable.length);
+    logger.info(`runFix: ${actionable.length} actionable findings, max_iterations=${this.config.max_iterations}, limit=${limit}`);
 
     for (let iteration = 1; iteration <= limit; iteration++) {
-      const attempt = await this.applyFix(actionable[iteration - 1], iteration);
-      fixAttempts.push(attempt);
+      const finding = actionable[iteration - 1];
+      logger.info(`runFix: iteration ${iteration}/${limit} — ${finding.file}:${finding.line} (${finding.severity}/${finding.category})`);
+      try {
+        const attempt = await this.applyFix(finding, iteration);
+        fixAttempts.push(attempt);
+        logger.info(`runFix: iteration ${iteration} result — fixed=${attempt.fixed} verified=${attempt.verified}`);
+      } catch (err) {
+        logger.warn(`runFix: iteration ${iteration} failed for ${finding.file}:`, err);
+        fixAttempts.push({
+          iteration,
+          file: finding.file,
+          fixed: false,
+          explanation: `Error: ${err instanceof Error ? err.message : err}`,
+          verified: false,
+        });
+      }
       // In dry-run or non-auto-fix mode, one attempt is sufficient since no files are written.
-      if (attempt.fixed && !this.config.enable_auto_fix) break;
+      if (!this.config.enable_auto_fix) break;
     }
 
     const summary = this.buildSummary("fix", findings, fixAttempts);
@@ -301,10 +345,12 @@ export class Engine {
       project_context: this.config.project_context || "(none)",
     });
 
+    logger.info(`applyFix[${iteration}]: prompt=${JSON.stringify(finding.file)} severity=${finding.severity} category=${finding.category}`);
     const res = await this.ai.complete("fix", [
       { role: "system", content: "You apply minimal, safe code fixes." },
       { role: "user", content: prompt },
     ]);
+    logger.info(`applyFix[${iteration}]: AI response len=${res.content.length}`);
     const parsed = extractJson<{
       fixed: boolean;
       explanation: string;
@@ -502,10 +548,15 @@ export class Engine {
         ? "Also include up to 2 praise findings where the code is exemplary."
         : "Do not include positive/praise feedback.",
     });
+
+    const preview = prompt.length > 300 ? prompt.slice(0, 300) + "..." : prompt;
+    logger.info(`callAI: task=${task} prompt=${promptName} file=${file.path} prompt_preview=${JSON.stringify(preview)}`);
+
     const res = await this.ai.complete(task, [
       { role: "system", content: "You are an expert code reviewer." },
       { role: "user", content: prompt },
     ]);
+    logger.info(`callAI response: provider=${res.provider} model=${res.model} tokens_in=${res.usage?.promptTokens} tokens_out=${res.usage?.completionTokens} content_len=${res.content.length}`);
     return extractJson<{ findings: any[] }>(res.content);
   }
 
