@@ -19,6 +19,12 @@ import { collectFiles, readText, ensureDir } from "../utils/files.js";
 import { logger } from "../utils/logger.js";
 import { extractJson } from "../ai/provider.js";
 import { renderHtmlReport } from "../utils/html-report.js";
+import { scanSecrets } from "../secrets/index.js";
+import { DismissalManager } from "../dismiss/index.js";
+import { DashboardServer } from "../dashboard/index.js";
+import { detectDeadCode } from "../deadcode/index.js";
+import { buildSuggestionsComment } from "../suggestions/index.js";
+import { evaluateGate } from "../gate/index.js";
 
 /** A comment to post back to a PR (inline or summary). */
 export interface ReviewComment {
@@ -68,6 +74,8 @@ export class Engine {
   private scorer = new Scorer();
   private cache: FileCache;
   private plugins: PluginManager;
+  private dismissals: DismissalManager;
+  private dashboard: DashboardServer;
 
   constructor(
     config: CodeSentinelConfig,
@@ -87,6 +95,14 @@ export class Engine {
       config.analyzer,
       resolve(root, config.cache_dir, "analysis"),
     );
+
+    this.dismissals = new DismissalManager(resolve(root, config.dismissalsFile));
+    this.dashboard = new DashboardServer(config.dashboard.port, resolve(root, config.dashboard.dataDir));
+
+    // Wire up custom rules from config
+    for (const rule of config.analyzer.customRules) {
+      this.analyzer.addCustomRule(rule);
+    }
 
     logger.info(`Configured AI model: ${config.default_model.provider}/${config.default_model.model}`);
     logger.info(`Review model: ${(config.models.review ?? config.default_model).provider}/${(config.models.review ?? config.default_model).model}`);
@@ -159,6 +175,9 @@ export class Engine {
       case "testgen":
         report = await this.runTestgen();
         break;
+      case "gate":
+        report = await this.runGate();
+        break;
       case "chat":
         report = await this.runChat("(no prompt supplied; use ask())");
         break;
@@ -171,6 +190,89 @@ export class Engine {
 
     if (this.config.output.writeReportFile) this.writeReportFile(report);
     return report;
+  }
+
+  // ---------------------------------------------------------------------------
+  // GATE
+  // ---------------------------------------------------------------------------
+  private async runGate(): Promise<EngineReport> {
+    const files = await this.collectedFiles();
+    const findings = await this.analyzeFiles(files);
+
+    const score = this.config.enable_scoring ? await this.computeScore(files, findings) : null;
+    const gateResult = evaluateGate(findings, score, this.config.gate);
+
+    const summary = gateResult.passed
+      ? `[gate] PASSED — ${gateResult.reason}`
+      : `[gate] FAILED — ${gateResult.reason}`;
+
+    if (!gateResult.passed) {
+      logger.warn(`Gate FAILED: ${gateResult.reason}`);
+    }
+
+    this.recordDashboardRun("gate", findings, score, 0);
+
+    return {
+      mode: "gate",
+      summary,
+      findings,
+      score,
+      comments: [],
+      generatedTests: [],
+      fixAttempts: [],
+      metrics: { filesAnalyzed: files.length, findingsBySeverity: {}, durationMs: 0 },
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // DEAD CODE
+  // ---------------------------------------------------------------------------
+  async runDeadCode(files: { path: string; content: string }[]): Promise<Finding[]> {
+    return detectDeadCode(files);
+  }
+
+  // ---------------------------------------------------------------------------
+  // COMMITTABLE SUGGESTIONS
+  // ---------------------------------------------------------------------------
+  buildSuggestions(findings: Finding[], fileContents: Map<string,string>): string {
+    return buildSuggestionsComment(findings, fileContents);
+  }
+
+  // ---------------------------------------------------------------------------
+  // DISMISSAL
+  // ---------------------------------------------------------------------------
+  getDismissalManager(): DismissalManager {
+    return this.dismissals;
+  }
+
+  // ---------------------------------------------------------------------------
+  // DASHBOARD
+  // ---------------------------------------------------------------------------
+  getDashboard(): DashboardServer {
+    return this.dashboard;
+  }
+
+  private recordDashboardRun(
+    mode: string,
+    findings: Finding[],
+    score: ScoreBreakdown | null,
+    durationMs: number,
+  ): void {
+    const bySeverity: Record<string, number> = {};
+    const byCategory: Record<string, number> = {};
+    for (const f of findings) {
+      bySeverity[f.severity] = (bySeverity[f.severity] ?? 0) + 1;
+      byCategory[f.category] = (byCategory[f.category] ?? 0) + 1;
+    }
+    this.dashboard.recordRun({
+      timestamp: new Date().toISOString(),
+      mode,
+      totalFindings: findings.length,
+      score: score?.overall ?? null,
+      findingsBySeverity: bySeverity,
+      findingsByCategory: byCategory,
+      durationMs,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -204,7 +306,14 @@ export class Engine {
     const pluginFindings = await this.plugins.runAnalyze(
       files.map((f) => ({ path: f.path, content: f.content })),
     );
-    return [...staticFindings, ...pluginFindings];
+    const secretFindings = files.flatMap((f) =>
+      scanSecrets(f.path, f.content, this.config.secretPatterns),
+    );
+    return this.dismissals.filterDismissed([
+      ...staticFindings,
+      ...pluginFindings,
+      ...secretFindings,
+    ]);
   }
 
   // ---------------------------------------------------------------------------

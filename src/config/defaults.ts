@@ -1,4 +1,4 @@
-import type { CodeSentinelConfig, AnalyzerConfig, SeverityAdjustmentConfig, ConfidenceThresholds, ProgressiveAnalysisConfig, MultiFileAnalysisConfig } from "./types.js";
+import type { CodeSentinelConfig, AnalyzerConfig, SeverityAdjustmentConfig, ConfidenceThresholds, ProgressiveAnalysisConfig, MultiFileAnalysisConfig, GateConfig, SecretPattern, DashboardConfig } from "./types.js";
 
 /**
  * Default severity adjustment configuration.
@@ -55,6 +55,33 @@ export const DEFAULT_ANALYZER_CONFIG: AnalyzerConfig = {
   multiFileAnalysis: DEFAULT_MULTI_FILE_ANALYSIS,
 };
 
+export const DEFAULT_GATE_CONFIG: GateConfig = {
+  minScore: 0,
+  maxCritical: 10,
+  maxHigh: 50,
+  blockOnSecurity: false,
+  blockOnBugs: false,
+};
+
+export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
+  { id: "aws-key", name: "AWS Access Key", regex: "AKIA[0-9A-Z]{16}", severity: "critical", message: "Hardcoded AWS Access Key ID detected.", suggestion: "Use IAM roles or environment variables instead." },
+  { id: "aws-secret", name: "AWS Secret Key", regex: "(?i)aws(.{0,20})?(secret|access)_?key\\s*[=:]\\s*['\"][A-Za-z0-9/+=]{40}['\"]", severity: "critical", message: "Hardcoded AWS Secret Access Key detected.", suggestion: "Use IAM roles or environment variables instead." },
+  { id: "github-token", name: "GitHub Token", regex: "(?i)github[-_]?(token|pat|key)\\s*[=:]\\s*['\"](ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}['\"]", severity: "critical", message: "Hardcoded GitHub token detected.", suggestion: "Use GITHUB_TOKEN secret or environment variables." },
+  { id: "slack-token", name: "Slack Token", regex: "(xox[baprs]-[0-9a-zA-Z]{10,})", severity: "high", message: "Hardcoded Slack token detected.", suggestion: "Use environment variables for Slack tokens." },
+  { id: "ssh-key", name: "SSH Private Key", regex: "-----BEGIN\\s+(RSA|DSA|EC|OPENSSH|PRIVATE)\\s+KEY-----", severity: "critical", message: "Hardcoded SSH private key detected.", suggestion: "Use SSH agent or secrets manager." },
+  { id: "jwt-token", name: "JWT Token", regex: "(?i)(jwt|bearer)\\s*[=:]\\s*['\"]eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}['\"]", severity: "high", message: "Hardcoded JWT token detected.", suggestion: "Use short-lived tokens from a secure source." },
+  { id: "pg-conn-str", name: "PostgreSQL Connection String", regex: "postgres(ql)?://\\w+:\\w+@", severity: "high", message: "Hardcoded PostgreSQL connection string detected.", suggestion: "Use environment variables for database URLs." },
+  { id: "redis-conn-str", name: "Redis Connection String", regex: "redis://\\w+:\\w+@", severity: "high", message: "Hardcoded Redis connection string detected.", suggestion: "Use environment variables for Redis URLs." },
+  { id: "private-key-header", name: "Private Key Header", regex: "(?i)——BEGIN\\s+(RSA|DSA|EC|OPENSSH|PRIVATE)\\s+KEY——", severity: "critical", message: "Hardcoded private key detected.", suggestion: "Use a secrets manager or environment variables." },
+  { id: "npm-token", name: "npm Token", regex: "(?i)npm[-_]?token\\s*[=:]\\s*['\"][a-f0-9]{36}['\"]", severity: "high", message: "Hardcoded npm token detected.", suggestion: "Use environment variables for npm tokens." },
+  { id: "generic-api-key", name: "Generic API Key", regex: "(?i)(api[-_]?(key|token|secret)|secret[-_]?key)\\s*[=:]\\s*['\"][A-Za-z0-9_\\-]{20,}['\"]", severity: "high", message: "Possible hardcoded API key or secret detected.", suggestion: "Use environment variables or a secrets manager." },
+];
+
+export const DEFAULT_DASHBOARD_CONFIG: DashboardConfig = {
+  port: 4173,
+  dataDir: ".codesentinel-dashboard",
+};
+
 /**
  * Default configuration. Values here are safe fallbacks; users are expected to
  * override via a config file, environment variables, or CLI flags.
@@ -107,6 +134,10 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   plugins: [],
 
   analyzer: DEFAULT_ANALYZER_CONFIG,
+  gate: DEFAULT_GATE_CONFIG,
+  secretPatterns: DEFAULT_SECRET_PATTERNS,
+  dismissalsFile: ".codesentinel/dismissals.json",
+  dashboard: DEFAULT_DASHBOARD_CONFIG,
 };
 
 /** Deep-merge two configs (shallow per top-level key, special-cased objects/arrays). */
@@ -139,6 +170,15 @@ export function mergeConfig(
   }
   if (override.plugins) {
     merged.plugins = [...base.plugins, ...override.plugins];
+  }
+  if (override.gate) {
+    merged.gate = { ...base.gate, ...override.gate };
+  }
+  if (override.secretPatterns) {
+    merged.secretPatterns = [...override.secretPatterns];
+  }
+  if (override.dashboard) {
+    merged.dashboard = { ...base.dashboard, ...override.dashboard };
   }
   if (override.analyzer) {
     merged.analyzer = {
