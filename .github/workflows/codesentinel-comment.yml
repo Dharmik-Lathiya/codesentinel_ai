@@ -63,8 +63,9 @@ jobs:
             const fs = require('fs');
             let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}
             const mode = '${{ steps.cmd.outputs.mode }}';
+            const body = '### CodeSentinel \u2014 ' + mode + '\n\n```\n' + out + '\n```';
             await github.rest.issues.updateComment({
               owner: context.repo.owner, repo: context.repo.repo,
               comment_id: ${{ steps.loading.outputs.comment_id }},
-              body: `### CodeSentinel — ${mode}\n\n\`\`\`\n${out}\n\`\`\``
+              body: body
             });
