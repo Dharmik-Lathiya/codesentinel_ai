@@ -40,3 +40,18 @@ export type { GeneratedTest, DetectedFunction } from "./testgen/index.js";
 export { renderHtmlReport } from "./utils/html-report.js";
 export { renderSarif } from "./utils/sarif.js";
 export { concurrentMap } from "./utils/concurrency.js";
+
+export { parseJsonlString, parseJsonlFile, validateAndNormalize, buildReviewBody, buildInlineComments } from "./jsonl-parser.js";
+export type { ReviewResult } from "./jsonl-parser.js";
+
+export { MCPManager } from "./mcp/client.js";
+export type { MCPServerConfig, MCPContextEntry } from "./mcp/client.js";
+export { getDefaultMCPServers } from "./mcp/servers.js";
+
+export { LearningStore } from "./learning/store.js";
+export type { FindingRecord, PatternRecord, CustomRuleRecord } from "./learning/store.js";
+
+export { EventBus } from "./event-bus/bus.js";
+export type { GitHubEvent, Subscriber } from "./event-bus/types.js";
+
+export { setupOpenCode } from "./opencode/installer.js";

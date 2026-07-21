@@ -182,6 +182,10 @@ Options:
   --ask <question>            Ask a question (activates chat mode)
   --context <text>            Free-form project context for prompts
   --dry-run                   Show what would be fixed without writing (fix mode)
+  --jsonl                     Output AI review results in JSONL format
+  --mcp                       Enable MCP server integration for library docs
+  --learning-db <path>        Enable self-learning store at path
+  --yaml-config               Enable YAML config file discovery (.opencode-reviewer.yml)
   --log-level <level>         Log level: debug | info | warn | error
   --min-score <n>             Minimum score to pass gate (0-100)
   --max-critical <n>          Max critical findings allowed in gate
@@ -252,8 +256,13 @@ async function main(): Promise<void> {
       opencode_base_url: process.env.OPENCODE_BASE_URL,
     };
     const engine = Engine.fromInputs({ secrets });
-    engine.getDashboard().start();
-    process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
+    const dash = engine.getDashboard();
+    if (dash) {
+      dash.start();
+      process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
+    } else {
+      process.stdout.write("Dashboard is not available.\n");
+    }
     process.stdout.write("Press Ctrl+C to stop.\n");
     await new Promise(() => {});
     return;
@@ -321,6 +330,10 @@ async function main(): Promise<void> {
       "max-high": { type: "string" },
       help: { type: "boolean", default: false },
       version: { type: "boolean", default: false },
+      "jsonl": { type: "boolean", default: false },
+      "mcp": { type: "boolean", default: false },
+      "learning-db": { type: "string" },
+      "yaml-config": { type: "boolean", default: false },
     },
     args: process.argv.slice(2),
     allowPositionals: true,
@@ -386,6 +399,20 @@ async function main(): Promise<void> {
     };
   }
   if (values["dry-run"]) overrides.enable_auto_fix = false;
+  if (values.jsonl) overrides.jsonl_output = true;
+  if (values.mcp) overrides.mcp = { ...(overrides.mcp as any || {}), enabled: true };
+  if (values["learning-db"]) {
+    overrides.learning = { ...(overrides.learning as any || {}), enabled: true, dbPath: values["learning-db"] };
+  }
+  if (values["yaml-config"]) {
+    const searchPaths = [".opencode-reviewer.yml", ".codesentinel.yml", "codesentinel.config.yml"];
+    for (const p of searchPaths) {
+      if (existsSync(resolve(process.cwd(), p))) {
+        overrides.configFile = p;
+        break;
+      }
+    }
+  }
 
   const engine = Engine.fromInputs({
     configPath: values.config,
