@@ -141,3 +141,8 @@ function renderSummary(report: EngineReport): string {
   }
   return lines.join("\n");
 }
+
+runAction().catch((err) => {
+  logger.error("Action failed:", err);
+  process.exit(1);
+});

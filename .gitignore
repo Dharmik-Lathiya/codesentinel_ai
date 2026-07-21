@@ -1,7 +1,5 @@
 node_modules/
 dist/
-!dist/github/action.js
-!dist/github/action.d.ts
 codesentinel-reports/
 .codesentinel-cache/
 *.log
