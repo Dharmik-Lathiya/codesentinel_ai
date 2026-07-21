@@ -137,6 +137,14 @@ export class DashboardServer {
     this.server.listen(this.port, () => {
       logger.info(`Dashboard server started at http://localhost:${this.port}`);
     });
+
+    const shutdown = () => {
+      logger.info("Shutting down dashboard server...");
+      this.stop();
+      process.exit(0);
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
   }
 
   stop(): void {

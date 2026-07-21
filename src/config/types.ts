@@ -213,6 +213,9 @@ export interface CodeSentinelConfig {
 
   /** Enable 3rd-party secret scanner (gitleaks/trufflehog). */
   enableSecretScanner: boolean;
+
+  /** Strategy for blending AI security scores with static baseline. */
+  securityBlendStrategy: SecurityBlendStrategy;
 }
 
 /** External linter configuration. */
@@ -238,6 +241,9 @@ export interface GateConfig {
   /** Fail on any bug findings. */
   blockOnBugs: boolean;
 }
+
+/** Strategy for blending AI security scores with static baseline. */
+export type SecurityBlendStrategy = "min" | "avg" | "static-only";
 
 /** Secret scanning pattern configuration. */
 export interface SecretPattern {

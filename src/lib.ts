@@ -17,6 +17,7 @@ export type {
   SeverityAdjustmentConfig,
   ProgressiveAnalysisConfig,
   MultiFileAnalysisConfig,
+  SecurityBlendStrategy,
 } from "./config/types.js";
 
 export { DEFAULT_CONFIG, mergeConfig } from "./config/defaults.js";
@@ -35,3 +36,7 @@ export type { Finding } from "./analyzer/index.js";
 export type { ScoreBreakdown } from "./scorer/index.js";
 export type { CodeSentinelPlugin, PluginContext } from "./plugins/index.js";
 export type { GeneratedTest, DetectedFunction } from "./testgen/index.js";
+
+export { renderHtmlReport } from "./utils/html-report.js";
+export { renderSarif } from "./utils/sarif.js";
+export { concurrentMap } from "./utils/concurrency.js";

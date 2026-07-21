@@ -16,7 +16,9 @@ jobs:
        startsWith(github.event.comment.body, '/fix') ||
        startsWith(github.event.comment.body, '/audit') ||
        startsWith(github.event.comment.body, '/score') ||
-       startsWith(github.event.comment.body, '/testgen'))
+       startsWith(github.event.comment.body, '/testgen') ||
+       startsWith(github.event.comment.body, '/gate') ||
+       startsWith(github.event.comment.body, '/deadcode'))
     runs-on: ubuntu-latest
     steps:
       - name: Extract command
@@ -25,7 +27,7 @@ jobs:
         with:
           script: |
             const body = context.payload.comment.body.trim();
-            const match = body.match(/^\/(review|fix|audit|score|testgen)\b/i);
+            const match = body.match(/^\/(review|fix|audit|score|testgen|gate|deadcode)\b/i);
             if (!match) { core.setFailed('No valid command'); return; }
             core.setOutput('mode', match[1].toLowerCase());
 

@@ -49,6 +49,17 @@ export class DismissalManager {
     this.save();
   }
 
+  dismissByFinding(file: string, line: number | null, ruleId: string, reason: string): void {
+    this.dismissals.push({
+      file,
+      line,
+      ruleId,
+      reason,
+      dismissedAt: new Date().toISOString(),
+    });
+    this.save();
+  }
+
   isDismissed(finding: Finding): boolean {
     const ruleId = `${finding.category}:${finding.comment.slice(0, 40)}`;
     return this.dismissals.some(

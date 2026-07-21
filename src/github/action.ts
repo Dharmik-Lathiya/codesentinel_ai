@@ -52,6 +52,7 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets): Pr
   const pullNumber = process.env.GITHUB_PR_NUMBER
     ? Number(process.env.GITHUB_PR_NUMBER)
     : undefined;
+  const headSha = process.env.GITHUB_SHA;
 
   if (secrets.github_token && owner && repo) {
     const reporter = new GitHubReporter({ token: secrets.github_token, owner, repo, pullNumber });
@@ -69,6 +70,37 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets): Pr
           f.comment,
         );
       }
+    }
+
+    // Create Check Run for gate mode
+    if (report.mode === "gate" && headSha) {
+      const annotations = report.findings.slice(0, 50).map((f) => ({
+        path: f.file,
+        start_line: f.line ?? 1,
+        end_line: f.line ?? 1,
+        annotation_level: (f.severity === "critical" || f.severity === "high" ? "failure" : "warning") as "failure" | "warning" | "notice",
+        message: f.comment,
+      }));
+
+      await reporter.createCheckRun({
+        name: "CodeSentinel Gate",
+        headSha,
+        status: "completed",
+        conclusion: report.gatePassed ? "success" : "failure",
+        output: {
+          title: report.gatePassed ? "Quality Gate Passed" : "Quality Gate Failed",
+          summary: report.summary,
+          annotations,
+        },
+      });
+
+      // Also set commit status
+      await reporter.setCommitStatus({
+        sha: headSha,
+        state: report.gatePassed ? "success" : "failure",
+        description: report.gatePassed ? "All gate checks passed" : "Gate checks failed",
+        context: "codesentinel/gate",
+      });
     }
   }
 
@@ -97,6 +129,9 @@ function renderSummary(report: EngineReport): string {
         `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
         `security ${report.score.security}, coverage ${report.score.test_coverage})`,
     );
+  }
+  if (report.gatePassed !== undefined) {
+    lines.push(`**Gate:** ${report.gatePassed ? "PASSED" : "FAILED"}`);
   }
   if (report.findings.length) {
     lines.push("", "## Findings", "");

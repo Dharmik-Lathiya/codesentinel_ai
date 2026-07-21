@@ -7,6 +7,7 @@ import type {
   CompletionRequest,
   CompletionResult,
 } from "./provider.js";
+import { ProviderUnavailableError } from "./provider.js";
 import type {
   CodeSentinelConfig,
   ModelConfig,
@@ -49,12 +50,20 @@ export class AIHub {
 
     const factory = this.factories[model.provider];
     if (!factory) {
-      throw new Error(`Unknown provider: ${model.provider}`);
+      throw new Error(`Unknown provider: "${model.provider}". Supported providers: openai, anthropic, gemini, opencode.`);
     }
     const provider = factory(this.secrets);
     if (!provider) {
-      throw new Error(
-        `Provider "${model.provider}" could not be initialized (missing API key or SDK?)`,
+      const keyEnvMap: Record<string, string> = {
+        openai: "OPENAI_API_KEY",
+        anthropic: "ANTHROPIC_API_KEY",
+        gemini: "GEMINI_API_KEY",
+        opencode: "OPENCODE_API_KEY",
+      };
+      const keyName = keyEnvMap[model.provider] ?? `${model.provider.toUpperCase()}_API_KEY`;
+      throw new ProviderUnavailableError(
+        model.provider,
+        `Could not initialize. Ensure ${keyName} is set. See README for configuration.`,
       );
     }
     this.providers.set(model.provider, provider);

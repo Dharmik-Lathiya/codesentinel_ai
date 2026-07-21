@@ -120,7 +120,7 @@ export class TestGenerator {
     const parsed = extractJson<{ test_file_path?: string; content: string }>(
       res.content,
     );
-    if (!parsed.content) return null;
+    if (!parsed?.content) return null;
 
     const outPath = parsed.test_file_path
       ? resolve(root, parsed.test_file_path)
@@ -134,11 +134,12 @@ export class TestGenerator {
   private testPathFor(root: string, srcPath: string): string {
     const abs = resolve(root, srcPath);
     const dir = dirname(abs);
+    const ext = srcPath.match(/\.([^.]+)$/)?.[1] ?? "ts";
     const base = srcPath.replace(/\.[^.]+$/, "");
     if (this.config.test_runner === "jest") {
-      return join(dir, "__tests__", (base.split("/").pop() ?? "index") + ".test.ts");
+      return join(dir, "__tests__", (base.split("/").pop() ?? "index") + `.test.${ext}`);
     }
-    return join(root, base + ".test.ts");
+    return join(root, base + `.test.${ext}`);
   }
 }
 

@@ -72,7 +72,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
   { id: "jwt-token", name: "JWT Token", regex: "(?i)(jwt|bearer)\\s*[=:]\\s*['\"]eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}['\"]", severity: "high", message: "Hardcoded JWT token detected.", suggestion: "Use short-lived tokens from a secure source." },
   { id: "pg-conn-str", name: "PostgreSQL Connection String", regex: "postgres(ql)?://\\w+:\\w+@", severity: "high", message: "Hardcoded PostgreSQL connection string detected.", suggestion: "Use environment variables for database URLs." },
   { id: "redis-conn-str", name: "Redis Connection String", regex: "redis://\\w+:\\w+@", severity: "high", message: "Hardcoded Redis connection string detected.", suggestion: "Use environment variables for Redis URLs." },
-  { id: "private-key-header", name: "Private Key Header", regex: "(?i)——BEGIN\\s+(RSA|DSA|EC|OPENSSH|PRIVATE)\\s+KEY——", severity: "critical", message: "Hardcoded private key detected.", suggestion: "Use a secrets manager or environment variables." },
+  { id: "private-key-header", name: "Private Key Header", regex: "(?i)-----BEGIN\\s+(?:(?:RSA|DSA|EC|OPENSSH)\\s+)?PRIVATE\\s+KEY-----", severity: "critical", message: "Hardcoded private key detected.", suggestion: "Use a secrets manager or environment variables." },
   { id: "npm-token", name: "npm Token", regex: "(?i)npm[-_]?token\\s*[=:]\\s*['\"][a-f0-9]{36}['\"]", severity: "high", message: "Hardcoded npm token detected.", suggestion: "Use environment variables for npm tokens." },
   { id: "generic-api-key", name: "Generic API Key", regex: "(?i)(api[-_]?(key|token|secret)|secret[-_]?key)\\s*[=:]\\s*['\"][A-Za-z0-9_\\-]{20,}['\"]", severity: "high", message: "Possible hardcoded API key or secret detected.", suggestion: "Use environment variables or a secrets manager." },
 ];
@@ -147,6 +147,7 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   dashboard: DEFAULT_DASHBOARD_CONFIG,
   linters: DEFAULT_LINTER_CONFIG,
   enableSecretScanner: false,
+  securityBlendStrategy: "min",
 };
 
 /** Deep-merge two configs (shallow per top-level key, special-cased objects/arrays). */

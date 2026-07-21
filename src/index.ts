@@ -9,6 +9,7 @@ import type { Mode, RuntimeSecrets } from "./config/types.js";
 import { logger } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
+import { renderSarif } from "./utils/sarif.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -31,6 +32,9 @@ const WORKFLOW_CONTENT = [
   "       startsWith(github.event.comment.body, '/fix') ||",
   "       startsWith(github.event.comment.body, '/audit') ||",
   "       startsWith(github.event.comment.body, '/score') ||",
+  "       startsWith(github.event.comment.body, '/testgen') ||",
+  "       startsWith(github.event.comment.body, '/gate') ||",
+  "       startsWith(github.event.comment.body, '/deadcode'))",
   "       startsWith(github.event.comment.body, '/testgen'))",
   "    runs-on: ubuntu-latest",
   "    steps:",
@@ -40,7 +44,7 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          script: |",
   "            const body = context.payload.comment.body.trim();",
-  "            const match = body.match(/^\\/(review|fix|audit|score|testgen)\\b/i);",
+  "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode)\\b/i);",
   "            if (!match) { core.setFailed('No valid command'); return; }",
   "            core.setOutput('mode', match[1].toLowerCase());",
   "",
@@ -136,6 +140,7 @@ function runSetup(): void {
   process.stdout.write("  /testgen   — generate tests\n");
   process.stdout.write("  /gate      — quality gate check\n");
   process.stdout.write("  /deadcode  — detect unused exports\n");
+  process.stdout.write("  /ask       — ask a question\n");
 }
 
 function showHelp(): void {
@@ -264,10 +269,31 @@ async function main(): Promise<void> {
       opencode_base_url: process.env.OPENCODE_BASE_URL,
     };
     const engine = Engine.fromInputs({ secrets });
-    const reason = args.slice(2).join(" ") || "dismissed by user";
-    if (args[1] === "--rule" && args[2]) {
-      engine.getDismissalManager().dismissByRule(args[2], reason);
-      process.stdout.write(`✅ Dismissed rule: ${args[2]}\n`);
+    const dismissArgs = args.slice(1);
+    const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
+    const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
+
+    if (dismissArgs.includes("--rule")) {
+      const ruleIdx = dismissArgs.indexOf("--rule");
+      const ruleId = dismissArgs[ruleIdx + 1];
+      if (!ruleId) {
+        process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+        return;
+      }
+      engine.getDismissalManager().dismissByRule(ruleId, reason);
+      process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
+    } else if (dismissArgs.includes("--file")) {
+      const fileIdx = dismissArgs.indexOf("--file");
+      const filePath = dismissArgs[fileIdx + 1];
+      const lineIdx = dismissArgs.indexOf("--line");
+      const lineNum = lineIdx >= 0 ? Number(dismissArgs[lineIdx + 1]) : null;
+      if (!filePath) {
+        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
+        return;
+      }
+      const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
+      engine.getDismissalManager().dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+      process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
       process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
@@ -288,6 +314,8 @@ async function main(): Promise<void> {
       context: { type: "string" },
       "log-level": { type: "string" },
       "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      sarif: { type: "boolean", default: false },
       "min-score": { type: "string" },
       "max-critical": { type: "string" },
       "max-high": { type: "string" },
@@ -312,6 +340,9 @@ async function main(): Promise<void> {
 
   if (values["log-level"]) {
     logger.level = values["log-level"] as any;
+  }
+  if (values.json) {
+    logger.setJsonMode(true);
   }
 
   const secrets: RuntimeSecrets = {
@@ -391,6 +422,24 @@ async function main(): Promise<void> {
 
   const report = await engine.run();
 
+  // JSON output mode
+  if (values.json) {
+    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    if (report.mode === "gate" && report.gatePassed === false) {
+      process.exit(1);
+    }
+    return;
+  }
+
+  // SARIF output mode
+  if (values.sarif) {
+    process.stdout.write(renderSarif(report) + "\n");
+    if (report.mode === "gate" && report.gatePassed === false) {
+      process.exit(1);
+    }
+    return;
+  }
+
   // Human-readable console output.
   process.stdout.write(`\n=== CodeSentinel [${report.mode}] ===\n`);
   if (values["dry-run"] && report.mode === "fix") {
@@ -416,7 +465,11 @@ async function main(): Promise<void> {
     process.stdout.write(`\nFix attempts (${report.fixAttempts.length}):\n`);
     for (const a of report.fixAttempts) {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      process.stdout.write(`  #${a.iteration} ${a.file} — ${status}: ${a.explanation}\n`);
+      let line = `  #${a.iteration} ${a.file} — ${status}: ${a.explanation}`;
+      if (a.newIssuesIntroduced.length > 0) {
+        line += ` [${a.newIssuesIntroduced.length} new issue(s) introduced]`;
+      }
+      process.stdout.write(line + "\n");
     }
   }
   if (report.generatedTests.length) {
@@ -428,7 +481,7 @@ async function main(): Promise<void> {
   process.stdout.write(`\nDone in ${report.metrics.durationMs}ms.\n`);
 
   // Exit non-zero if gate fails
-  if (report.mode === "gate" && !report.summary.includes("PASSED")) {
+  if (report.mode === "gate" && report.gatePassed === false) {
     process.exit(1);
   }
 }

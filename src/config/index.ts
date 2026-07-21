@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { z } from "zod";
+import { z, ZodError } from "zod";
 
 import { DEFAULT_CONFIG, mergeConfig } from "./defaults.js";
 import type { CodeSentinelConfig, Mode, AnalyzerConfig } from "./types.js";
@@ -12,7 +12,7 @@ import type { CodeSentinelConfig, Mode, AnalyzerConfig } from "./types.js";
 const userConfigSchema = z
   .object({
     mode: z
-      .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate"])
+      .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe"])
       .optional(),
     max_iterations: z.number().int().positive().optional(),
     enable_auto_fix: z.boolean().optional(),
@@ -138,8 +138,12 @@ export function loadConfig(opts: {
     fileConfig = parseJsonc(raw);
   }
 
-  const parsed = userConfigSchema.parse(fileConfig) as Partial<CodeSentinelConfig>;
-  const fromFile = mergeConfig(DEFAULT_CONFIG, parsed);
+  const parsed = userConfigSchema.safeParse(fileConfig);
+  if (!parsed.success) {
+    const friendly = formatZodErrors(parsed.error);
+    throw new Error(`Invalid config${opts.configPath ? ` in ${opts.configPath}` : ""}:\n${friendly}`);
+  }
+  const fromFile = mergeConfig(DEFAULT_CONFIG, parsed.data as Partial<CodeSentinelConfig>);
   const final = mergeConfig(
     fromFile,
     opts.overrides ?? ({} as Partial<CodeSentinelConfig>),
@@ -165,6 +169,52 @@ function parseJsonc(raw: string): Record<string, unknown> {
   return JSON.parse(masked);
 }
 
+/** Convert a ZodError into a concise, human-readable list of issues. */
+function formatZodErrors(error: ZodError): string {
+  const LABELS: Record<string, string> = {
+    mode: "mode",
+    max_iterations: "max_iterations",
+    enable_auto_fix: "enable_auto_fix",
+    enable_scoring: "enable_scoring",
+    enable_test_generation: "enable_test_generation",
+    test_runner: "test_runner",
+    include: "include",
+    exclude: "exclude",
+    plugins: "plugins",
+    gate: "gate",
+    analyzer: "analyzer",
+    default_model: "default_model",
+    cache_dir: "cache_dir",
+    enable_cache: "enable_cache",
+    secretPatterns: "secretPatterns",
+    dismissalsFile: "dismissalsFile",
+    dashboard: "dashboard",
+  };
+
+  const lines: string[] = [];
+  for (const issue of error.issues) {
+    const path = issue.path.map((p) => (typeof p === "number" ? `[${p}]` : p)).join(".");
+    const label = path ? (LABELS[path] ?? path) : "(root)";
+
+    if (issue.code === "invalid_type") {
+      const expected = issue.received === "undefined" ? "optional" : `type ${issue.expected}`;
+      lines.push(`  - ${label}: expected ${expected}, got ${issue.received}`);
+    } else if (issue.code === "invalid_enum_value") {
+      const valid = issue.options.map((o) => `"${o}"`).join(", ");
+      lines.push(`  - ${label}: must be one of ${valid}, got "${issue.received}"`);
+    } else if (issue.code === "too_small") {
+      lines.push(`  - ${label}: must be >= ${issue.minimum}`);
+    } else if (issue.code === "too_big") {
+      lines.push(`  - ${label}: must be <= ${issue.maximum}`);
+    } else if (issue.code === "invalid_string") {
+      lines.push(`  - ${label}: ${issue.validation} string expected`);
+    } else {
+      lines.push(`  - ${label}: ${issue.message}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 /** Sanity-check a fully-merged config. */
 function validateConfig(config: CodeSentinelConfig): void {
   if (config.max_iterations < 1) {
@@ -177,6 +227,8 @@ function validateConfig(config: CodeSentinelConfig): void {
     "score",
     "testgen",
     "chat",
+    "gate",
+    "describe",
   ];
   if (!validModes.includes(config.mode)) {
     throw new Error(`Invalid mode: ${config.mode}`);
