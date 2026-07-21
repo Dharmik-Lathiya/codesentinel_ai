@@ -1,4 +1,4 @@
-import type { Severity } from "../config/types.js";
+import type { Severity, SecurityBlendStrategy } from "../config/types.js";
 import type { Finding } from "../analyzer/index.js";
 
 /** A 0-100 quality score with a weighted overall value. */
@@ -86,15 +86,25 @@ export class Scorer {
       >
     >,
     rationale: string,
+    strategy: SecurityBlendStrategy = "min",
   ): ScoreBreakdown {
     const readability = ai.readability ?? baseline.readability;
     const maintainability = ai.maintainability ?? baseline.maintainability;
-    // Keep the more conservative (lower) security number: static analysis
-    // is more reliable for security, so we take the stricter assessment.
-    const security = Math.min(
-      ai.security ?? 100,
-      baseline.security,
-    );
+    let security: number;
+    switch (strategy) {
+      case "avg":
+        security = Math.round(((ai.security ?? baseline.security) + baseline.security) / 2);
+        break;
+      case "static-only":
+        security = baseline.security;
+        break;
+      case "min":
+      default:
+        // Keep the more conservative (lower) security number: static analysis
+        // is more reliable for security, so we take the stricter assessment.
+        security = Math.min(ai.security ?? 100, baseline.security);
+        break;
+    }
     const test_coverage = ai.test_coverage ?? baseline.test_coverage;
     return this.finalize({
       readability,
@@ -147,9 +157,9 @@ export class Scorer {
     const testPaths = new Set(
       files
         .map((f) => f.path)
-        .filter((p) => /\.(test|spec)\./.test(p)),
+        .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
     );
-    const sourceFiles = files.filter((f) => !/\.(test|spec)\./.test(f.path));
+    const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
     if (sourceFiles.length === 0) return 100;
     let covered = 0;
     for (const f of sourceFiles) {

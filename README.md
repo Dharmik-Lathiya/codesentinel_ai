@@ -1,140 +1,156 @@
 # CodeSentinel AI
 
-AI-powered code quality orchestrator. It reviews pull requests, proposes/auto-applies
-fixes, audits entire repositories, scores code quality (0–100), generates missing unit
-tests, and answers contextual questions — all through a single, configurable engine.
+AI-powered code quality orchestrator. Review PRs, auto-fix issues, audit entire repos, score quality (0–100), generate tests, enforce quality gates, detect dead code, and answer questions — all through a single CLI, GitHub Action, or Probot app.
 
-Built with clean, modular TypeScript. Supports multiple AI providers and is designed to
-run as a CLI, a reusable **GitHub Action**, or a **Probot GitHub App**.
+Supports **OpenCode**, **OpenAI**, **Anthropic**, and **Gemini** — each task can use a different model.
 
 ---
 
-## ✨ Features
-
-| Mode       | What it does |
-|------------|--------------|
-| `review`   | Analyze a PR diff, detect bugs/smells/bad practices, add inline comments, summarize. |
-| `fix`      | Attempt automatic fixes in a loop, run lint/tests after each iteration. |
-| `audit`    | Scan the whole repo for security / performance / architecture issues; optionally open issues. |
-| `score`    | Output a 0–100 quality score with a breakdown (readability, maintainability, security, coverage). |
-| `testgen`  | Detect functions without tests and generate Jest/Vitest unit tests. |
-| `chat`     | Answer `/ask <question>` using the codebase as context. |
-
-### AI providers
-OpenAI, Anthropic, Gemini, and OpenCode — each capability (`review`, `fix`, `audit`,
-`score`, `testgen`, `chat`) can use a different model via config.
-
-### Bonus
-- 🗄️ On-disk response **caching** for repeated analyses.
-- 🔌 **Plugin system** for custom findings / scoring hooks.
-- 🖥️ **CLI** interface for local use.
-
----
-
-## 📦 Installation
+## Quick start
 
 ```bash
-npm install
+# Install
+npm install @dharmiklathiya/codesentinel_ai
 npm run build
+
+# Set up GitHub Actions workflow (run once in your project)
+npx @dharmiklathiya/codesentinel_ai@latest setup
+
+# Run a review
+node dist/index.js review
+
+# Score your project
+node dist/index.js score --provider opencode
 ```
 
-Optional provider SDKs are installed automatically, but you only need the one(s) you use.
+Then comment on any PR:
+```
+/review   /fix   /audit   /score   /testgen   /gate   /deadcode   /ask ...
+```
 
 ---
 
-## 📚 Use as a Library
+## Modes
 
-Install in your project:
+| Mode | CLI | Description |
+|------|-----|-------------|
+| **review** | `review` | Analyze PR diff for bugs, security, performance, and code smells. Posts inline PR comments. |
+| **fix** | `fix` | Auto-fix issues in a loop; runs lint + tests after each attempt. Detects regressions. |
+| **audit** | `audit` | Full repository scan — security, performance, architecture, secrets. Optionally opens GitHub Issues. |
+| **score** | `score` | Computes a 0–100 quality score across readability, maintainability, security, and test coverage. |
+| **testgen** | `testgen` | Finds untested functions and generates Jest/Vitest unit tests. |
+| **chat** | `chat --ask <question>` | Answers questions using the codebase as context. |
+| **gate** | `gate` | Quality gate — exits non-zero if score below threshold or findings exceed limits. |
+| **describe** | `describe` | Generates structured PR description (title, summary, type, breaking changes, highlights). |
+
+---
+
+## CLI usage
+
 ```bash
-npm install codesentinel-ai
+codesentinel [mode] [options]
+codesentinel setup
+codesentinel init-hook
+codesentinel dashboard
+codesentinel dismiss --file <path> --line <n> [reason]
+codesentinel dismiss --rule <ruleId> [reason]
 ```
 
-### Quick start
-```ts
-import { Engine } from "codesentinel-ai";
+### Options
 
-const engine = Engine.fromInputs({
-  configPath: "./codesentinel.config.json",
-  secrets: {
-    opencode_api_key: process.env.OPENCODE_API_KEY,
-    opencode_base_url: process.env.OPENCODE_BASE_URL, // optional
-  },
-  root: "/path/to/your/project",
-});
+| Flag | Description |
+|------|-------------|
+| `-m, --mode <mode>` | Mode: review, fix, audit, score, testgen, chat, gate, describe |
+| `-c, --config <path>` | Path to `codesentinel.config.json` |
+| `--provider <name>` | AI provider (opencode, openai, anthropic, gemini) — overrides all tasks |
+| `--max-iterations <n>` | Max fix iterations (default: 5) |
+| `--auto-fix` | Apply fixes automatically |
+| `--scoring / --no-scoring` | Enable/disable scoring (default: enabled) |
+| `--test-gen` | Enable test generation |
+| `--ask <question>` | Ask a question (chat mode) |
+| `--context <text>` | Free-form project context for prompts |
+| `--dry-run` | Show what would be changed without writing (fix mode) |
+| `--log-level <level>` | Log level: debug, info, warn, error |
+| `--json` | Output report as JSON |
+| `--sarif` | Output findings in SARIF 2.1.0 format |
+| `--min-score <n>` | Minimum score to pass gate (0–100) |
+| `--max-critical <n>` | Max critical findings allowed in gate |
+| `--max-high <n>` | Max high findings allowed in gate |
+| `--version` | Show version |
+| `--help` | Show help |
 
-// Run any mode
-const report = await engine.run();
-console.log(report.score?.overall); // 0-100
-console.log(report.findings);       // Finding[]
-```
+### Examples
 
-### Chat mode
-```ts
-const answer = await engine.ask("How does authentication work?");
-console.log(answer);
-```
+```bash
+# Review with defaults
+codesentinel review
 
-### Switch provider in code
-```ts
-import { Engine, mergeConfig, DEFAULT_CONFIG } from "codesentinel-ai";
+# Score using OpenAI
+codesentinel score --provider openai
 
-const config = mergeConfig(DEFAULT_CONFIG, {
-  default_model: { provider: "openai", model: "gpt-4o" },
-  models: {
-    review: { provider: "anthropic", model: "claude-3-5-sonnet" },
-  },
-});
+# Auto-fix with Anthropic, cap at 3 iterations
+codesentinel fix --auto-fix --max-iterations 3 --provider anthropic
 
-const engine = new Engine(config, { openai_api_key: "..." });
-const report = await engine.run();
-```
+# Quality gate: score ≥ 70, zero criticals, max 5 highs
+codesentinel gate --min-score 70 --max-critical 0 --max-high 5
 
-### Custom plugin
-```ts
-import type { CodeSentinelPlugin, Finding } from "codesentinel-ai";
+# JSON output (pipe to jq)
+codesentinel review --json | jq '.findings'
 
-const myPlugin: CodeSentinelPlugin = {
-  name: "no-console-log",
-  analyze(files) {
-    const findings: Finding[] = [];
-    for (const f of files) {
-      if (f.content.includes("console.log")) {
-        findings.push({
-          severity: "low",
-          category: "smell",
-          file: f.path,
-          line: null,
-          comment: "Avoid console.log in production",
-          source: "static",
-        });
-      }
-    }
-    return findings;
-  },
-};
-```
+# SARIF output (upload to GitHub Advanced Security)
+codesentinel audit --sarif > results.sarif
 
-### Available exports
-```ts
-// Core
-import { Engine } from "codesentinel-ai";
-import { loadConfig, configFromInputs, DEFAULT_CONFIG, mergeConfig } from "codesentinel-ai";
+# Chat about the codebase
+codesentinel chat --ask "How does authentication work?"
 
-// AI
-import { AIHub, extractJson } from "codesentinel-ai";
+# Dead code detection
+codesentinel deadcode
 
-// Types
-import type {
-  CodeSentinelConfig, EngineReport, Finding, ScoreBreakdown,
-  ModelConfig, Provider, Mode, RuntimeSecrets, CodeSentinelPlugin,
-} from "codesentinel-ai";
+# Start the web dashboard
+codesentinel dashboard
+
+# Setup GitHub Actions workflow in the current project
+codesentinel setup
+
+# Dismiss a false positive
+codesentinel dismiss --file src/app.ts --line 42 --rule-id "security:hardcoded key" "Not a real key"
 ```
 
 ---
 
-## ⚙️ Configuration
+## AI providers
 
-Create `codesentinel.config.json` (see [`config/codesentinel.config.json`](config/codesentinel.config.json)):
+Each capability uses a model defined in config. **OpenCode** is the default (runs locally).
+
+```bash
+# Environment variables
+export OPENCODE_API_KEY=sk-...      # for opencode (default)
+export OPENAI_API_KEY=sk-...        # for openai
+export ANTHROPIC_API_KEY=sk-ant-... # for anthropic
+export GEMINI_API_KEY=...           # for gemini
+
+# Override all tasks from CLI
+codesentinel review --provider anthropic
+
+# Per-task models in config
+```
+
+```jsonc
+{
+  "default_model": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
+  "models": {
+    "review": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
+    "fix":    { "provider": "openai", "model": "gpt-4o" },
+    "score":  { "provider": "gemini", "model": "gemini-1.5-pro" }
+  }
+}
+```
+
+---
+
+## Configuration
+
+Create `codesentinel.config.json` in your project root:
 
 ```jsonc
 {
@@ -146,106 +162,100 @@ Create `codesentinel.config.json` (see [`config/codesentinel.config.json`](confi
   "include_positive_feedback": true,
   "project_context": "TypeScript monorepo. Keep functions pure.",
   "default_model": { "provider": "opencode", "model": "opencode/default" },
-  "models": {
-    "review": { "provider": "opencode", "model": "opencode/default" },
-    "fix":    { "provider": "opencode", "model": "opencode/default" }
-  },
   "test_runner": "vitest",
   "include": ["**/*.{ts,tsx,js,jsx}"],
   "exclude": ["node_modules/**", "dist/**", "**/*.test.*"],
-  "output": { "postGithubComments": true, "createGithubIssues": false, "writeReportFile": true, "reportDir": "codesentinel-reports" },
+  "gate": {
+    "minScore": 70,
+    "maxCritical": 0,
+    "maxHigh": 5,
+    "blockOnSecurity": true,
+    "blockOnBugs": false
+  },
+  "securityBlendStrategy": "min",
+  "output": {
+    "postGithubComments": true,
+    "createGithubIssues": false,
+    "writeReportFile": true,
+    "reportDir": "codesentinel-reports"
+  },
   "enable_cache": true,
   "cache_dir": ".codesentinel-cache",
   "plugins": []
 }
 ```
 
-Config is resolved by layering: **defaults → config file → overrides** (CLI flags / Action inputs).
+Config is resolved as: **defaults → config file → overrides** (CLI flags / Action inputs).
 
-### Switching providers
+### Security blend strategy
 
-OpenCode is the **default provider** for all tasks. To switch:
+Controls how AI and static analysis security scores are combined:
 
-**CLI** — use `--provider` to override all tasks at once:
-```bash
-codesentinel review --provider openai
-codesentinel fix --provider anthropic
-```
+| Strategy | Behavior |
+|----------|----------|
+| `min` (default) | Takes the lower (more conservative) score |
+| `avg` | Averages static and AI scores |
+| `static-only` | Ignores AI security score entirely |
 
-**Config file** — set `default_model` or override per-task:
-```jsonc
-{
-  "default_model": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
-  "models": {
-    "review": { "provider": "anthropic", "model": "claude-3-5-sonnet" },
-    "fix":    { "provider": "openai", "model": "gpt-4o" }
-  }
-}
-```
+### Quality gate (`codesentinel gate`)
 
-**Environment variables**:
-```bash
-export OPENCODE_API_KEY=...    # for opencode (default)
-export OPENAI_API_KEY=...      # for openai
-export ANTHROPIC_API_KEY=...   # for anthropic
-export GEMINI_API_KEY=...      # for gemini
-```
+The gate evaluates findings and score against configurable thresholds. It's designed for CI — exits non-zero on failure.
+
+- `minScore` — overall score must be ≥ this value
+- `maxCritical` / `maxHigh` — maximum allowed findings at each severity
+- `blockOnSecurity` — fail if any security finding exists
+- `blockOnBugs` — fail if any bug finding exists
 
 ---
 
-## 🖥️ CLI usage
+## Output formats
 
-```bash
-# Review using default opencode provider
-node dist/index.js --mode review --config ./codesentinel.config.json
+### Human-readable (default)
+```
+=== CodeSentinel [review] ===
+Found 3 issues (1 critical, 1 warning, 1 praise)
+Score: 78/100 (readability 85, maintainability 70, security 90, coverage 65)
 
-# Score the whole repo using OpenAI
-node dist/index.js --mode score --provider openai
-
-# Switch all tasks to Anthropic
-node dist/index.js fix --auto-fix --provider anthropic
-
-# Ask a question (chat mode)
-node dist/index.js chat --ask "How does authentication work?" --context "Node service"
-
-# Generate tests
-node dist/index.js --mode testgen --test-gen
+Findings (3):
+  [critical] src/auth.ts:42 — Hardcoded API key detected
+  [medium]   src/utils.ts:15 — Possible null dereference
+  [praise]   src/app.ts:1 — Good test coverage
 ```
 
-Environment variables (API keys): `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-`GEMINI_API_KEY`, `OPENCODE_API_KEY`, `OPENCODE_BASE_URL`, `GITHUB_TOKEN`.
+### JSON (`--json`)
+Full `EngineReport` as JSON — includes findings, score, fix attempts, generated tests, metrics.
+
+### SARIF (`--sarif`)
+Findings in SARIF 2.1.0 format — compatible with GitHub Advanced Security and other SARIF viewers.
 
 ---
 
-## 🤖 GitHub Action
+## GitHub Action
 
-### Use in other projects via PR comments
-
-**One command setup — run in your project root:**
+### Setup (one command)
 
 ```bash
 npx @dharmiklathiya/codesentinel_ai@latest setup
-# or
-bash <(curl -s https://raw.githubusercontent.com/your-org/codesentinel-ai/main/scripts/setup.sh)
 ```
 
-This creates `.github/workflows/codesentinel.yml` automatically.
+This creates `.github/workflows/codesentinel.yml`. Commit and push it.
 
-**Then comment on any PR:**
-```
-/review   → AI code review
-/fix      → propose fixes
-/audit    → full repo audit
-/score    → quality score (0-100)
-/testgen  → generate missing tests
-```
+### Slash commands on PRs
 
-No API keys needed — OpenCode is free and runs locally.
+Comment on any PR:
 
-### Option 2: Use as a reusable Action
+| Command | Action |
+|---------|--------|
+| `/review` | AI code review — inline PR comments |
+| `/fix` | Propose and auto-fix issues |
+| `/audit` | Full repository audit |
+| `/score` | Quality score (0–100) |
+| `/testgen` | Generate missing tests |
+| `/gate` | Quality gate check |
+| `/deadcode` | Detect unused exports |
+| `/ask <question>` | Ask a question about the codebase |
 
-See [`action.yml`](action.yml) and the example workflow in
-[`.github/workflows/codesentinel.yml`](.github/workflows/codesentinel.yml).
+### Reusable Action
 
 ```yaml
 - uses: your-org/codesentinel-ai@v1
@@ -255,53 +265,128 @@ See [`action.yml`](action.yml) and the example workflow in
     opencode_api_key: ${{ secrets.OPENCODE_API_KEY }}
 ```
 
-The Action posts PR comments, writes a job summary, and outputs metrics
-(`score`, `findings`).
+The Action:
+- Posts inline PR comments for findings
+- Creates Check Runs with annotations (`gate` mode)
+- Sets commit status (`codesentinel/gate` context)
+- Outputs `score` and `findings` for downstream steps
 
 ---
 
-## 🔌 GitHub App (Probot)
+## GitHub App (Probot)
 
-Run the bundled Probot app (`src/github/app.ts`) and comment slash commands on a PR:
-
-```
-/review
-/fix
-/audit
-/score
-/testgen
-/ask How is rate limiting implemented?
-```
-
-The app runs the engine for the requested mode and posts the result back as a comment.
-
----
-
-## 🧪 Testing
+Run the bundled Probot app:
 
 ```bash
-npm test          # run vitest suite (scorer, analyzer, engine flow)
-npm run typecheck # type-check the whole project
-npm run build     # compile to dist/
+node dist/github/app.js
 ```
+
+Then comment any slash command on a PR. The app:
+- Handles `issue_comment.created` and `issue_comment.edited` events
+- Deduplicates repeated comments
+- Responds with the analysis result as a comment
 
 ---
 
-## 🔌 Plugins
+## Dashboard
 
-A plugin is a module that default-exports a `CodeSentinelPlugin`:
+Start the web dashboard to view historical run data:
+
+```bash
+codesentinel dashboard
+```
+
+Opens at `http://localhost:4173` (configurable via `config.dashboard.port`). Gracefully shuts down on Ctrl+C.
+
+---
+
+## Pre-commit hook
+
+```bash
+codesentinel init-hook
+```
+
+Installs a pre-commit git hook that runs a quick scan on staged files.
+
+---
+
+## Dismissing false positives
+
+```bash
+# Dismiss by rule (all occurrences)
+codesentinel dismiss --rule "security:eval" "False positive — input is sanitized"
+
+# Dismiss a specific file+line
+codesentinel dismiss --file src/app.ts --line 42 "Reviewed and approved"
+```
+
+Dismissals are stored in a JSON file (configurable via `dismissalsFile`) and are persisted across runs.
+
+---
+
+## Dead code detection
+
+```bash
+codesentinel deadcode
+```
+
+Analyzes all source files and reports unused exports (functions, variables, types that are exported but never imported elsewhere).
+
+---
+
+## Caching
+
+AI responses are cached on disk (default: `.codesentinel-cache`, 24h TTL, 500 entry max). Cache is content-addressed — unchanged files skip AI re-analysis entirely.
+
+---
+
+## 19 static analysis checks
+
+| Category | Checks |
+|----------|--------|
+| Security | Secrets (API keys, tokens, connection strings, private keys), `eval()`, `child_process`, `Function()`, `exec`, regex DoS |
+| Bugs | `==` vs `===`, `debugger;`, `console.log`, TODO/FIXME, empty catch, `any` casts, unused vars |
+| Smells | Long functions (>100 lines), deep nesting (>4 levels), magic numbers, large files (>500 lines) |
+| Style | Naming conventions (camelCase, PascalCase) |
+
+---
+
+## Secrets scanning
+
+Built-in patterns for:
+- AWS keys, GitHub tokens, JWT tokens
+- Private keys (RSA, EC, DSA, OpenSSH, PKCS#8)
+- Generic API keys, npm tokens
+- PostgreSQL, Redis, MongoDB connection strings
+- Slack tokens, Google API keys
+
+Custom patterns can be added via `config.secretPatterns`.
+
+---
+
+## Plugins
+
+Extend analysis with custom checks:
 
 ```ts
 import type { CodeSentinelPlugin } from "codesentinel-ai";
 
 const plugin: CodeSentinelPlugin = {
-  name: "no-fetch",
+  name: "no-console-log",
   analyze(files) {
-    // return extra Finding[] based on files
-    return [];
+    return files
+      .filter(f => f.content.includes("console.log"))
+      .map(f => ({
+        severity: "low",
+        category: "smell",
+        file: f.path,
+        line: null,
+        comment: "Avoid console.log in production",
+        source: "static",
+      }));
   },
-  score(breakdown, files) {
-    // adjust the ScoreBreakdown and return it
+  score(breakdown) {
+    breakdown.readability = Math.max(0, breakdown.readability - 5);
     return breakdown;
   },
 };
@@ -309,86 +394,92 @@ const plugin: CodeSentinelPlugin = {
 export default plugin;
 ```
 
-List plugin module paths in `config.plugins` to activate them.
+List plugins in `config.plugins`.
 
 ---
 
-## 🗂️ Project structure
+## Library usage
+
+```ts
+import { Engine, mergeConfig, DEFAULT_CONFIG } from "codesentinel-ai";
+
+const engine = Engine.fromInputs({
+  configPath: "./codesentinel.config.json",
+  secrets: {
+    opencode_api_key: process.env.OPENCODE_API_KEY,
+  },
+  root: "/path/to/project",
+});
+
+const report = await engine.run();
+console.log(report.score?.overall);  // 0–100
+console.log(report.gatePassed);      // boolean (gate mode)
+
+// Chat
+const answer = await engine.ask("How does auth work?");
+```
+
+### Available exports
+
+```ts
+// Core
+import { Engine, loadConfig, configFromInputs, DEFAULT_CONFIG, mergeConfig } from "codesentinel-ai";
+
+// AI
+import { AIHub, extractJson, ProviderUnavailableError } from "codesentinel-ai";
+
+// Utilities
+import { concurrentMap, renderSarif, renderHtmlReport } from "codesentinel-ai";
+
+// Types
+import type {
+  CodeSentinelConfig, EngineReport, Finding, ScoreBreakdown,
+  ModelConfig, Provider, Mode, RuntimeSecrets, CodeSentinelPlugin,
+  SecurityBlendStrategy, GateConfig, FixAttempt, ReviewComment,
+} from "codesentinel-ai";
+```
+
+---
+
+## Testing
+
+```bash
+npm test          # Vitest — 110+ tests
+npm run typecheck # tsc --noEmit
+npm run build     # Compile to dist/
+```
+
+---
+
+## Project structure
 
 ```
 src/
-  config/      configuration types, defaults, loader (JSONC + overrides)
-  prompts/     PromptRegistry + variable rendering ({{var}})
-  ai/          provider abstraction: openai, anthropic, gemini, opencode
-  analyzer/    static heuristics (secrets, eval, console, TODO)
-  scorer/      weighted quality score with breakdown + AI blend
-  testgen/     untested-function detection + test generation
-  cache/       file-based response cache
-  plugins/     plugin loader / lifecycle hooks
+  config/      Types, defaults, JSONC config loader, validation
+  prompts/     Prompt templates with {{variable}} rendering
+  ai/          Provider abstraction: openai, anthropic, gemini, opencode
+  analyzer/    19 static heuristics + progressive analysis + severity adjustment
+  scorer/      Weighted quality score (0–100) with AI blending
+  testgen/     Untested function detection + test generation
+  cache/       File-based LRU cache with content-addressable keys
+  gate/        Quality gate evaluation against thresholds
+  plugins/     Plugin loader / lifecycle hooks
+  dismiss/     False-positive dismissal manager
+  secrets/     Secret pattern scanner (19 built-in patterns)
+  linters/     External linter runner (ESLint, Biome, Pylint)
+  scanners/    3rd-party secret scanner integration
+  deadcode/    Unused export detection
+  suggestions/ Committable suggestion builder
   github/      Action entrypoint, Probot app, GitHub reporter
-  engine/      central orchestrator (mode dispatch + fix loop)
-  utils/       logger, git diff collection, file globbing
-  index.ts     CLI
-prompts/        markdown prompt templates (overridable)
-config/         example configuration
-tests/          vitest suites
+  engine/      Central orchestrator — mode dispatch, fix loop, verification
+  dashboard/   Web dashboard server
+  utils/       Logger (JSON mode), git diff, file globbing, concurrency, SARIF, retry
+  index.ts     CLI entrypoint
+  lib.ts       Public API exports
 ```
 
 ---
 
-## 🚀 Publish to npm
-
-### 1. Login to npm
-```bash
-npm login
-```
-
-### 2. Update repository URLs
-Edit `package.json` — replace `your-org/codesentinel-ai` with your actual GitHub repo.
-
-### 3. Build and test
-```bash
-npm run build
-npm test
-```
-
-### 4. Dry run (preview what gets published)
-```bash
-npm pack --dry-run
-```
-
-### 5. Publish
-```bash
-# First time
-npm publish
-
-# Subsequent (bump version first)
-npm version patch   # 0.1.0 → 0.1.1
-npm version minor   # 0.1.0 → 0.2.0
-npm version major   # 0.1.0 → 1.0.0
-npm publish
-```
-
-### 6. Install in other projects
-```bash
-npm install codesentinel-ai
-```
-
-Or use directly without installing:
-```bash
-npx codesentinel-ai review --provider opencode
-```
-
-### What gets published
-Only these files are included in the npm package:
-- `dist/` — compiled JS + type declarations
-- `action.yml` — GitHub Action manifest
-- `prompts/` — prompt templates
-
-Source code, tests, and config files are excluded via `.npmignore`.
-
----
-
-## 📄 License
+## License
 
 MIT

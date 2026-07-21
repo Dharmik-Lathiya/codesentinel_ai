@@ -8,11 +8,29 @@ const LEVELS: Record<LogLevel, number> = {
   error: 40,
 };
 
+let jsonMode = false;
+
 export class Logger {
   constructor(public level: LogLevel = "info") {}
 
+  setJsonMode(enabled: boolean): void {
+    jsonMode = enabled;
+  }
+
   private emit(level: LogLevel, args: unknown[]): void {
     if (LEVELS[level] < LEVELS[this.level]) return;
+    const msg = args
+      .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+      .join(" ");
+
+    if (jsonMode) {
+      const entry = JSON.stringify({ level, message: msg, timestamp: new Date().toISOString() });
+      if (level === "error") console.error(entry);
+      else if (level === "warn") console.warn(entry);
+      else console.log(entry);
+      return;
+    }
+
     const prefix = `[codesentinel:${level}]`;
     if (level === "error") console.error(prefix, ...args);
     else if (level === "warn") console.warn(prefix, ...args);

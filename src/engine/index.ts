@@ -27,6 +27,7 @@ import { buildSuggestionsComment } from "../suggestions/index.js";
 import { evaluateGate } from "../gate/index.js";
 import { runLinters } from "../linters/index.js";
 import { runThirdPartySecrets } from "../scanners/index.js";
+import { concurrentMap } from "../utils/concurrency.js";
 
 /** A comment to post back to a PR (inline or summary). */
 export interface ReviewComment {
@@ -44,6 +45,8 @@ export interface FixAttempt {
   explanation: string;
   /** Whether lint/test passed after applying the fix. */
   verified: boolean;
+  /** New findings introduced by the fix (if any). */
+  newIssuesIntroduced: Finding[];
 }
 
 /** The full machine-readable report produced by a run. */
@@ -55,6 +58,8 @@ export interface EngineReport {
   comments: ReviewComment[];
   generatedTests: GeneratedTest[];
   fixAttempts: FixAttempt[];
+  /** Typed gate result — only set when mode is "gate". */
+  gatePassed?: boolean;
   metrics: {
     filesAnalyzed: number;
     findingsBySeverity: Record<string, number>;
@@ -225,6 +230,7 @@ export class Engine {
       comments: [],
       generatedTests: [],
       fixAttempts: [],
+      gatePassed: gateResult.passed,
       metrics: { filesAnalyzed: files.length, findingsBySeverity: {}, durationMs: 0 },
     };
   }
@@ -305,38 +311,52 @@ export class Engine {
   private async analyzeFiles(
     files: { path: string; content: string }[],
   ): Promise<Finding[]> {
-    const staticFindings = this.analyzer.analyzeMany(
-      files.map((f) => ({ path: f.path, content: f.content })),
-    );
-    const pluginFindings = await this.plugins.runAnalyze(
-      files.map((f) => ({ path: f.path, content: f.content })),
-    );
-    const secretFindings = files.flatMap((f) =>
-      scanSecrets(f.path, f.content, this.config.secretPatterns),
-    );
+    const allFindings: Finding[] = [];
 
-    // External linters (ESLint, Biome, Pylint, etc.)
-    let linterFindings: Finding[] = [];
-    if (this.config.linters.enabled) {
-      linterFindings = runLinters(this.root, {
-        tools: this.config.linters.tools,
-        args: this.config.linters.args,
-      });
+    for (const file of files) {
+      const ch = this.cache.contentHash(file.content);
+      const cacheKey = { task: "static", path: file.path, hash: ch };
+      const cached = this.config.enable_cache
+        ? this.cache.get<Finding[]>("static", cacheKey)
+        : null;
+
+      if (cached) {
+        allFindings.push(...cached);
+        continue;
+      }
+
+      const staticFindings = this.analyzer.analyzeMany([file]);
+      const pluginFindings = await this.plugins.runAnalyze([file]);
+      const secretFindings = scanSecrets(file.path, file.content, this.config.secretPatterns);
+
+      let linterFindings: Finding[] = [];
+      if (this.config.linters.enabled) {
+        linterFindings = runLinters(this.root, {
+          tools: this.config.linters.tools,
+          args: this.config.linters.args,
+        });
+      }
+
+      let scannerFindings: Finding[] = [];
+      if (this.config.enableSecretScanner) {
+        scannerFindings = runThirdPartySecrets(this.root);
+      }
+
+      const fileFindings = [
+        ...staticFindings,
+        ...pluginFindings,
+        ...secretFindings,
+        ...linterFindings,
+        ...scannerFindings,
+      ];
+
+      if (this.config.enable_cache) {
+        this.cache.set("static", cacheKey, fileFindings);
+      }
+      allFindings.push(...fileFindings);
     }
 
-    // 3rd-party secret scanners (gitleaks, trufflehog)
-    let scannerFindings: Finding[] = [];
-    if (this.config.enableSecretScanner) {
-      scannerFindings = runThirdPartySecrets(this.root);
-    }
-
-    return this.dismissals.filterDismissed([
-      ...staticFindings,
-      ...pluginFindings,
-      ...secretFindings,
-      ...linterFindings,
-      ...scannerFindings,
-    ]);
+    return this.dismissals.filterDismissed(allFindings);
   }
 
   // ---------------------------------------------------------------------------
@@ -381,9 +401,8 @@ export class Engine {
   private async aiReview(
     files: { path: string; content: string; diff?: string }[],
   ): Promise<Finding[]> {
-    const out: Finding[] = [];
     logger.info(`aiReview: starting AI review for ${files.length} files`);
-    for (const file of files) {
+    const results = await concurrentMap(files, async (file) => {
       logger.info(`aiReview: processing ${file.path} (diff_len=${(file.diff ?? "").length}, content_len=${file.content.length})`);
       try {
         const cacheKey = { task: "review", path: file.path, content: file.content };
@@ -400,11 +419,13 @@ export class Engine {
           source: "ai" as const,
         }));
         logger.info(`aiReview: ${file.path} -> ${fileFindings.length} findings (cached=${!!cached})`);
-        out.push(...fileFindings);
+        return fileFindings;
       } catch (err) {
         logger.warn(`AI review failed for ${file.path}:`, err);
+        return [];
       }
-    }
+    }, 5);
+    const out = results.flat();
     logger.info(`aiReview: total AI findings = ${out.length}`);
     return out;
   }
@@ -439,6 +460,7 @@ export class Engine {
           fixed: false,
           explanation: `Error: ${err instanceof Error ? err.message : err}`,
           verified: false,
+          newIssuesIntroduced: [],
         });
       }
       // In dry-run or non-auto-fix mode, one attempt is sufficient since no files are written.
@@ -489,10 +511,37 @@ export class Engine {
       content: string;
     }>(res.content);
 
+    if (!parsed) {
+      return {
+        iteration,
+        file: finding.file,
+        fixed: false,
+        explanation: "AI returned unparseable response",
+        verified: false,
+        newIssuesIntroduced: [],
+      };
+    }
+
     let verified = false;
+    let newIssuesIntroduced: Finding[] = [];
     if (parsed.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
+      // Capture findings before fix for comparison
+      const findingsBefore = this.analyzer.analyzeMany([{ path: finding.file, content }]);
+
       writeFileSync(filePath, parsed.content, "utf8");
       verified = await this.runVerification();
+
+      // Re-analyze the fixed file to detect new issues introduced
+      const fixedContent = readText(filePath);
+      const findingsAfter = this.analyzer.analyzeMany([{ path: finding.file, content: fixedContent }]);
+      const beforeIds = new Set(findingsBefore.map((f) => `${f.category}:${f.line}:${f.comment}`));
+      newIssuesIntroduced = findingsAfter.filter((f) => {
+        const id = `${f.category}:${f.line}:${f.comment}`;
+        return !beforeIds.has(id);
+      });
+      if (newIssuesIntroduced.length > 0) {
+        logger.warn(`applyFix[${iteration}]: fix introduced ${newIssuesIntroduced.length} new finding(s)`);
+      }
     }
     return {
       iteration,
@@ -500,22 +549,39 @@ export class Engine {
       fixed: parsed.fixed,
       explanation: parsed.explanation,
       verified,
+      newIssuesIntroduced,
     };
   }
 
   /** Run lint + tests after a fix. Best-effort; returns true if both pass. */
   private async runVerification(): Promise<boolean> {
     const { execSync } = await import("node:child_process");
+    let allPassed = true;
+
+    // Run tests
     try {
       if (this.config.test_runner === "jest") {
         execSync("npx jest --passWithNoTests", { cwd: this.root, stdio: "ignore" });
       } else {
         execSync("npx vitest run", { cwd: this.root, stdio: "ignore" });
       }
-      return true;
     } catch {
-      return false;
+      allPassed = false;
     }
+
+    // Run linters if enabled
+    if (this.config.linters.enabled) {
+      const linterFindings = runLinters(this.root, {
+        tools: this.config.linters.tools,
+        args: this.config.linters.args,
+      });
+      if (linterFindings.length > 0) {
+        logger.warn(`runVerification: linter reported ${linterFindings.length} finding(s) after fix`);
+        allPassed = false;
+      }
+    }
+
+    return allPassed;
   }
 
   // ---------------------------------------------------------------------------
@@ -538,7 +604,7 @@ export class Engine {
       { role: "system", content: "You are a principal engineer doing a repo audit." },
       { role: "user", content: prompt },
     ]);
-    const parsed = extractJson<{ summary: string; findings: any[] }>(res.content);
+    const parsed = extractJson<{ summary: string; findings: any[] }>(res.content) ?? { summary: "", findings: [] };
 
     const aiFindings: Finding[] = (parsed.findings ?? []).map((f) => ({
       severity: f.severity,
@@ -604,7 +670,7 @@ export class Engine {
         : null;
       const ai = cached ?? (await this.callScoreAI(files));
       if (!cached && this.config.enable_cache) this.cache.set("score", cacheKey, ai);
-      return this.scorer.blendWithAI(baseline, ai, ai.rationale);
+      return this.scorer.blendWithAI(baseline, ai, ai.rationale, this.config.securityBlendStrategy);
     } catch {
       return baseline;
     }
@@ -682,7 +748,7 @@ export class Engine {
       breakingChanges: boolean;
       highlights: string[];
       todo: string[];
-    }>(res.content);
+    }>(res.content) ?? { title: "PR Description", description: "", type: "chore", breakingChanges: false, highlights: [], todo: [] };
 
     const summary = [
       `## ${parsed.title ?? "PR Description"}`,
@@ -741,7 +807,7 @@ export class Engine {
       { role: "user", content: prompt },
     ]);
     logger.info(`callAI response: provider=${res.provider} model=${res.model} tokens_in=${res.usage?.promptTokens} tokens_out=${res.usage?.completionTokens} content_len=${res.content.length}`);
-    return extractJson<{ findings: any[] }>(res.content);
+    return extractJson<{ findings: any[] }>(res.content) ?? { findings: [] };
   }
 
   private async callScoreAI(
@@ -766,7 +832,7 @@ export class Engine {
       { role: "system", content: "You score code quality objectively." },
       { role: "user", content: prompt },
     ]);
-    return extractJson(res.content);
+    return extractJson(res.content) ?? { readability: 50, maintainability: 50, security: 50, test_coverage: 50, rationale: "fallback" };
   }
 
   // ---------------------------------------------------------------------------

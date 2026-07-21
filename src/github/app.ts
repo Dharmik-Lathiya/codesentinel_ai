@@ -4,6 +4,8 @@ import { Engine, type EngineReport } from "../engine/index.js";
 import type { Mode, RuntimeSecrets } from "../config/types.js";
 import { logger } from "../utils/logger.js";
 
+const processedCommentIds = new Set<number>();
+
 /**
  * Probot GitHub App. Registers webhook handlers and responds to slash commands
  * posted as PR comments: /review /fix /audit /score /testgen /ask <question>.
@@ -17,43 +19,62 @@ export function codesentinelApp(app: Probot): void {
   });
 
   app.on("issue_comment.created", async (ctx) => {
-    const comment = ctx.payload.comment.body.trim();
-    const cmd = parseCommand(comment);
-    if (!cmd) return;
+    await handleComment(ctx);
+  });
 
-    const owner = ctx.payload.repository.owner.login;
-    const repo = ctx.payload.repository.name;
-    const pullNumber = ctx.payload.issue.number;
+  app.on("issue_comment.edited", async (ctx) => {
+    await handleComment(ctx);
+  });
+}
 
-    // Build secrets from environment for the engine run.
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-    };
+async function handleComment(ctx: any): Promise<void> {
+  const commentId = ctx.payload.comment.id;
+  if (processedCommentIds.has(commentId)) return;
+  processedCommentIds.add(commentId);
 
-    const engine = Engine.fromInputs({
-      overrides: { mode: cmd.mode },
-      secrets,
-      root: process.cwd(),
-    });
+  // Cap dedupe set size to prevent memory leak
+  if (processedCommentIds.size > 10000) {
+    const ids = [...processedCommentIds];
+    processedCommentIds.clear();
+    ids.slice(-5000).forEach((id) => processedCommentIds.add(id));
+  }
 
-    let reply: string;
-    if (cmd.mode === "chat") {
-      reply = await engine.ask(cmd.arg);
-    } else {
-      const report: EngineReport = await engine.run();
-      reply = formatReport(report);
-    }
+  const comment = ctx.payload.comment.body.trim();
+  const cmd = parseCommand(comment);
+  if (!cmd) return;
 
-    await ctx.octokit.issues.createComment({
-      owner,
-      repo,
-      issue_number: pullNumber,
-      body: reply,
-    });
+  const owner = ctx.payload.repository.owner.login;
+  const repo = ctx.payload.repository.name;
+  const pullNumber = ctx.payload.issue.number;
+
+  // Build secrets from environment for the engine run.
+  const secrets: RuntimeSecrets = {
+    github_token: process.env.GITHUB_TOKEN,
+    openai_api_key: process.env.OPENAI_API_KEY,
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+    gemini_api_key: process.env.GEMINI_API_KEY,
+    opencode_api_key: process.env.OPENCODE_API_KEY,
+  };
+
+  const engine = Engine.fromInputs({
+    overrides: { mode: cmd.mode },
+    secrets,
+    root: process.cwd(),
+  });
+
+  let reply: string;
+  if (cmd.mode === "chat") {
+    reply = await engine.ask(cmd.arg);
+  } else {
+    const report: EngineReport = await engine.run();
+    reply = formatReport(report);
+  }
+
+  await ctx.octokit.issues.createComment({
+    owner,
+    repo,
+    issue_number: pullNumber,
+    body: reply,
   });
 }
 
@@ -61,7 +82,7 @@ export function codesentinelApp(app: Probot): void {
 function parseCommand(
   body: string,
 ): { mode: Mode; arg: string } | null {
-  const m = body.match(/^\/(review|fix|audit|score|testgen|ask)\b\s*([\s\S]*)$/i);
+  const m = body.match(/^\/(review|fix|audit|score|testgen|gate|deadcode|ask)\b\s*([\s\S]*)$/i);
   if (!m) return null;
   const name = m[1].toLowerCase();
   const arg = (m[2] ?? "").trim();
@@ -72,6 +93,9 @@ function parseCommand(
 function formatReport(report: EngineReport): string {
   const parts = [`### CodeSentinel — ${report.mode}`, "", report.summary];
   if (report.score) parts.push(`**Score:** ${report.score.overall}/100`);
+  if (report.gatePassed !== undefined) {
+    parts.push(`**Gate:** ${report.gatePassed ? "PASSED" : "FAILED"}`);
+  }
   if (report.comments.length) {
     parts.push("", ...report.comments.map((c) => `- ${c.file}: ${c.body}`));
   }

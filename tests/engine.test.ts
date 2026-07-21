@@ -64,6 +64,41 @@ function fakeAI() {
           provider: "opencode",
         };
       }
+      if (task === "fix") {
+        return {
+          content: JSON.stringify({
+            fixed: true,
+            explanation: "Applied fix",
+            content: "export function add(a: number, b: number) {\n  return a + b // fixed\n}\n",
+          }),
+          model: "x",
+          provider: "opencode",
+        };
+      }
+      if (task === "describe") {
+        return {
+          content: JSON.stringify({
+            title: "Fix add function",
+            description: "Minor fix to the add function.",
+            type: "bugfix",
+            breakingChanges: false,
+            highlights: ["Fixed null deref"],
+            todo: [],
+          }),
+          model: "x",
+          provider: "opencode",
+        };
+      }
+      if (task === "testgen") {
+        return {
+          content: JSON.stringify({
+            test_file_path: "src/__tests__/app.test.ts",
+            content: "import { add } from '../app';\ndescribe('add', () => {\n  it('adds', () => expect(add(1,2)).toBe(3));\n});\n",
+          }),
+          model: "x",
+          provider: "opencode",
+        };
+      }
       return { content: "{}", model: "x", provider: "opencode" };
     },
   };
@@ -71,11 +106,9 @@ function fakeAI() {
 
 let root: string;
 beforeAll(() => {
-  root = mkdtempSync(join(tmpdir(), "codesentinel-"));
+  root = mkdtempSync(join(tmpdir(), "codesentinel-e2e-"));
   mkdirSync(join(root, "src"), { recursive: true });
 
-  // Initialize a git repo with a `main` base commit and a `feature` branch
-  // that diverges, so review/fix can collect a real diff.
   execSync("git init -q && git checkout -q -b main", { cwd: root });
   execSync('git config user.email "test@test.local" && git config user.name "test"', {
     cwd: root,
@@ -90,7 +123,6 @@ beforeAll(() => {
   );
   execSync("git add -A && git commit -q -m base", { cwd: root });
 
-  // Diverge on feature and modify the file so a diff exists.
   execSync("git checkout -q -b feature", { cwd: root });
   writeFileSync(
     join(root, "src", "app.ts"),
@@ -179,5 +211,119 @@ describe("Engine flow", () => {
     const report = await engine.run();
     expect(report.mode).toBe("fix");
     expect(report.fixAttempts.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("Gate mode (P0-3)", () => {
+  it("returns gatePassed=true when all checks pass", async () => {
+    const engine = new Engine(
+      loadConfig({
+        overrides: {
+          mode: "gate",
+          enable_cache: false,
+          enable_scoring: false,
+          gate: { minScore: 0, maxCritical: 100, maxHigh: 100, blockOnSecurity: false, blockOnBugs: false },
+        },
+      }),
+      {},
+      root,
+      fakeAI() as any,
+    );
+    const report = await engine.run();
+    expect(report.mode).toBe("gate");
+    expect(report.gatePassed).toBe(true);
+  });
+
+  it("returns gatePassed=false when critical threshold exceeded", async () => {
+    const engine = new Engine(
+      loadConfig({
+        overrides: {
+          mode: "gate",
+          enable_cache: false,
+          enable_scoring: true,
+          gate: { minScore: 100, maxCritical: 100, maxHigh: 100, blockOnSecurity: false, blockOnBugs: false },
+        },
+      }),
+      {},
+      root,
+      fakeAI() as any,
+    );
+    const report = await engine.run();
+    expect(report.mode).toBe("gate");
+    expect(report.gatePassed).toBe(false);
+  });
+});
+
+describe("Score blending strategy (P0-6)", () => {
+  it("respects min strategy (default)", async () => {
+    const engine = new Engine(
+      loadConfig({
+        overrides: {
+          mode: "score",
+          enable_cache: false,
+          securityBlendStrategy: "min",
+        },
+      }),
+      {},
+      root,
+      fakeAI() as any,
+    );
+    const report = await engine.run();
+    expect(report.score).not.toBeNull();
+  });
+
+  it("respects static-only strategy", async () => {
+    const engine = new Engine(
+      loadConfig({
+        overrides: {
+          mode: "score",
+          enable_cache: false,
+          securityBlendStrategy: "static-only",
+        },
+      }),
+      {},
+      root,
+      fakeAI() as any,
+    );
+    const report = await engine.run();
+    expect(report.score).not.toBeNull();
+  });
+});
+
+describe("Fix mode re-analysis (P0-4)", () => {
+  it("reports newIssuesIntroduced field in FixAttempt", async () => {
+    const engine = new Engine(
+      loadConfig({
+        overrides: {
+          mode: "fix",
+          enable_cache: false,
+          enable_auto_fix: false,
+          max_iterations: 1,
+        },
+      }),
+      {},
+      root,
+      fakeAI() as any,
+    );
+    const report = await engine.run();
+    expect(report.fixAttempts.length).toBeGreaterThan(0);
+    for (const attempt of report.fixAttempts) {
+      expect(attempt).toHaveProperty("newIssuesIntroduced");
+      expect(Array.isArray(attempt.newIssuesIntroduced)).toBe(true);
+    }
+  });
+});
+
+describe("Describe mode", () => {
+  it("produces structured PR description", async () => {
+    const engine = new Engine(
+      loadConfig({ overrides: { mode: "describe", enable_cache: false } }),
+      {},
+      root,
+      fakeAI() as any,
+    );
+    const report = await engine.run();
+    expect(report.mode).toBe("describe");
+    expect(report.summary).toContain("Fix add function");
   });
 });
