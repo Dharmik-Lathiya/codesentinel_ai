@@ -29,10 +29,13 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
+
+      - name: Install & Build
+        run: npm install && npm run build
 
       - name: Run CodeSentinel
-        uses: ./ # or: uses: your-org/codesentinel-ai@v1
+        uses: ./
         with:
           mode: ${{ github.event.inputs.mode || 'review' }}
           enable_scoring: "true"
