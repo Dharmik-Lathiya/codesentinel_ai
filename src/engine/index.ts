@@ -28,6 +28,12 @@ import { evaluateGate } from "../gate/index.js";
 import { runLinters } from "../linters/index.js";
 import { runThirdPartySecrets } from "../scanners/index.js";
 import { concurrentMap } from "../utils/concurrency.js";
+import { MCPManager } from "../mcp/client.js";
+import { getDefaultMCPServers } from "../mcp/servers.js";
+import { LearningStore } from "../learning/store.js";
+import { EventBus } from "../event-bus/bus.js";
+import { parseJsonlString, validateAndNormalize, buildInlineComments } from "../jsonl-parser.js";
+import { groupIntoBatches } from "./batcher.js";
 
 /** A comment to post back to a PR (inline or summary). */
 export interface ReviewComment {
@@ -82,7 +88,10 @@ export class Engine {
   private cache: FileCache;
   private plugins: PluginManager;
   private dismissals: DismissalManager;
-  private dashboard: DashboardServer;
+  private dashboard: DashboardServer | null = null;
+  private readonly mcp: MCPManager | null = null;
+  private readonly learning: LearningStore | null = null;
+  private readonly eventBus: EventBus;
 
   constructor(
     config: CodeSentinelConfig,
@@ -96,7 +105,8 @@ export class Engine {
     this.prompts = new PromptRegistry(config);
     this.cache = new FileCache(resolve(root, config.cache_dir));
     this.plugins = new PluginManager({ config, logger });
-    
+    this.eventBus = new EventBus();
+
     // Initialize analyzer with configuration
     this.analyzer = new StaticAnalyzer(
       config.analyzer,
@@ -111,9 +121,24 @@ export class Engine {
       this.analyzer.addCustomRule(rule);
     }
 
+    // Initialize MCP Manager
+    if (config.mcp.enabled) {
+      this.mcp = new MCPManager(
+        config.mcp.servers.length ? config.mcp.servers : getDefaultMCPServers(),
+      );
+    }
+
+    // Initialize Learning Store
+    if (config.learning.enabled) {
+      this.learning = new LearningStore(config.learning.dbPath);
+    }
+
     logger.info(`Configured AI model: ${config.default_model.provider}/${config.default_model.model}`);
     logger.info(`Review model: ${(config.models.review ?? config.default_model).provider}/${(config.models.review ?? config.default_model).model}`);
     this.checkAIProvider();
+
+    // Emit engine ready event
+    this.eventBus.emit({ type: "ready", payload: { timestamp: Date.now() } });
   }
 
   /** Best-effort health check: log whether the AI provider is reachable. */
@@ -259,7 +284,7 @@ export class Engine {
   // ---------------------------------------------------------------------------
   // DASHBOARD
   // ---------------------------------------------------------------------------
-  getDashboard(): DashboardServer {
+  getDashboard(): DashboardServer | null {
     return this.dashboard;
   }
 
@@ -269,6 +294,7 @@ export class Engine {
     score: ScoreBreakdown | null,
     durationMs: number,
   ): void {
+    if (!this.dashboard) return;
     const bySeverity: Record<string, number> = {};
     const byCategory: Record<string, number> = {};
     for (const f of findings) {
@@ -402,30 +428,42 @@ export class Engine {
     files: { path: string; content: string; diff?: string }[],
   ): Promise<Finding[]> {
     logger.info(`aiReview: starting AI review for ${files.length} files`);
-    const results = await concurrentMap(files, async (file) => {
-      logger.info(`aiReview: processing ${file.path} (diff_len=${(file.diff ?? "").length}, content_len=${file.content.length})`);
-      try {
-        const cacheKey = { task: "review", path: file.path, content: file.content };
-        const cached = this.config.enable_cache
-          ? this.cache.get<{ findings: any[] }>("review", cacheKey)
-          : null;
-        const parsed = cached ?? (await this.callAI("review", "review", file));
-        if (!cached && this.config.enable_cache) {
-          this.cache.set("review", cacheKey, parsed);
+
+    // Group into batches if batching is enabled
+    const batches = this.config.batch.enabled
+      ? groupIntoBatches(files, this.config.batch.batchSize)
+      : files.map((f) => [f]);
+
+    const allResults: Finding[] = [];
+    for (const batch of batches) {
+      logger.info(`aiReview: batch size=${batch.length}`);
+      const results = await concurrentMap(batch, async (file) => {
+        logger.info(`aiReview: processing ${file.path} (diff_len=${(file.diff ?? "").length}, content_len=${file.content.length})`);
+        try {
+          const cacheKey = { task: "review", path: file.path, content: file.content };
+          const cached = this.config.enable_cache
+            ? this.cache.get<{ findings: any[] }>("review", cacheKey)
+            : null;
+          const parsed = cached ?? (await this.callAI("review", "review", file));
+          if (!cached && this.config.enable_cache) {
+            this.cache.set("review", cacheKey, parsed);
+          }
+          const fileFindings = (parsed.findings ?? []).map((f: any) => ({
+            ...f,
+            file: f.file || file.path,
+            source: "ai" as const,
+          }));
+          logger.info(`aiReview: ${file.path} -> ${fileFindings.length} findings (cached=${!!cached})`);
+          return fileFindings;
+        } catch (err) {
+          logger.warn(`AI review failed for ${file.path}:`, err);
+          return [];
         }
-        const fileFindings = (parsed.findings ?? []).map((f: any) => ({
-          ...f,
-          file: f.file || file.path,
-          source: "ai" as const,
-        }));
-        logger.info(`aiReview: ${file.path} -> ${fileFindings.length} findings (cached=${!!cached})`);
-        return fileFindings;
-      } catch (err) {
-        logger.warn(`AI review failed for ${file.path}:`, err);
-        return [];
-      }
-    }, 5);
-    const out = results.flat();
+      }, 5);
+      allResults.push(...results.flat());
+    }
+
+    const out = allResults;
     logger.info(`aiReview: total AI findings = ${out.length}`);
     return out;
   }
@@ -788,15 +826,27 @@ export class Engine {
     task: "review",
     promptName: PromptName,
     file: { path: string; content: string; diff?: string },
-  ): Promise<{ findings: any[] }> {
+  ): Promise<{ findings: any[]; outputFormat?: string }> {
     const code = file.diff && file.diff.trim() ? file.diff : file.content;
+    let projectContext = this.config.project_context || "(none)";
+
+    // Enrich with MCP context if available
+    if (this.mcp) {
+      const libs = projectContext.split(/[,;\s]+/).filter(Boolean);
+      const mcpCtx = libs.length ? await this.mcp.getLibraryDocs(libs) : [];
+      if (mcpCtx.length) {
+        projectContext += `\n\n### MCP Library Context\n${mcpCtx.map((e) => e.content).join("\n")}`;
+      }
+    }
+
     const prompt = this.prompts.render(promptName, {
-      project_context: this.config.project_context || "(none)",
+      project_context: projectContext,
       language: file.path.split(".").pop() ?? "text",
       code,
       positive_feedback_instruction: this.config.include_positive_feedback
         ? "Also include up to 2 praise findings where the code is exemplary."
         : "Do not include positive/praise feedback.",
+      output_format: this.config.jsonl_output ? "JSONL" : "JSON",
     });
 
     const preview = prompt.length > 300 ? prompt.slice(0, 300) + "..." : prompt;
@@ -807,7 +857,45 @@ export class Engine {
       { role: "user", content: prompt },
     ]);
     logger.info(`callAI response: provider=${res.provider} model=${res.model} tokens_in=${res.usage?.promptTokens} tokens_out=${res.usage?.completionTokens} content_len=${res.content.length}`);
-    return extractJson<{ findings: any[] }>(res.content) ?? { findings: [] };
+
+    const parsedFindings = extractJson<{ findings: any[] }>(res.content)?.findings ?? [];
+
+    // Try JSONL if configured
+    let finalFindings = parsedFindings;
+    if (this.config.jsonl_output && !parsedFindings.length) {
+      const jsonlResult = parseJsonlString(res.content);
+      if (jsonlResult.length) {
+        const normalized = validateAndNormalize(jsonlResult);
+        finalFindings = normalized.issues.map((i) => ({
+          file: i.file,
+          line: i.line,
+          severity: i.severity,
+          message: i.message,
+          category: i.category,
+          suggestion: i.suggestion,
+          source: "ai" as const,
+        }));
+      }
+    }
+
+    // Record in learning store if enabled
+    if (this.learning && finalFindings.length) {
+      try {
+        for (const f of finalFindings) {
+          await this.learning.recordFinding({
+            file: file.path,
+            line: f.line,
+            severity: f.severity || "info",
+            category: f.category || f.type || "unknown",
+            message: f.message || f.comment || "",
+            suggestion: f.suggestion,
+            source: "ai",
+          });
+        }
+      } catch { /* best-effort */ }
+    }
+
+    return { findings: finalFindings };
   }
 
   private async callScoreAI(

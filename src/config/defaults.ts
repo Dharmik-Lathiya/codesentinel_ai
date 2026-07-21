@@ -1,4 +1,4 @@
-import type { CodeSentinelConfig, AnalyzerConfig, SeverityAdjustmentConfig, ConfidenceThresholds, ProgressiveAnalysisConfig, MultiFileAnalysisConfig, GateConfig, SecretPattern, DashboardConfig, LinterConfig } from "./types.js";
+import type { CodeSentinelConfig, AnalyzerConfig, SeverityAdjustmentConfig, ConfidenceThresholds, ProgressiveAnalysisConfig, MultiFileAnalysisConfig, GateConfig, SecretPattern, DashboardConfig, LinterConfig, LearningConfig, MCPConfig, BatchConfig } from "./types.js";
 
 /**
  * Default severity adjustment configuration.
@@ -105,6 +105,26 @@ export const DEFAULT_LINTER_CONFIG: LinterConfig = {
   args: {},
 };
 
+export const DEFAULT_LEARNING_CONFIG: LearningConfig = {
+  enabled: false,
+  dbPath: ".codesentinel/learning.db",
+  metaReview: false,
+  patternDiscovery: false,
+  metaReviewInterval: 10,
+};
+
+export const DEFAULT_MCP_CONFIG: MCPConfig = {
+  enabled: false,
+  servers: [],
+};
+
+export const DEFAULT_BATCH_CONFIG: BatchConfig = {
+  enabled: false,
+  batchSize: 3,
+  maxFilesPerBatch: 3,
+  maxLinesPerFile: 500,
+};
+
 /**
  * Default configuration. Values here are safe fallbacks; users are expected to
  * override via a config file, environment variables, or CLI flags.
@@ -164,7 +184,12 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   dashboard: DEFAULT_DASHBOARD_CONFIG,
   linters: DEFAULT_LINTER_CONFIG,
   enableSecretScanner: false,
+  jsonl_output: false,
   securityBlendStrategy: "min",
+
+  learning: DEFAULT_LEARNING_CONFIG,
+  mcp: DEFAULT_MCP_CONFIG,
+  batch: DEFAULT_BATCH_CONFIG,
 };
 
 /** Deep-merge two configs (shallow per top-level key, special-cased objects/arrays). */

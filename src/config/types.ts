@@ -214,8 +214,23 @@ export interface CodeSentinelConfig {
   /** Enable 3rd-party secret scanner (gitleaks/trufflehog). */
   enableSecretScanner: boolean;
 
+  /** Enable JSONL output format for AI review results. */
+  jsonl_output: boolean;
+
   /** Strategy for blending AI security scores with static baseline. */
   securityBlendStrategy: SecurityBlendStrategy;
+
+  /** Learning store configuration */
+  learning: LearningConfig;
+
+  /** MCP server configuration */
+  mcp: MCPConfig;
+
+  /** File batching configuration */
+  batch: BatchConfig;
+
+  /** YAML config file path (alternative to codesentinel.config.json) */
+  configFile?: string;
 }
 
 /** External linter configuration. */
@@ -270,6 +285,26 @@ export interface DashboardConfig {
   port: number;
   /** Directory to persist dashboard data. */
   dataDir: string;
+}
+
+export interface LearningConfig {
+  enabled: boolean;
+  dbPath: string;
+  metaReview: boolean;
+  patternDiscovery: boolean;
+  metaReviewInterval: number;
+}
+
+export interface MCPConfig {
+  enabled: boolean;
+  servers: { name: string; type: "local" | "remote"; command?: string[]; url?: string; environment?: Record<string, string> }[];
+}
+
+export interface BatchConfig {
+  enabled: boolean;
+  batchSize: number;
+  maxFilesPerBatch: number;
+  maxLinesPerFile: number;
 }
 
 /** Environment-derived secrets and runtime values (never logged). */

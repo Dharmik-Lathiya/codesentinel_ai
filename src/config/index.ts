@@ -1,9 +1,11 @@
 import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, extname } from "node:path";
 import { z, ZodError } from "zod";
 
 import { DEFAULT_CONFIG, mergeConfig } from "./defaults.js";
 import type { CodeSentinelConfig, Mode, AnalyzerConfig } from "./types.js";
+import { loadYamlConfig, searchConfigPaths } from "./loader.js";
+import { parseJsonc } from "../utils/jsonc.js";
 
 /**
  * Loose schema used only to validate user-supplied config files. We intentionally
@@ -114,6 +116,39 @@ const userConfigSchema = z
         dataDir: z.string().optional(),
       })
       .optional(),
+    jsonl_output: z.boolean().optional(),
+    linters: z
+      .object({
+        enabled: z.boolean().optional(),
+        tools: z.array(z.string()).optional(),
+        args: z.record(z.array(z.string())).optional(),
+      })
+      .optional(),
+    enableSecretScanner: z.boolean().optional(),
+    securityBlendStrategy: z.enum(["min", "avg", "static-only"]).optional(),
+    learning: z
+      .object({
+        enabled: z.boolean().optional(),
+        dbPath: z.string().optional(),
+        metaReview: z.boolean().optional(),
+        patternDiscovery: z.boolean().optional(),
+        metaReviewInterval: z.number().optional(),
+      })
+      .optional(),
+    mcp: z
+      .object({
+        enabled: z.boolean().optional(),
+        servers: z.array(z.any()).optional(),
+      })
+      .optional(),
+    batch: z
+      .object({
+        enabled: z.boolean().optional(),
+        batchSize: z.number().optional(),
+        maxFilesPerBatch: z.number().optional(),
+        maxLinesPerFile: z.number().optional(),
+      })
+      .optional(),
   })
   .passthrough();
 
@@ -129,19 +164,31 @@ export function loadConfig(opts: {
 } = {}): CodeSentinelConfig {
   let fileConfig: Record<string, unknown> = {};
 
-  if (opts.configPath) {
-    const path = resolve(opts.configPath);
+  const configPath = opts.configPath;
+  if (configPath) {
+    const path = resolve(configPath);
     if (!existsSync(path)) {
       throw new Error(`Config file not found: ${path}`);
     }
-    const raw = readFileSync(path, "utf8");
-    fileConfig = parseJsonc(raw);
+    const ext = extname(path).toLowerCase();
+    if (ext === ".yml" || ext === ".yaml") {
+      fileConfig = loadYamlConfig(path);
+    } else {
+      const raw = readFileSync(path, "utf8");
+      fileConfig = parseJsonc(raw);
+    }
+  } else {
+    // Auto-discover YAML config if no --config given
+    const yamlPath = searchConfigPaths();
+    if (yamlPath) {
+      fileConfig = loadYamlConfig(yamlPath);
+    }
   }
 
   const parsed = userConfigSchema.safeParse(fileConfig);
   if (!parsed.success) {
     const friendly = formatZodErrors(parsed.error);
-    throw new Error(`Invalid config${opts.configPath ? ` in ${opts.configPath}` : ""}:\n${friendly}`);
+    throw new Error(`Invalid config${configPath ? ` in ${configPath}` : ""}:\n${friendly}`);
   }
   const fromFile = mergeConfig(DEFAULT_CONFIG, parsed.data as Partial<CodeSentinelConfig>);
   const final = mergeConfig(
@@ -153,21 +200,7 @@ export function loadConfig(opts: {
   return final;
 }
 
-/** Minimal JSONC parser: strips // and /* *\/ comments then JSON.parse. */
-function parseJsonc(raw: string): Record<string, unknown> {
-  // Strip block comments, then line comments — but only outside of strings.
-  // We replace string contents with placeholders first to avoid false matches.
-  const placeholders: string[] = [];
-  let masked = raw.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
-    placeholders.push(match);
-    return `\x00STR${placeholders.length - 1}\x00`;
-  });
-  masked = masked.replace(/\/\*[\s\S]*?\*\//g, "");
-  masked = masked.replace(/(^|[^:])\/\/.*$/gm, "$1");
-  // Restore strings.
-  masked = masked.replace(/\x00STR(\d+)\x00/g, (_, i) => placeholders[Number(i)]);
-  return JSON.parse(masked);
-}
+
 
 /** Convert a ZodError into a concise, human-readable list of issues. */
 function formatZodErrors(error: ZodError): string {
@@ -261,6 +294,14 @@ export function configFromInputs(
       score: providerModel,
       testgen: providerModel,
       chat: providerModel,
+    };
+  }
+  if (inputs.jsonl_output) out.jsonl_output = inputs.jsonl_output === "true";
+  if (inputs.mcp_enabled) out.mcp = { enabled: inputs.mcp_enabled === "true", servers: [] };
+  if (inputs.learning_enabled) {
+    out.learning = {
+      enabled: inputs.learning_enabled === "true",
+      dbPath: inputs.learning_db_path ?? DEFAULT_CONFIG.learning.dbPath,
     };
   }
   return out as Partial<CodeSentinelConfig>;

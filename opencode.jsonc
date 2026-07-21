@@ -1,0 +1,85 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "plugin": [
+    "superpowers@git+https://github.com/obra/superpowers.git"
+  ],
+
+  "mcp": {
+    "superpowers": {
+      "type": "local",
+      "command": ["node", "/home/denny/.config/opencode/mcp/superpowers-mcp/build/index.js"],
+      "enabled": true
+    }
+  },
+
+  "command": {
+    "review": {
+      "template": "Run the codesentinel review on the staged changes. Load the codesentinel-ai skill first, then run the review pipeline.\n\n1. use skill: codesentinel-ai\n2. node dist/index.js review --provider opencode\n3. Review the output and fix any issues found.",
+      "description": "Run codesentinel AI code review",
+      "agent": "build"
+    },
+    "score": {
+      "template": "Run codesentinel score to evaluate code quality.\n\nnode dist/index.js score --provider opencode",
+      "description": "Compute code quality score (0-100)",
+      "agent": "explore"
+    },
+    "fix": {
+      "template": "Run codesentinel fix mode to auto-fix issues.\n\n1. use skill: codesentinel-ai\n2. node dist/index.js fix --provider opencode --auto-fix\n3. Verify the fixes with npm test",
+      "description": "Auto-fix issues with codesentinel",
+      "agent": "build"
+    },
+    "test": {
+      "template": "Run the test suite and show failures. Use TDD approach.\n\n1. use skill: test-driven-development\n2. npm test\n3. If tests fail, use skill: systematic-debugging to investigate",
+      "description": "Run tests with TDD workflow",
+      "agent": "build"
+    },
+    "build": {
+      "template": "Build the project with TypeScript\n\nnpm run build",
+      "description": "TypeScript build",
+      "agent": "explore"
+    },
+    "typecheck": {
+      "template": "Run TypeScript type checking\n\nnpm run typecheck",
+      "description": "TypeScript type check",
+      "agent": "explore"
+    }
+  },
+
+  "instruction": ["AGENTS.md", ".opencode/skills/**/SKILL.md"],
+
+  "agent": {
+    "build": {
+      "model": "opencode/default",
+      "tools": {
+        "skill": true
+      }
+    },
+    "plan": {
+      "model": "opencode/default",
+      "tools": {
+        "skill": true
+      }
+    },
+    "explore": {
+      "model": "opencode/default",
+      "tools": {
+        "skill": true
+      }
+    }
+  },
+
+  "tools": {
+    "skill": true
+  },
+
+  "formatter": {
+    "prettier": {
+      "disabled": false
+    }
+  },
+
+  "snapshot": true,
+
+  "autoupdate": true
+}
