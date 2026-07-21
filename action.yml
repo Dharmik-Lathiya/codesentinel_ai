@@ -62,5 +62,5 @@ outputs:
     description: "Number of findings detected"
 
 runs:
-  using: "node20"
+  using: "node24"
   main: "dist/github/action.js"
