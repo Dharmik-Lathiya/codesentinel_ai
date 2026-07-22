@@ -7,18 +7,18 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 
 jobs:
   codesentinel:
     if: >
-      github.event.issue.pull_request &&
-      (startsWith(github.event.comment.body, '/review') ||
-       startsWith(github.event.comment.body, '/fix') ||
-       startsWith(github.event.comment.body, '/audit') ||
-       startsWith(github.event.comment.body, '/score') ||
-       startsWith(github.event.comment.body, '/testgen') ||
-       startsWith(github.event.comment.body, '/gate') ||
-       startsWith(github.event.comment.body, '/deadcode'))
+      startsWith(github.event.comment.body, '/review') ||
+      startsWith(github.event.comment.body, '/fix') ||
+      startsWith(github.event.comment.body, '/audit') ||
+      startsWith(github.event.comment.body, '/score') ||
+      startsWith(github.event.comment.body, '/testgen') ||
+      startsWith(github.event.comment.body, '/gate') ||
+      startsWith(github.event.comment.body, '/deadcode')
     runs-on: ubuntu-latest
     steps:
       - name: Extract command
@@ -31,22 +31,30 @@ jobs:
             if (!match) { core.setFailed('No valid command'); return; }
             core.setOutput('mode', match[1].toLowerCase());
 
-      - name: Get PR info
-        id: pr
+      - name: Get target ref
+        id: target
         uses: actions/github-script@v7
         with:
           script: |
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner, repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            core.setOutput('base_ref', pr.base.ref);
-            core.setOutput('head_sha', pr.head.sha);
+            if (context.payload.issue.pull_request) {
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner, repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
+              core.setOutput('ref', pr.head.sha);
+              core.setOutput('base_ref', pr.base.ref);
+            } else {
+              const { data: repo } = await github.rest.repos.get({
+                owner: context.repo.owner, repo: context.repo.repo
+              });
+              core.setOutput('ref', repo.default_branch);
+              core.setOutput('base_ref', repo.default_branch);
+            }
 
-      - name: Checkout PR
+      - name: Checkout target
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.pr.outputs.head_sha }}
+          ref: ${{ steps.target.outputs.ref }}
           fetch-depth: 0
 
       - name: Checkout CodeSentinel
@@ -79,7 +87,7 @@ jobs:
 
       - name: Run CodeSentinel
         env:
-          GITHUB_BASE_REF: ${{ steps.pr.outputs.base_ref }}
+          GITHUB_BASE_REF: ${{ steps.target.outputs.base_ref }}
         run: |
           node codesentinel/dist/index.js ${{ steps.cmd.outputs.mode }} 2>&1 | tee /tmp/cs-out.txt || true
 
