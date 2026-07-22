@@ -493,6 +493,7 @@ export class Engine {
       const staticFindings = await this.analyzeFiles(files);
       const { findings: aiFindings } = await this.aiReview(files);
       const findings = [...staticFindings, ...aiFindings];
+      allFindings.length = 0;
       allFindings.push(...findings);
 
       const actionable = findings.filter((f) => f.category !== "praise");
@@ -1056,14 +1057,20 @@ export class Engine {
       }
     }
 
-    if (fixAttempts) {
+    if (fixAttempts && fixAttempts.length > 0) {
       const success = fixAttempts.filter((a) => a.fixed && a.verified).length;
+      const MAX_ATTEMPTS = 10;
+      const show = fixAttempts.slice(-MAX_ATTEMPTS);
+      const hidden = fixAttempts.length - MAX_ATTEMPTS;
       parts.push(`\n### Fix Attempts\n`);
       parts.push(`Fixes applied & verified: **${success}/${fixAttempts.length}**`);
-      for (const a of fixAttempts) {
+      for (const a of show) {
         parts.push(
           `- ${a.fixed ? "✅" : "❌"} **${a.file}** — ${a.explanation}`,
         );
+      }
+      if (hidden > 0) {
+        parts.push(`\n_… and ${hidden} earlier attempts omitted._`);
       }
     }
 
