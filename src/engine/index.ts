@@ -99,10 +99,11 @@ export class Engine {
     private secrets: RuntimeSecrets,
     private root = process.cwd(),
     /** Optional AI override (used in tests to avoid network calls). */
-    aiOverride?: Pick<AIHub, "complete" | "modelForTask">,
+    private readonly aiOverride?: Pick<AIHub, "complete" | "modelForTask">,
   ) {
     this.config = config;
     this.ai = (aiOverride as AIHub) ?? new AIHub(config, secrets);
+    if (aiOverride) this.aiAvailable = true;
     this.prompts = new PromptRegistry(config);
     this.cache = new FileCache(resolve(root, config.cache_dir));
     this.plugins = new PluginManager({ config, logger });
@@ -143,6 +144,7 @@ export class Engine {
 
   /** Best-effort health check: log whether the AI provider is reachable. */
   private async checkAIProvider(): Promise<void> {
+    if (this.aiOverride) return; // tests provide their own AI
     const model = this.ai.modelForTask("review");
     const baseUrl = this.secrets.opencode_base_url || "http://localhost:4096";
     if (model.provider === "opencode") {
@@ -181,6 +183,7 @@ export class Engine {
   /** Load configured plugins before running. */
   async init(): Promise<void> {
     await this.plugins.load(this.config.plugins);
+    if (this.learning) await this.learning.init();
   }
 
   // ---------------------------------------------------------------------------
@@ -281,6 +284,24 @@ export class Engine {
   // ---------------------------------------------------------------------------
   getDismissalManager(): DismissalManager {
     return this.dismissals;
+  }
+
+  /** Dismiss by rule and record feedback in learning store. */
+  async dismissByRule(ruleId: string, reason: string): Promise<void> {
+    this.dismissals.dismissByRule(ruleId, reason);
+    if (this.learning) {
+      try { await this.learning.recordFeedback(ruleId, "false_positive", reason); }
+      catch { /* best-effort */ }
+    }
+  }
+
+  /** Dismiss by file+line and record feedback in learning store. */
+  async dismissByFinding(file: string, line: number | null, ruleId: string, reason: string): Promise<void> {
+    this.dismissals.dismissByFinding(file, line, ruleId, reason);
+    if (this.learning) {
+      try { await this.learning.recordFeedback(ruleId, "false_positive", reason); }
+      catch { /* best-effort */ }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -384,7 +405,27 @@ export class Engine {
       allFindings.push(...fileFindings);
     }
 
-    return this.dismissals.filterDismissed(allFindings);
+    const filtered = this.dismissals.filterDismissed(allFindings);
+
+    // Auto-mute rules with persistently high false-positive rates
+    if (this.learning && this.config.learning.enabled) {
+      try {
+        const highFp = await this.learning.getHighFalsePositiveRules();
+        if (highFp.length) {
+          const mutedRuleIds = new Set(highFp.map((r) => r.ruleId));
+          const result = filtered.filter((f) => {
+            const ruleId = `${f.category}:${f.comment.slice(0, 40)}`;
+            return !mutedRuleIds.has(ruleId);
+          });
+          if (result.length < filtered.length) {
+            logger.info(`analyzeFiles: auto-muted ${filtered.length - result.length} finding(s) from ${highFp.length} high-FP rule(s)`);
+          }
+          return result;
+        }
+      } catch { /* best-effort */ }
+    }
+
+    return filtered;
   }
 
   // ---------------------------------------------------------------------------
@@ -396,6 +437,8 @@ export class Engine {
 
     const { findings: aiFindings, summaries: aiSummaries } = await this.aiReview(files);
     const findings = [...staticFindings, ...aiFindings];
+
+    this.recordPatterns(findings).catch(() => {});
 
     const comments: ReviewComment[] = findings
       .filter((f) => f.category !== "praise" || this.config.include_positive_feedback)
@@ -475,6 +518,35 @@ export class Engine {
     const out = allResults;
     logger.info(`aiReview: total AI findings = ${out.length}`);
     return { findings: out, summaries: allSummaries };
+  }
+
+  /** Record recurring patterns and auto-create rules. */
+  private async recordPatterns(findings: Finding[]): Promise<void> {
+    if (!this.learning || !this.config.learning.patternDiscovery) return;
+    try {
+      const groups = new Map<string, { count: number; category: string; comment: string; suggestion?: string }>();
+      for (const f of findings) {
+        const key = `${f.category}:${f.comment.slice(0, 60)}`;
+        const existing = groups.get(key);
+        if (existing) {
+          existing.count++;
+        } else {
+          groups.set(key, { count: 1, category: f.category, comment: f.comment, suggestion: f.suggestion });
+        }
+      }
+      for (const [, g] of groups) {
+        if (g.count < 2) continue;
+        await this.learning.recordPattern(g.comment, g.category);
+      }
+
+      // Auto-create rules for patterns with frequency >= 3
+      const freqPatterns = await this.learning.getPatternsAboveThreshold(3);
+      for (const p of freqPatterns) {
+        const ruleName = `auto-${p.category}-${p.pattern_text.slice(0, 30).replace(/\s+/g, "_")}`;
+        await this.learning.autoCreateRule(p.id, ruleName, p.pattern_text, "medium", p.category, `Auto-generated from recurring pattern (frequency: ${p.frequency})`);
+        logger.info(`recordPatterns: auto-created rule "${ruleName}" from pattern ${p.id} (freq=${p.frequency})`);
+      }
+    } catch { /* best-effort */ }
   }
 
   // ---------------------------------------------------------------------------
@@ -934,6 +1006,27 @@ export class Engine {
       if (mcpCtx.length) {
         projectContext += `\n\n### MCP Library Context\n${mcpCtx.map((e) => e.content).join("\n")}`;
       }
+    }
+
+    // Inject past lessons from the learning store
+    if (this.learning) {
+      try {
+        const ext = file.path.split(".").pop() ?? "";
+        const lessons = await this.learning.getRelevantLessons(ext);
+        if (lessons.length) {
+          projectContext += `\n\n### Historical Lessons (frequent past issues in ${ext} files)\n- ${lessons.join("\n- ")}`;
+        }
+      } catch { /* best-effort */ }
+    }
+
+    // Inject active prompt overrides
+    if (this.learning && this.config.learning.metaReview) {
+      try {
+        const overrides = await this.learning.getActivePromptOverrides(task);
+        if (overrides.length) {
+          projectContext += `\n\n### Custom Instructions\n${overrides.join("\n")}`;
+        }
+      } catch { /* best-effort */ }
     }
 
     const prompt = this.prompts.render(promptName, {
