@@ -982,8 +982,16 @@ export class Engine {
     }
 
     if (issues.length > 0) {
-      parts.push(`\n### Issues\n`);
-      for (const i of issues) {
+      const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+      const MAX_VISIBLE = 20;
+      const sorted = [...issues].sort(
+        (a, b) => (SEVERITY_ORDER[a.severity] ?? 99) - (SEVERITY_ORDER[b.severity] ?? 99),
+      );
+      const visible = sorted.slice(0, MAX_VISIBLE);
+      const hidden = sorted.length - MAX_VISIBLE;
+
+      parts.push(`\n### Issues (showing ${visible.length} of ${sorted.length})\n`);
+      for (const i of visible) {
         const label =
           i.severity === "critical" || i.severity === "high"
             ? `**[${i.severity.toUpperCase()}]** `
@@ -991,6 +999,9 @@ export class Engine {
         parts.push(
           `- ${label}**${i.file}${i.line ? `:${i.line}` : ""}** — ${i.comment}${i.suggestion ? `\n  > Suggestion: ${i.suggestion}` : ""}`,
         );
+      }
+      if (hidden > 0) {
+        parts.push(`\n_… and ${hidden} more issues. Check the report file for the full list._`);
       }
     }
 
