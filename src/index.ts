@@ -507,21 +507,10 @@ async function main(): Promise<void> {
         `coverage ${report.score.test_coverage})\n`,
     );
   }
-  if (report.findings.length) {
+  if (report.findings.length && (report.mode !== "review" && report.mode !== "fix")) {
     process.stdout.write(`\nFindings (${report.findings.length}):\n`);
     for (const f of report.findings) {
       process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${f.comment}\n`);
-    }
-  }
-  if (report.fixAttempts.length) {
-    process.stdout.write(`\nFix attempts (${report.fixAttempts.length}):\n`);
-    for (const a of report.fixAttempts) {
-      const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      let line = `  #${a.iteration} ${a.file} — ${status}: ${a.explanation}`;
-      if (a.newIssuesIntroduced.length > 0) {
-        line += ` [${a.newIssuesIntroduced.length} new issue(s) introduced]`;
-      }
-      process.stdout.write(line + "\n");
     }
   }
   if (report.generatedTests.length) {
