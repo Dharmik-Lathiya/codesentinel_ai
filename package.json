@@ -1,6 +1,6 @@
 {
   "name": "@dharmiklathiya/codesentinel_ai",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AI-powered code review, fix, audit, scoring, and test generation engine with multi-provider model support.",
   "type": "module",
   "main": "dist/lib.js",
