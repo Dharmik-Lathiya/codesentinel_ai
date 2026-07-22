@@ -392,7 +392,7 @@ export class Engine {
     const files = await this.collectedFiles();
     const staticFindings = await this.analyzeFiles(files);
 
-    const aiFindings = await this.aiReview(files);
+    const { findings: aiFindings, summaries: aiSummaries } = await this.aiReview(files);
     const findings = [...staticFindings, ...aiFindings];
 
     const comments: ReviewComment[] = findings
@@ -404,7 +404,7 @@ export class Engine {
         severity: f.severity,
       }));
 
-    const summary = this.buildSummary("review", findings);
+    const summary = this.buildSummary("review", findings, undefined, aiSummaries);
 
     const report: EngineReport = {
       mode: "review",
@@ -426,7 +426,7 @@ export class Engine {
   /** Ask the AI model to review each changed file (cached per file). */
   private async aiReview(
     files: { path: string; content: string; diff?: string }[],
-  ): Promise<Finding[]> {
+  ): Promise<{ findings: Finding[]; summaries: string[] }> {
     logger.info(`aiReview: starting AI review for ${files.length} files`);
 
     // Group into batches if batching is enabled
@@ -435,6 +435,7 @@ export class Engine {
       : files.map((f) => [f]);
 
     const allResults: Finding[] = [];
+    const allSummaries: string[] = [];
     for (const batch of batches) {
       logger.info(`aiReview: batch size=${batch.length}`);
       const results = await concurrentMap(batch, async (file) => {
@@ -442,12 +443,13 @@ export class Engine {
         try {
           const cacheKey = { task: "review", path: file.path, content: file.content };
           const cached = this.config.enable_cache
-            ? this.cache.get<{ findings: any[] }>("review", cacheKey)
+            ? this.cache.get<{ findings: any[]; summary?: string }>("review", cacheKey)
             : null;
           const parsed = cached ?? (await this.callAI("review", "review", file));
           if (!cached && this.config.enable_cache) {
             this.cache.set("review", cacheKey, parsed);
           }
+          if ("summary" in parsed && parsed.summary) allSummaries.push(parsed.summary);
           const fileFindings = (parsed.findings ?? []).map((f: any) => ({
             ...f,
             file: f.file || file.path,
@@ -465,7 +467,7 @@ export class Engine {
 
     const out = allResults;
     logger.info(`aiReview: total AI findings = ${out.length}`);
-    return out;
+    return { findings: out, summaries: allSummaries };
   }
 
   // ---------------------------------------------------------------------------
@@ -474,7 +476,7 @@ export class Engine {
   private async runFix(): Promise<EngineReport> {
     const files = await this.collectedFiles();
     const staticFindings = await this.analyzeFiles(files);
-    const aiFindings = await this.aiReview(files);
+    const { findings: aiFindings } = await this.aiReview(files);
     const findings = [...staticFindings, ...aiFindings];
 
     // Only act on actionable, non-praise findings, bounded by max_iterations.
@@ -930,6 +932,7 @@ export class Engine {
     mode: string,
     findings: Finding[],
     fixAttempts?: FixAttempt[],
+    aiSummaries?: string[],
   ): string {
     const counts = this.tallySeverity(findings);
     const strengths = findings.filter((f) => f.category === "praise");
@@ -939,6 +942,12 @@ export class Engine {
     const readyToMerge = criticalCount === 0 && highCount === 0;
 
     const parts: string[] = [];
+
+    const narrative = aiSummaries?.filter(Boolean).join(" ") ?? "";
+    if (narrative) {
+      parts.push(narrative);
+      parts.push("");
+    }
 
     if (findings.length === 0) {
       parts.push("No issues found. The code looks clean.");
