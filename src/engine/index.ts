@@ -458,7 +458,8 @@ export class Engine {
           logger.info(`aiReview: ${file.path} -> ${fileFindings.length} findings (cached=${!!cached})`);
           return fileFindings;
         } catch (err) {
-          logger.warn(`AI review failed for ${file.path}:`, err);
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.warn(`AI review failed for ${file.path}: ${msg}`);
           return [];
         }
       }, 5);
@@ -521,7 +522,7 @@ export class Engine {
           }
           logger.info(`runFix: fix result — fixed=${attempt.fixed} verified=${attempt.verified}`);
         } catch (err) {
-          logger.warn(`runFix: fix failed for ${finding.file}:`, err);
+          logger.warn(`runFix: fix failed for ${finding.file}: ${err instanceof Error ? err.message : err}`);
           allFixAttempts.push({
             iteration: iterId,
             file: finding.file,
