@@ -141,6 +141,58 @@ export class LearningStore {
     return (fp?.count ?? 0) / total.count;
   }
 
+  /** Get rules with high false-positive rate (>= threshold) and minimum feedback count. */
+  async getHighFalsePositiveRules(minFeedback = 3, fpThreshold = 0.8): Promise<{ ruleId: string; fpRate: number; total: number }[]> {
+    if (!this.ready) return [];
+    const rows = await this.db!.all<{ finding_id: string; total: number; fp_count: number }>(
+      `SELECT finding_id, COUNT(*) as total, SUM(CASE WHEN feedback_type = 'false_positive' THEN 1 ELSE 0 END) as fp_count
+       FROM feedback GROUP BY finding_id HAVING total >= ? AND (CAST(SUM(CASE WHEN feedback_type = 'false_positive' THEN 1 ELSE 0 END) AS REAL) / COUNT(*)) >= ?`,
+      [minFeedback, fpThreshold],
+    );
+    return rows.map((r) => ({ ruleId: r.finding_id, fpRate: r.fp_count / r.total, total: r.total }));
+  }
+
+  async getActivePromptOverrides(taskType: string): Promise<string[]> {
+    if (!this.ready) return [];
+    const rows = await this.db!.all<{ override_text: string }>(
+      "SELECT override_text FROM prompt_overrides WHERE task_type = ? AND active = 1 ORDER BY created_at DESC",
+      [taskType],
+    );
+    return rows.map((r) => r.override_text);
+  }
+
+  async createPromptOverride(taskType: string, overrideText: string, reason?: string): Promise<void> {
+    if (!this.ready) return;
+    await this.db!.run(
+      "INSERT INTO prompt_overrides (id, task_type, override_text, reason) VALUES (?, ?, ?, ?)",
+      [generateId(), taskType, overrideText, reason ?? null],
+    );
+  }
+
+  async autoCreateRule(patternId: string, name: string, pattern: string, severity: string, category: string, comment?: string, suggestion?: string): Promise<string | null> {
+    if (!this.ready) return null;
+    const existing = await this.db!.get<CustomRuleRecord>(
+      "SELECT * FROM custom_rules WHERE pattern = ? AND status IN ('pending', 'approved')",
+      [pattern],
+    );
+    if (existing) return null;
+    const id = generateId();
+    await this.db!.run(
+      "INSERT INTO custom_rules (id, name, pattern, severity, category, comment, suggestion) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [id, name, pattern, severity, category, comment ?? null, suggestion ?? null],
+    );
+    await this.db!.run("UPDATE patterns SET auto_rule_id = ? WHERE id = ?", [id, patternId]);
+    return id;
+  }
+
+  async getPatternsAboveThreshold(minFrequency: number): Promise<PatternRecord[]> {
+    if (!this.ready) return [];
+    return this.db!.all(
+      "SELECT * FROM patterns WHERE frequency >= ? AND auto_rule_id IS NULL ORDER BY frequency DESC",
+      [minFrequency],
+    );
+  }
+
   async close(): Promise<void> {
     if (this.db) await this.db.close();
   }
