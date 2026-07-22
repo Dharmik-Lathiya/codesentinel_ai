@@ -45,6 +45,31 @@ function fakeAI() {
           provider: "opencode",
         };
       }
+      if (task === "fix") {
+        return {
+          content: JSON.stringify({
+            fixed: true,
+            explanation: "Applied fix",
+            content: "// fixed content",
+          }),
+          model: "x",
+          provider: "opencode",
+        };
+      }
+      if (task === "describe") {
+        return {
+          content: JSON.stringify({
+            title: "Fix add function",
+            description: "Fixed the add function",
+            type: "fix",
+            breakingChanges: false,
+            highlights: ["Fixed add"],
+            todo: [],
+          }),
+          model: "x",
+          provider: "opencode",
+        };
+      }
       if (task === "audit") {
         return {
           content: JSON.stringify({
@@ -169,7 +194,7 @@ describe("Engine flow", () => {
 
   it("review mode merges static and AI findings", async () => {
     const engine = new Engine(
-      loadConfig({ overrides: { mode: "review", enable_cache: false } }),
+      loadConfig({ overrides: { mode: "review", enable_cache: false, enable_auto_fix: false } }),
       {},
       root,
       fakeAI() as any,
@@ -297,8 +322,9 @@ describe("Fix mode re-analysis (P0-4)", () => {
         overrides: {
           mode: "fix",
           enable_cache: false,
-          enable_auto_fix: false,
+          enable_auto_fix: true,
           max_iterations: 1,
+          dry_run: true,
         },
       }),
       {},
