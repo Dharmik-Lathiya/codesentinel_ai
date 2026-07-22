@@ -561,9 +561,9 @@ export class Engine {
         stdio: "pipe",
       });
 
-      const headRef = process.env.GITHUB_HEAD_REF;
-      const baseRef = process.env.GITHUB_BASE_REF ?? "main";
-      const target = headRef ?? baseRef;
+      const headRef = process.env.GITHUB_HEAD_REF || "";
+      const baseRef = process.env.GITHUB_BASE_REF || "main";
+      const target = headRef || baseRef;
       execSync(`git push origin HEAD:${target}`, { cwd: this.root, stdio: "pipe" });
       logger.info(`pushFixes: pushed ${files.length} file(s) to ${target}`);
     } catch (err) {
