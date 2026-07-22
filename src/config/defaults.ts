@@ -132,7 +132,7 @@ export const DEFAULT_BATCH_CONFIG: BatchConfig = {
 export const DEFAULT_CONFIG: CodeSentinelConfig = {
   mode: "review",
   max_iterations: 5,
-  enable_auto_fix: false,
+  enable_auto_fix: true,
   enable_scoring: true,
   enable_test_generation: false,
   include_positive_feedback: true,

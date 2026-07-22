@@ -440,6 +440,33 @@ export class Engine {
 
     this.recordPatterns(findings).catch(() => {});
 
+    // Auto-fix actionable findings when auto-fix is enabled
+    let fixAttempts: FixAttempt[] = [];
+    if (this.config.enable_auto_fix && !this.config.dry_run) {
+      const actionable = findings.filter((f) => f.category !== "praise");
+      if (actionable.length > 0) {
+        logger.info(`runReview: auto-fixing ${actionable.length} issue(s)`);
+        const fixReport = await this.runFixLoopFor(actionable);
+        fixAttempts = fixReport.fixAttempts;
+        // Re-read files to get updated findings after fixes
+        const updatedFiles = await this.collectedFiles();
+        const updatedStatic = await this.analyzeFiles(updatedFiles);
+        const { findings: updatedAi } = await this.aiReview(updatedFiles);
+        const updatedFindings = [...updatedStatic, ...updatedAi];
+        const summary = this.buildSummary("review", updatedFindings, fixAttempts, aiSummaries);
+        return {
+          mode: "review",
+          summary,
+          findings: updatedFindings,
+          score: this.config.enable_scoring ? await this.computeScore(updatedFiles, updatedFindings) : null,
+          comments: [],
+          generatedTests: [],
+          fixAttempts,
+          metrics: { filesAnalyzed: updatedFiles.length, findingsBySeverity: {}, durationMs: 0 },
+        };
+      }
+    }
+
     const comments: ReviewComment[] = findings
       .filter((f) => f.category !== "praise" || this.config.include_positive_feedback)
       .map((f) => ({
@@ -722,6 +749,49 @@ export class Engine {
       verified,
       newIssuesIntroduced,
     };
+  }
+
+  /** Apply fixes for a batch of findings without the full re-analysis loop. */
+  private async runFixLoopFor(actionable: Finding[]): Promise<{ fixAttempts: FixAttempt[] }> {
+    const allFixAttempts: FixAttempt[] = [];
+    const modifiedFiles = new Set<string>();
+    const maxFixesPerFinding = 3;
+
+    for (const finding of actionable) {
+      let success = false;
+      for (let attempt = 1; attempt <= maxFixesPerFinding; attempt++) {
+        try {
+          const result = await this.applyFix(finding, attempt);
+          allFixAttempts.push(result);
+          if (result.fixed && result.verified) {
+            modifiedFiles.add(finding.file);
+            success = true;
+            break;
+          }
+          if (result.fixed) {
+            modifiedFiles.add(finding.file);
+          }
+        } catch (err) {
+          allFixAttempts.push({
+            iteration: attempt,
+            file: finding.file,
+            fixed: false,
+            explanation: `Error: ${err instanceof Error ? err.message : err}`,
+            verified: false,
+            newIssuesIntroduced: [],
+          });
+        }
+      }
+      if (!success) {
+        logger.warn(`runFixLoopFor: failed to fix ${finding.file}:${finding.line} after ${maxFixesPerFinding} attempts`);
+      }
+    }
+
+    if (modifiedFiles.size > 0) {
+      await this.pushFixes(modifiedFiles);
+    }
+
+    return { fixAttempts: allFixAttempts };
   }
 
   /** Run lint + tests after a fix. Best-effort; returns true if both pass. */
