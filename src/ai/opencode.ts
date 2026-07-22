@@ -39,8 +39,9 @@ export class OpenCodeProvider implements AIProvider {
         }),
       });
     } catch (err) {
-      logger.error(`OpenCodeProvider.complete: NETWORK ERROR — ${err instanceof Error ? err.message : err}`);
-      throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`OpenCodeProvider.complete: NETWORK ERROR — ${msg}`);
+      throw new ProviderUnavailableError("opencode", `cannot reach ${this.baseUrl} — ${msg}. Check OPENCODE_BASE_URL or switch provider via --provider.`);
     }
 
     if (!res.ok) {
