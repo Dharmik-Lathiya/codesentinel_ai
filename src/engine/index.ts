@@ -221,6 +221,9 @@ export class Engine {
       case "chat":
         report = await this.runChat("(no prompt supplied; use ask())");
         break;
+      case "improve":
+        report = await this.runImprove();
+        break;
       default:
         throw new Error(`Unsupported mode: ${this.config.mode}`);
     }
@@ -1056,6 +1059,131 @@ export class Engine {
   async ask(question: string): Promise<string> {
     const report = await this.runChat(question);
     return report.summary;
+  }
+
+  // ---------------------------------------------------------------------------
+  // IMPROVE — auto-improvement mode (testgen / utility gen / doc gen)
+  // ---------------------------------------------------------------------------
+  private async runImprove(): Promise<EngineReport> {
+    const type = this.config.improve_type || "test";
+    logger.info(`runImprove: type=${type}`);
+
+    switch (type) {
+      case "test":
+        return this.runTestgen();
+      case "util":
+        return this.runGenerateUtilities();
+      case "doc":
+        return this.runGenerateDocs();
+      default:
+        return {
+          mode: "improve",
+          summary: `Unknown improve type: ${type}`,
+          findings: [],
+          score: null,
+          comments: [],
+          generatedTests: [],
+          fixAttempts: [],
+          metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
+        };
+    }
+  }
+
+  /** AI-powered utility function generation. */
+  private async runGenerateUtilities(): Promise<EngineReport> {
+    const files = await this.collectedFiles();
+    const code = files.map((f) => `### ${f.path}\n${f.content}`).join("\n\n").slice(0, 60000);
+
+    const prompt = this.prompts.render("generate-utils", {
+      project_context: this.config.project_context || "(none)",
+      code,
+    });
+    const res = await this.ai.complete("fix", [
+      { role: "system", content: "You generate utility functions for TypeScript/Node.js projects." },
+      { role: "user", content: prompt },
+    ]);
+    const parsed = extractJson<{ files: { path: string; content: string }[]; summary: string }>(res.content);
+
+    if (!parsed || !parsed.files?.length) {
+      return {
+        mode: "improve",
+        summary: "No utilities generated. AI returned no valid output.",
+        findings: [],
+        score: null,
+        comments: [],
+        generatedTests: [],
+        fixAttempts: [],
+        metrics: { filesAnalyzed: files.length, findingsBySeverity: {}, durationMs: 0 },
+      };
+    }
+
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { dirname, resolve } = await import("node:path");
+    for (const f of parsed.files) {
+      const abs = resolve(this.root, f.path);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, f.content, "utf8");
+      logger.info(`runGenerateUtilities: wrote ${f.path}`);
+    }
+
+    return {
+      mode: "improve",
+      summary: parsed.summary || `Generated ${parsed.files.length} utility file(s).`,
+      findings: [],
+      score: null,
+      comments: [],
+      generatedTests: [],
+      fixAttempts: [],
+      metrics: { filesAnalyzed: files.length, findingsBySeverity: {}, durationMs: 0 },
+    };
+  }
+
+  /** AI-powered documentation generation. */
+  private async runGenerateDocs(): Promise<EngineReport> {
+    const files = await this.collectedFiles();
+    const code = files.map((f) => `### ${f.path}\n${f.content}`).join("\n\n").slice(0, 60000);
+
+    const prompt = this.prompts.render("generate-docs", {
+      project_context: this.config.project_context || "(none)",
+      code,
+    });
+    const res = await this.ai.complete("fix", [
+      { role: "system", content: "You generate JSDoc/TSDoc documentation for TypeScript functions." },
+      { role: "user", content: prompt },
+    ]);
+    const parsed = extractJson<{ files: { path: string; content: string }[]; summary: string }>(res.content);
+
+    if (!parsed || !parsed.files?.length) {
+      return {
+        mode: "improve",
+        summary: "No documentation generated. AI returned no valid output.",
+        findings: [],
+        score: null,
+        comments: [],
+        generatedTests: [],
+        fixAttempts: [],
+        metrics: { filesAnalyzed: files.length, findingsBySeverity: {}, durationMs: 0 },
+      };
+    }
+
+    const { writeFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    for (const f of parsed.files) {
+      const abs = resolve(this.root, f.path);
+      writeFileSync(abs, f.content, "utf8");
+      logger.info(`runGenerateDocs: updated ${f.path}`);
+    }
+
+    return {
+      mode: "improve",
+      summary: parsed.summary || `Updated ${parsed.files.length} file(s) with documentation.`,
+      findings: [],
+      score: null,
+      comments: [],
+      generatedTests: [],
+      fixAttempts: [],
+      metrics: { filesAnalyzed: files.length, findingsBySeverity: {}, durationMs: 0 },
+    };
   }
 
   // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 /** Default prompt directory bundled with the package. */
 const DEFAULT_PROMPT_DIR = resolve(__dirname, "..", "..", "prompts");
 
-export type PromptName = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "describe";
+export type PromptName = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "describe" | "generate-utils" | "generate-docs";
 
 /** Variables substituted into a prompt template. */
 export type PromptVars = Record<string, string | number | boolean | null>;
