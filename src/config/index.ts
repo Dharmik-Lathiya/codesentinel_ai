@@ -262,6 +262,7 @@ function validateConfig(config: CodeSentinelConfig): void {
     "chat",
     "gate",
     "describe",
+    "improve",
   ];
   if (!validModes.includes(config.mode)) {
     throw new Error(`Invalid mode: ${config.mode}`);
