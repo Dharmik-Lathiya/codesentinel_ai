@@ -136,7 +136,6 @@ export class Engine {
 
     logger.info(`Configured AI model: ${config.default_model.provider}/${config.default_model.model}`);
     logger.info(`Review model: ${(config.models.review ?? config.default_model).provider}/${(config.models.review ?? config.default_model).model}`);
-    this.checkAIProvider();
 
     // Emit engine ready event
     this.eventBus.emit({ type: "ready", payload: { timestamp: Date.now() } });
@@ -189,6 +188,7 @@ export class Engine {
   // ---------------------------------------------------------------------------
   async run(): Promise<EngineReport> {
     await this.init();
+    await this.checkAIProvider();
     const start = Date.now();
     logger.info(`Running mode: ${this.config.mode}`);
 
