@@ -133,12 +133,6 @@ function renderSummary(report: EngineReport): string {
   if (report.gatePassed !== undefined) {
     lines.push(`**Gate:** ${report.gatePassed ? "PASSED" : "FAILED"}`);
   }
-  if (report.findings.length) {
-    lines.push("", "## Findings", "");
-    for (const f of report.findings) {
-      lines.push(`- [${f.severity}] ${f.file}${f.line ? `:${f.line}` : ""} — ${f.comment}`);
-    }
-  }
   return lines.join("\n");
 }
 

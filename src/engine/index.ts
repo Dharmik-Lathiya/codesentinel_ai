@@ -932,13 +932,71 @@ export class Engine {
     fixAttempts?: FixAttempt[],
   ): string {
     const counts = this.tallySeverity(findings);
-    let s = `[${mode}] Analyzed ${findings.length} finding(s). `;
-    s += `Severity breakdown: ${JSON.stringify(counts)}.`;
+    const strengths = findings.filter((f) => f.category === "praise");
+    const issues = findings.filter((f) => f.category !== "praise");
+    const criticalCount = counts["critical"] ?? 0;
+    const highCount = counts["high"] ?? 0;
+    const readyToMerge = criticalCount === 0 && highCount === 0;
+
+    const parts: string[] = [];
+
+    if (findings.length === 0) {
+      parts.push("No issues found. The code looks clean.");
+    } else {
+      parts.push(`Found **${issues.length}** issue(s) and **${strengths.length}** positive observation(s).`);
+      const severityParts = Object.entries(counts)
+        .filter(([k]) => k !== "praise")
+        .map(([k, v]) => `**${k}**: ${v}`);
+      if (severityParts.length) {
+        parts.push(`Severity breakdown: ${severityParts.join(", ")}.`);
+      }
+    }
+
+    parts.push("");
+    parts.push(`**Ready to merge?** ${readyToMerge}`);
+
+    if (issues.length > 0) {
+      const top = issues.slice(0, 3);
+      const reasons = top.map(
+        (i) => `${i.file}${i.line ? `:${i.line}` : ""} — ${i.comment}`,
+      );
+      parts.push(`\n**Reasoning:** ${reasons.join("; ")}`);
+    }
+
+    if (strengths.length > 0) {
+      parts.push(`\n### Strengths\n`);
+      for (const s of strengths) {
+        parts.push(
+          `- **${s.file}${s.line ? `:${s.line}` : ""}** — ${s.comment}`,
+        );
+      }
+    }
+
+    if (issues.length > 0) {
+      parts.push(`\n### Issues\n`);
+      for (const i of issues) {
+        const label =
+          i.severity === "critical" || i.severity === "high"
+            ? `**[${i.severity.toUpperCase()}]** `
+            : "";
+        parts.push(
+          `- ${label}**${i.file}${i.line ? `:${i.line}` : ""}** — ${i.comment}${i.suggestion ? `\n  > Suggestion: ${i.suggestion}` : ""}`,
+        );
+      }
+    }
+
     if (fixAttempts) {
       const success = fixAttempts.filter((a) => a.fixed && a.verified).length;
-      s += ` Fixes applied & verified: ${success}/${fixAttempts.length}.`;
+      parts.push(`\n### Fix Attempts\n`);
+      parts.push(`Fixes applied & verified: **${success}/${fixAttempts.length}**`);
+      for (const a of fixAttempts) {
+        parts.push(
+          `- ${a.fixed ? "✅" : "❌"} **${a.file}** — ${a.explanation}`,
+        );
+      }
     }
-    return s;
+
+    return parts.join("\n");
   }
 
   private tallySeverity(findings: Finding[]): Record<string, number> {
