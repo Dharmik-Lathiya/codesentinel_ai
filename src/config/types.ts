@@ -7,7 +7,7 @@
  */
 
 /** Supported operational modes. */
-export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe";
+export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe" | "improve";
 
 /** Supported AI providers. */
 export type Provider = "openai" | "anthropic" | "gemini" | "opencode";
@@ -228,6 +228,9 @@ export interface CodeSentinelConfig {
 
   /** File batching configuration */
   batch: BatchConfig;
+
+  /** Auto-improvement type: test, util, or doc. Used by improve mode. */
+  improve_type?: "test" | "util" | "doc";
 
   /** YAML config file path (alternative to codesentinel.config.json) */
   configFile?: string;

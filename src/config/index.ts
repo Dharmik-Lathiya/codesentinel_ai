@@ -14,7 +14,7 @@ import { parseJsonc } from "../utils/jsonc.js";
 const userConfigSchema = z
   .object({
     mode: z
-      .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe"])
+      .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve"])
       .optional(),
     max_iterations: z.number().int().positive().optional(),
     enable_auto_fix: z.boolean().optional(),

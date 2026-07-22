@@ -359,6 +359,7 @@ async function main(): Promise<void> {
       "mcp": { type: "boolean", default: false },
       "learning-db": { type: "string" },
       "yaml-config": { type: "boolean", default: false },
+      "improve-type": { type: "string" },
     },
     args: process.argv.slice(2),
     allowPositionals: true,
@@ -399,6 +400,7 @@ async function main(): Promise<void> {
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
+  if (values["improve-type"]) overrides.improve_type = values["improve-type"];
 
   if (values["min-score"]) {
     overrides.gate = { ...(overrides.gate as any || {}), minScore: Number(values["min-score"]) };
