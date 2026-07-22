@@ -92,6 +92,7 @@ export class Engine {
   private readonly mcp: MCPManager | null = null;
   private readonly learning: LearningStore | null = null;
   private readonly eventBus: EventBus;
+  private aiAvailable = true;
 
   constructor(
     config: CodeSentinelConfig,
@@ -154,6 +155,7 @@ export class Engine {
           logger.warn(`OpenCode at ${baseUrl} returned status ${res.status} — AI review will fail`);
         }
       } catch {
+        this.aiAvailable = false;
         logger.warn(`OpenCode at ${baseUrl} is NOT reachable — AI review will be skipped (this is expected unless you have opencode running locally)`);
       }
     } else {
@@ -427,6 +429,10 @@ export class Engine {
   private async aiReview(
     files: { path: string; content: string; diff?: string }[],
   ): Promise<{ findings: Finding[]; summaries: string[] }> {
+    if (!this.aiAvailable) {
+      logger.warn("aiReview: AI provider not reachable — skipping AI review");
+      return { findings: [], summaries: [] };
+    }
     logger.info(`aiReview: starting AI review for ${files.length} files`);
 
     // Group into batches if batching is enabled
@@ -773,6 +779,18 @@ export class Engine {
   // TESTGEN
   // ---------------------------------------------------------------------------
   private async runTestgen(): Promise<EngineReport> {
+    if (!this.aiAvailable) {
+      return {
+        mode: "testgen",
+        summary: "AI provider not reachable. Start opencode (`opencode`) or set another provider via `--provider`.",
+        findings: [],
+        score: null,
+        comments: [],
+        generatedTests: [],
+        fixAttempts: [],
+        metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
+      };
+    }
     const files = await this.collectedFiles();
     const gen = new TestGenerator(this.config, this.ai, this.prompts);
     const generatedTests = await gen.generate(this.root, files);
@@ -793,6 +811,18 @@ export class Engine {
   // CHAT
   // ---------------------------------------------------------------------------
   private async runChat(question: string): Promise<EngineReport> {
+    if (!this.aiAvailable) {
+      return {
+        mode: "chat",
+        summary: "AI provider not reachable. Start opencode (`opencode`) or set another provider via `--provider`.",
+        findings: [],
+        score: null,
+        comments: [],
+        generatedTests: [],
+        fixAttempts: [],
+        metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
+      };
+    }
     const files = await this.collectedFiles();
     const context = files
       .map((f) => `### ${f.path}\n${f.content}`)
@@ -820,6 +850,18 @@ export class Engine {
   // DESCRIBE
   // ---------------------------------------------------------------------------
   private async runDescribe(): Promise<EngineReport> {
+    if (!this.aiAvailable) {
+      return {
+        mode: "describe",
+        summary: "AI provider not reachable. Start opencode (`opencode`) or set another provider via `--provider`.",
+        findings: [],
+        score: null,
+        comments: [],
+        generatedTests: [],
+        fixAttempts: [],
+        metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
+      };
+    }
     const files = await this.collectedFiles();
     const diff = files
       .map((f) => `### ${f.path}${f.diff ? `\n\`\`\`diff\n${f.diff}\n\`\`\`` : ""}`)
