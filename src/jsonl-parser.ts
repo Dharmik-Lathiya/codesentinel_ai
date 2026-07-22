@@ -58,12 +58,22 @@ export function validateAndNormalize(entries: ReviewEntry[]): ReviewResult {
 
 export function buildReviewBody(result: ReviewResult): string {
   const parts: string[] = [];
-  if (result.summary) parts.push(`## Review Summary\n\n${result.summary}`);
-  if (result.verdict) parts.push(`**Verdict:** ${result.verdict}`);
+  if (result.summary) parts.push(`### Review Summary\n\n${result.summary}`);
   if (result.strengths.length) {
     parts.push(`\n### Strengths\n`);
     for (const s of result.strengths) {
       parts.push(`- **${s.title}**${s.description ? `: ${s.description}` : ""}`);
+    }
+  }
+  if (result.issues.length) {
+    parts.push(`\n### Issues\n`);
+    for (const i of result.issues) {
+      const label = i.severity === "critical" || i.severity === "high"
+        ? `**[${i.severity.toUpperCase()}]** `
+        : "";
+      parts.push(
+        `- ${label}**${i.file}${i.line ? `:${i.line}` : ""}** — ${i.message}${i.suggestion ? `\n  > Suggestion: ${i.suggestion}` : ""}`,
+      );
     }
   }
   return parts.join("\n");

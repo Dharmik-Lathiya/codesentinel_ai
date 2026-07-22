@@ -92,12 +92,9 @@ function parseCommand(
 
 function formatReport(report: EngineReport): string {
   const parts = [`### CodeSentinel — ${report.mode}`, "", report.summary];
-  if (report.score) parts.push(`**Score:** ${report.score.overall}/100`);
+  if (report.score) parts.push(`\n**Score:** ${report.score.overall}/100`);
   if (report.gatePassed !== undefined) {
-    parts.push(`**Gate:** ${report.gatePassed ? "PASSED" : "FAILED"}`);
-  }
-  if (report.comments.length) {
-    parts.push("", ...report.comments.map((c) => `- ${c.file}: ${c.body}`));
+    parts.push(`\n**Gate:** ${report.gatePassed ? "PASSED" : "FAILED"}`);
   }
   return parts.join("\n");
 }
