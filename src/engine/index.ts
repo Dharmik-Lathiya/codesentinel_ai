@@ -471,53 +471,104 @@ export class Engine {
   }
 
   // ---------------------------------------------------------------------------
-  // FIX (loop-based)
+  // FIX — Review-Fix Loop Engineering
   // ---------------------------------------------------------------------------
   private async runFix(): Promise<EngineReport> {
-    const files = await this.collectedFiles();
-    const staticFindings = await this.analyzeFiles(files);
-    const { findings: aiFindings } = await this.aiReview(files);
-    const findings = [...staticFindings, ...aiFindings];
+    const allFixAttempts: FixAttempt[] = [];
+    const allFindings: Finding[] = [];
+    const modifiedFiles = new Set<string>();
+    const maxCycles = this.config.max_iterations;
+    let cycle = 0;
 
-    // Only act on actionable, non-praise findings, bounded by max_iterations.
-    const actionable = findings.filter((f) => f.category !== "praise");
-    const fixAttempts: FixAttempt[] = [];
-    const limit = Math.min(this.config.max_iterations, actionable.length);
-    logger.info(`runFix: ${actionable.length} actionable findings, max_iterations=${this.config.max_iterations}, limit=${limit}`);
+    while (cycle < maxCycles) {
+      cycle++;
+      logger.info(`runFix: === cycle ${cycle}/${maxCycles} ===`);
 
-    for (let iteration = 1; iteration <= limit; iteration++) {
-      const finding = actionable[iteration - 1];
-      logger.info(`runFix: iteration ${iteration}/${limit} — ${finding.file}:${finding.line} (${finding.severity}/${finding.category})`);
-      try {
-        const attempt = await this.applyFix(finding, iteration);
-        fixAttempts.push(attempt);
-        logger.info(`runFix: iteration ${iteration} result — fixed=${attempt.fixed} verified=${attempt.verified}`);
-      } catch (err) {
-        logger.warn(`runFix: iteration ${iteration} failed for ${finding.file}:`, err);
-        fixAttempts.push({
-          iteration,
-          file: finding.file,
-          fixed: false,
-          explanation: `Error: ${err instanceof Error ? err.message : err}`,
-          verified: false,
-          newIssuesIntroduced: [],
-        });
+      const files = await this.collectedFiles();
+      if (files.length === 0) {
+        logger.info("runFix: no files to analyze, exiting loop");
+        break;
       }
-      // In dry-run or non-auto-fix mode, one attempt is sufficient since no files are written.
-      if (!this.config.enable_auto_fix) break;
+
+      const staticFindings = await this.analyzeFiles(files);
+      const { findings: aiFindings } = await this.aiReview(files);
+      const findings = [...staticFindings, ...aiFindings];
+      allFindings.push(...findings);
+
+      const actionable = findings.filter((f) => f.category !== "praise");
+      logger.info(`runFix: cycle ${cycle} — ${actionable.length} actionable findings`);
+
+      if (actionable.length === 0) {
+        logger.info("runFix: all issues resolved, fix successful");
+        break;
+      }
+
+      if (!this.config.enable_auto_fix) {
+        logger.info("runFix: auto-fix disabled, exiting after review");
+        break;
+      }
+
+      for (let i = 0; i < actionable.length; i++) {
+        const finding = actionable[i];
+        const iterId = (cycle - 1) * maxCycles + i + 1;
+        logger.info(`runFix: fix ${i + 1}/${actionable.length} — ${finding.file}:${finding.line}`);
+        try {
+          const attempt = await this.applyFix(finding, iterId);
+          allFixAttempts.push(attempt);
+          if (attempt.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
+            modifiedFiles.add(finding.file);
+          }
+          logger.info(`runFix: fix result — fixed=${attempt.fixed} verified=${attempt.verified}`);
+        } catch (err) {
+          logger.warn(`runFix: fix failed for ${finding.file}:`, err);
+          allFixAttempts.push({
+            iteration: iterId,
+            file: finding.file,
+            fixed: false,
+            explanation: `Error: ${err instanceof Error ? err.message : err}`,
+            verified: false,
+            newIssuesIntroduced: [],
+          });
+        }
+      }
     }
 
-    const summary = this.buildSummary("fix", findings, fixAttempts);
+    if (modifiedFiles.size > 0 && !this.config.dry_run) {
+      await this.pushFixes(modifiedFiles);
+    }
+
+    const summary = this.buildSummary("fix", allFindings, allFixAttempts);
     return {
       mode: "fix",
       summary,
-      findings,
+      findings: allFindings,
       score: null,
       comments: [],
       generatedTests: [],
-      fixAttempts,
-      metrics: { filesAnalyzed: files.length, findingsBySeverity: {}, durationMs: 0 },
+      fixAttempts: allFixAttempts,
+      metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
     };
+  }
+
+  /** Commit and push fixed files to the PR head branch (or main). */
+  private async pushFixes(modifiedFiles: Set<string>): Promise<void> {
+    const { execSync } = await import("node:child_process");
+    try {
+      const files = [...modifiedFiles].join(" ");
+      execSync(`git add ${files}`, { cwd: this.root, stdio: "pipe" });
+      execSync('git commit -m "CodeSentinel: auto-fix issues [skip ci]"', {
+        cwd: this.root,
+        stdio: "pipe",
+      });
+
+      const headRef = process.env.GITHUB_HEAD_REF;
+      const baseRef = process.env.GITHUB_BASE_REF ?? "main";
+      const target = headRef ?? baseRef;
+      execSync(`git push origin HEAD:${target}`, { cwd: this.root, stdio: "pipe" });
+      logger.info(`pushFixes: pushed ${files.length} file(s) to ${target}`);
+    } catch (err) {
+      logger.warn("pushFixes: failed to push:", err);
+    }
   }
 
   /** Generate and (optionally) write a fix for a single finding. */
