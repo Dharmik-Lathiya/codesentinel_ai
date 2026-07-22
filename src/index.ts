@@ -314,7 +314,7 @@ async function main(): Promise<void> {
         process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
         return;
       }
-      engine.getDismissalManager().dismissByRule(ruleId, reason);
+      await engine.dismissByRule(ruleId, reason);
       process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
     } else if (dismissArgs.includes("--file")) {
       const fileIdx = dismissArgs.indexOf("--file");
@@ -326,7 +326,7 @@ async function main(): Promise<void> {
         return;
       }
       const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
-      engine.getDismissalManager().dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
       process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
