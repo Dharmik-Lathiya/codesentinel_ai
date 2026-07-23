@@ -46,7 +46,7 @@
     }
   },
 
-  "instruction": ["AGENTS.md", ".opencode/skills/**/SKILL.md"],
+  "instructions": ["AGENTS.md", ".opencode/skills/**/SKILL.md"],
 
   "agent": {
     "build": {
