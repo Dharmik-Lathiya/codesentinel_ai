@@ -53,19 +53,46 @@ For each finding, classify as:
 ## Repository Files
 {{repository_snapshot}}
 
-## Output Format (strict JSON)
-Return ONLY valid JSON:
+## Output Format
+
+Return a Markdown audit report followed by a structured JSON block.
+
+### Markdown Section
+
+## Executive Summary
+[Overall health, top 3 risks, and recommended actions]
+
+### 🔴 Critical
+- **[file]** — [title] ([systemic|localized])
+  > [description with line numbers and code snippets]
+  > **Fix:** [recommendation]
+
+### 🟠 High
+- ...
+
+### 🟡 Medium
+- ...
+
+### 🔵 Low / Info
+- ...
+
+### ✅ Strengths
+- [positive findings, good practices]
+
+### JSON Section
+
+```json
 {
-  "summary": "<executive summary suitable for a CTO — overall health, top 3 risks, and recommended actions>",
+  "summary": "<executive summary>",
   "findings": [
     {
       "severity": "info|low|medium|high|critical",
       "category": "security|performance|architecture|reliability|observability|dependencies",
       "title": "<short, descriptive title>",
-      "file": "<path or 'repo-wide' for systemic issues>",
+      "file": "<path or 'repo-wide'>",
       "type": "systemic|localized",
-      "description": "<detailed explanation with evidence — reference exact line numbers and code snippets>",
-      "recommendation": "<specific, actionable fix — include code examples where applicable>"
+      "description": "<detailed explanation with evidence>",
+      "recommendation": "<specific, actionable fix>"
     }
   ],
   "metrics": {
@@ -75,6 +102,7 @@ Return ONLY valid JSON:
     "localizedIssues": <number>
   }
 }
+```
 
 ## Severity Guide
 - **critical**: Active exploit, data breach, remote code execution, or sensitive data exposure
@@ -89,3 +117,4 @@ Return ONLY valid JSON:
 - Prioritize findings by business impact, not just technical severity
 - Include positive findings where the codebase has good practices
 - Be specific in recommendations — "use parameterized queries" is better than "fix SQL injection"
+- Output BOTH sections — Markdown first, then the JSON code block

@@ -1,11 +1,27 @@
+# CodeSentinel — Utility Generator
+
 You are an expert TypeScript/Node.js developer. Analyze the codebase below and identify missing utility functions that would be valuable additions. Generate well-typed, tested utility functions.
 
-Project context: {{project_context}}
+## Project Context
+{{project_context}}
 
-Current codebase:
+## Current Codebase
 {{code}}
 
-Respond with JSON:
+## Output Format
+
+Return a Markdown summary of generated utilities followed by a structured JSON block.
+
+### Markdown Section
+
+## Utility Generation Report
+
+**Files Created:** [count]
+
+**Summary:** [brief description of what was generated and why]
+
+### JSON Section
+
 ```json
 {
   "files": [
@@ -18,9 +34,9 @@ Respond with JSON:
 }
 ```
 
-Rules:
+## Rules
 - Only generate utilities that genuinely fill gaps
 - Include full TypeScript types
 - Each file must be self-contained with imports
 - Avoid duplicating existing functionality
-- Output ONLY valid JSON
+- Output BOTH sections — Markdown first, then the JSON code block

@@ -18,28 +18,49 @@ Analyze the diff below and generate a comprehensive, accurate pull request descr
 ## Files Changed
 {{diff}}
 
-## Output Format (strict JSON)
-Return ONLY valid JSON, no prose outside:
+## Output Format
+
+Return a Markdown PR description followed by a structured JSON block.
+
+### Markdown Section
+
+## Title
+[concise, descriptive PR title — ~60 chars, imperative mood]
+
+## Type
+[feature|bugfix|refactor|docs|chore|test|perf|security|deps|revert]
+
+## Description
+[3-6 sentence summary: what changed, why, and how it affects consumers]
+
+## Highlights
+- [key architectural or behavioral change #1 — explain the 'why' not just the 'what']
+- [key change #2]
+
+## Affected Areas
+- [area of the codebase affected, e.g., 'authentication', 'API Gateway']
+
+## TODO
+- [any follow-up items, missing pieces, or reminders]
+
+### JSON Section
+
+```json
 {
-  "title": "<concise, descriptive PR title (~60 chars max, imperative mood: 'Add', 'Fix', 'Refactor')>",
-  "description": "<3-6 sentence summary: what changed, why, and how it affects consumers>",
+  "title": "<concise, descriptive PR title>",
+  "description": "<3-6 sentence summary>",
   "type": "feature|bugfix|refactor|docs|chore|test|perf|security|deps|revert",
   "breakingChanges": <true|false>,
-  "breakingChangeNotes": "<if breakingChanges is true, explain what breaks and how to migrate; otherwise null>",
-  "highlights": [
-    "<key architectural or behavioral change #1 — explain the 'why' not just the 'what'>",
-    "<key change #2>"
-  ],
-  "affectedAreas": [
-    "<area of the codebase affected, e.g., 'authentication', 'API Gateway', 'database migrations'>"
-  ],
-  "todo": [
-    "<any follow-up items, missing pieces, or reminders; empty array if none>"
-  ]
+  "breakingChangeNotes": "<if breaking, explain migration; otherwise null>",
+  "highlights": ["<key change #1>", "<key change #2>"],
+  "affectedAreas": ["<area #1>"],
+  "todo": ["<follow-up item>"]
 }
+```
 
 ## Rules
 - Do NOT include implementation details that are obvious from reading the code
 - Do highlight design decisions, trade-offs, and non-obvious changes
 - If the diff is very small (< 50 lines), keep the description brief
 - If the diff is large, organize highlights by area/component
+- Output BOTH sections — Markdown first, then the JSON code block
