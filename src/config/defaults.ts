@@ -106,7 +106,7 @@ export const DEFAULT_LINTER_CONFIG: LinterConfig = {
 };
 
 export const DEFAULT_LEARNING_CONFIG: LearningConfig = {
-  enabled: true,
+  enabled: false,
   dbPath: ".codesentinel/learning.db",
   metaReview: true,
   patternDiscovery: true,

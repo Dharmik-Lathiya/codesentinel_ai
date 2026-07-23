@@ -94,7 +94,7 @@ jobs:
         run: |
           FLAGS=""
           if [ "${{ steps.cmd.outputs.mode }}" = "fix" ]; then FLAGS="--auto-fix"; fi
-          node codesentinel/dist/index.js ${{ steps.cmd.outputs.mode }} $FLAGS > /tmp/cs-out.txt 2>&1; true
+          node codesentinel/dist/index.js ${{ steps.cmd.outputs.mode }} $FLAGS 2>&1 | tee /tmp/cs-out.txt; true
 
       - name: Update comment
         uses: actions/github-script@v7
