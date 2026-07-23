@@ -144,12 +144,15 @@ export class Engine {
 
   /** Best-effort health check: log whether the AI provider is reachable. */
   private async checkAIProvider(): Promise<void> {
-    if (this.aiOverride) return; // tests provide their own AI
+    if (this.aiOverride) return;
     const model = this.ai.modelForTask("review");
     const baseUrl = this.secrets.opencode_base_url || "http://localhost:4096";
     if (model.provider === "opencode") {
       try {
-        const res = await fetch(`${baseUrl}/v1/models`, { signal: AbortSignal.timeout(3000) });
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch(`${baseUrl}/v1/models`, { signal: controller.signal });
+        clearTimeout(timer);
         if (res.ok) {
           logger.info(`OpenCode is REACHABLE at ${baseUrl}`);
         } else {
@@ -191,9 +194,9 @@ export class Engine {
   // ---------------------------------------------------------------------------
   async run(): Promise<EngineReport> {
     await this.init();
-    await this.checkAIProvider();
     const start = Date.now();
     logger.info(`Running mode: ${this.config.mode}`);
+    await this.checkAIProvider();
 
     let report: EngineReport;
     switch (this.config.mode) {
@@ -346,9 +349,12 @@ export class Engine {
   > {
     if (this.config.mode === "review" || this.config.mode === "fix") {
       const diffs: DiffFile[] = await collectDiff(undefined, this.root);
-      return diffs
-        .filter((d) => d.status !== "deleted")
-        .map((d) => ({ path: d.path, content: d.content, diff: d.diff }));
+      if (diffs.length > 0) {
+        return diffs
+          .filter((d) => d.status !== "deleted")
+          .map((d) => ({ path: d.path, content: d.content, diff: d.diff }));
+      }
+      logger.info("No diff found — falling back to full repo scan");
     }
     const rels = collectFiles(this.root, this.config.include, this.config.exclude);
     return rels.map((path) => ({

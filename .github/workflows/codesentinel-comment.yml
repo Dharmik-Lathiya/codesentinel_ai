@@ -50,6 +50,7 @@ jobs:
               });
               core.setOutput('ref', repo.default_branch);
               core.setOutput('base_ref', repo.default_branch);
+              core.setOutput('head_ref', '');
             }
 
       - name: Checkout target
