@@ -88,6 +88,7 @@ jobs:
             core.setOutput('comment_id', comment.id);
 
       - name: Run CodeSentinel
+        id: run
         env:
           GITHUB_BASE_REF: ${{ steps.target.outputs.base_ref }}
           GITHUB_HEAD_REF: ${{ steps.target.outputs.head_ref }}
@@ -101,15 +102,17 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            let out = '';
-            try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}
             const mode = '${{ steps.cmd.outputs.mode }}';
-            let summary = out;
+            let body = '### CodeSentinel — ' + mode + '\n\n';
+            let logs = '';
+            try { logs = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}
             try {
               const report = JSON.parse(fs.readFileSync('codesentinel-reports/codesentinel-' + mode + '.json', 'utf8'));
-              if (report.summary) summary = report.summary;
-            } catch {}
-            const body = '### CodeSentinel \u2014 ' + mode + '\n\n```\n' + summary.trim() + '\n```';
+              if (report.summary) body += report.summary;
+            } catch {
+              if (logs) body += '```\n' + logs.trim() + '\n```';
+            }
+            body += '\n\n<details><summary>Logs</summary>\n\n```\n' + logs.trim() + '\n```\n\n</details>';
             await github.rest.issues.updateComment({
               owner: context.repo.owner, repo: context.repo.repo,
               comment_id: ${{ steps.loading.outputs.comment_id }},
