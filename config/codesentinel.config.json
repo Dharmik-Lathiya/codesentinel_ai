@@ -8,15 +8,15 @@
   "project_context": "TypeScript monorepo. Business logic lives in src/domain. Keep functions pure.",
   "default_model": {
     "provider": "opencode",
-    "model": "opencode/default"
+    "model": "deepseek-v4-flash-free"
   },
   "models": {
-    "review": { "provider": "opencode", "model": "opencode/default" },
-    "fix": { "provider": "opencode", "model": "opencode/default" },
-    "audit": { "provider": "opencode", "model": "opencode/default" },
-    "score": { "provider": "opencode", "model": "opencode/default" },
-    "testgen": { "provider": "opencode", "model": "opencode/default" },
-    "chat": { "provider": "opencode", "model": "opencode/default" }
+    "review": { "provider": "opencode", "model": "deepseek-v4-flash-free" },
+    "fix": { "provider": "opencode", "model": "deepseek-v4-flash-free" },
+    "audit": { "provider": "opencode", "model": "deepseek-v4-flash-free" },
+    "score": { "provider": "opencode", "model": "deepseek-v4-flash-free" },
+    "testgen": { "provider": "opencode", "model": "deepseek-v4-flash-free" },
+    "chat": { "provider": "opencode", "model": "deepseek-v4-flash-free" }
   },
   "test_runner": "vitest",
   "include": ["**/*.{ts,tsx,js,jsx}"],

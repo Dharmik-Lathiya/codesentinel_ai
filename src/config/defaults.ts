@@ -140,15 +140,15 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   custom_prompt_paths: {},
   project_context: "",
 
-  default_model: { provider: "opencode", model: "opencode/default" },
+  default_model: { provider: "opencode", model: "deepseek-v4-flash-free" },
   models: {
-    review: { provider: "opencode", model: "opencode/default" },
-    fix: { provider: "opencode", model: "opencode/default" },
-    audit: { provider: "opencode", model: "opencode/default" },
-    score: { provider: "opencode", model: "opencode/default" },
-    testgen: { provider: "opencode", model: "opencode/default" },
-    chat: { provider: "opencode", model: "opencode/default" },
-    describe: { provider: "opencode", model: "opencode/default" },
+    review: { provider: "opencode", model: "deepseek-v4-flash-free" },
+    fix: { provider: "opencode", model: "deepseek-v4-flash-free" },
+    audit: { provider: "opencode", model: "deepseek-v4-flash-free" },
+    score: { provider: "opencode", model: "deepseek-v4-flash-free" },
+    testgen: { provider: "opencode", model: "deepseek-v4-flash-free" },
+    chat: { provider: "opencode", model: "deepseek-v4-flash-free" },
+    describe: { provider: "opencode", model: "deepseek-v4-flash-free" },
   },
 
   test_runner: "vitest",
