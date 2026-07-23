@@ -94,6 +94,8 @@ jobs:
         env:
           GITHUB_BASE_REF: ${{ steps.target.outputs.base_ref }}
           GITHUB_HEAD_REF: ${{ steps.target.outputs.head_ref }}
+          OPENCODE_BASE_URL: ${{ vars.OPENCODE_BASE_URL }}
+          OPENCODE_API_KEY: ${{ vars.OPENCODE_API_KEY }}
         run: |
           FLAGS=""
           if [ "${{ steps.cmd.outputs.mode }}" = "fix" ]; then FLAGS="--auto-fix"; fi
