@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 /** Convert a glob pattern (subset) into a RegExp. Supports **, *, ?, {a,b}. */
@@ -137,4 +137,12 @@ export function languageOf(path: string): string {
 /** Ensure a directory (and parents) exists. */
 export function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
+}
+
+/** Backup a file with a timestamp suffix. Returns the backup path. */
+export function backupFile(filePath: string): string {
+  const backupPath = `${filePath}.${Date.now()}.bak`;
+  const content = readFileSync(filePath, "utf8");
+  writeFileSync(backupPath, content, "utf8");
+  return backupPath;
 }
