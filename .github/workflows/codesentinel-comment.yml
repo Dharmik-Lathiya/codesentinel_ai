@@ -20,6 +20,8 @@ jobs:
       startsWith(github.event.comment.body, '/gate') ||
       startsWith(github.event.comment.body, '/deadcode')
     runs-on: ubuntu-latest
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
     steps:
       - name: Extract command
         id: cmd
@@ -103,16 +105,26 @@ jobs:
           script: |
             const fs = require('fs');
             const mode = '${{ steps.cmd.outputs.mode }}';
+            const MAX_BODY = 63000;
             let body = '### CodeSentinel — ' + mode + '\n\n';
             let logs = '';
             try { logs = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}
             try {
               const report = JSON.parse(fs.readFileSync('codesentinel-reports/codesentinel-' + mode + '.json', 'utf8'));
-              if (report.summary) body += report.summary;
+              if (report.summary) {
+                let summary = report.summary;
+                if (summary.length > 50000) summary = summary.slice(0, 50000) + '\n\n_… truncated …_';
+                body += summary;
+              }
             } catch {
-              if (logs) body += '```\n' + logs.trim() + '\n```';
+              if (logs) {
+                let trimmed = logs.trim();
+                if (trimmed.length > 50000) trimmed = trimmed.slice(0, 50000) + '\n… truncated';
+                body += '```\n' + trimmed + '\n```';
+              }
             }
-            body += '\n\n<details><summary>Logs</summary>\n\n```\n' + logs.trim() + '\n```\n\n</details>';
+            const logSection = '\n\n<details><summary>Raw logs</summary>\n\n```\n' + (logs.length > 10000 ? logs.trim().slice(0, 10000) + '\n…' : logs.trim()) + '\n```\n\n</details>';
+            if ((body + logSection).length < MAX_BODY) body += logSection;
             await github.rest.issues.updateComment({
               owner: context.repo.owner, repo: context.repo.repo,
               comment_id: ${{ steps.loading.outputs.comment_id }},

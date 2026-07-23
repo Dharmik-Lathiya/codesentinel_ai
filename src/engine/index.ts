@@ -1375,7 +1375,7 @@ export class Engine {
 
     if (issues.length > 0) {
       const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-      const MAX_VISIBLE = 20;
+      const MAX_VISIBLE = 5;
       const sorted = [...issues].sort(
         (a, b) => (SEVERITY_ORDER[a.severity] ?? 99) - (SEVERITY_ORDER[b.severity] ?? 99),
       );
