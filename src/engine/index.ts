@@ -146,7 +146,7 @@ export class Engine {
   private async checkAIProvider(): Promise<void> {
     if (this.aiOverride) return;
     const model = this.ai.modelForTask("review");
-    const baseUrl = this.secrets.opencode_base_url || "http://localhost:4096";
+    const baseUrl = (this.secrets.opencode_base_url || "http://localhost:4096").replace(/\/v1$/, "");
     if (model.provider === "opencode") {
       try {
         const controller = new AbortController();
@@ -156,6 +156,7 @@ export class Engine {
         if (res.ok) {
           logger.info(`OpenCode is REACHABLE at ${baseUrl}`);
         } else {
+          this.aiAvailable = false;
           logger.warn(`OpenCode at ${baseUrl} returned status ${res.status} — AI review will fail`);
         }
       } catch {

@@ -17,7 +17,7 @@ export class OpenCodeProvider implements AIProvider {
     this.apiKey = secrets.opencode_api_key || "opencode";
     this.baseUrl = (
       secrets.opencode_base_url || "http://localhost:4096"
-    ).replace(/\/$/, "");
+    ).replace(/\/v1$/, "").replace(/\/$/, "");
   }
 
   async complete(req: CompletionRequest): Promise<CompletionResult> {
