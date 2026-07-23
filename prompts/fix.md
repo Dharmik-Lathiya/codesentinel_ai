@@ -51,13 +51,29 @@ Suggestion: {{suggestion}}
 {{code}}
 ```
 
-## Output Format (strict JSON)
-Return ONLY valid JSON, no prose outside:
+## Output Format
+
+Return a Markdown explanation of the fix followed by a structured JSON block.
+
+### Markdown Section
+
+## Fix Report
+
+**Issue:** {{severity}} — {{comment}}
+
+**Change:** [exactly what you changed and why]
+
+**Verification:** [does the fix resolve the issue? any edge cases?]
+
+### JSON Section
+
+```json
 {
   "fixed": <true|false>,
   "explanation": "<exactly what you changed and why — be specific>",
-  "content": "<the COMPLETE updated file content if fixed, otherwise the original content unchanged>"
+  "content": "<the COMPLETE updated file content if fixed, otherwise the original content>"
 }
+```
 
 ## Rules
 - Return the **complete file** as `content`, not a diff or snippet
@@ -67,3 +83,4 @@ Return ONLY valid JSON, no prose outside:
 - Do NOT add comments unless they explain the fix itself
 - Preserve all imports — only add new ones if required by the fix
 - If the fix requires changes in other files, set `fixed: false` and note what other files need changes
+- Output BOTH sections — Markdown first, then the JSON code block
