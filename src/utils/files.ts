@@ -44,6 +44,8 @@ function escapeRe(s: string): string {
   return s.replace(/[.+^$*?{}|\\]/g, "\\$&");
 }
 
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".cache", ".codesentinel-cache", "coverage"]);
+
 /** Recursively walk a directory yielding file paths (relative to root). */
 export function walk(root: string): string[] {
   const out: string[] = [];
@@ -57,6 +59,7 @@ export function walk(root: string): string[] {
       continue;
     }
     for (const entry of entries) {
+      if (SKIP_DIRS.has(entry)) continue;
       const full = join(dir, entry);
       let st;
       try {
