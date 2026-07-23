@@ -286,7 +286,7 @@ export function configFromInputs(
   if (inputs.project_context) out.project_context = inputs.project_context;
   if (inputs.test_runner) out.test_runner = inputs.test_runner as "jest" | "vitest";
   if (inputs.provider) {
-    const providerModel = { provider: inputs.provider, model: "default" };
+    const providerModel = { provider: inputs.provider, model: "deepseek-v4-flash-free" };
     out.default_model = providerModel;
     out.models = {
       review: providerModel,
