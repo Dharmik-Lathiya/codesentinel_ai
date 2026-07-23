@@ -589,6 +589,19 @@ export class Engine {
   // FIX — Review-Fix Loop Engineering
   // ---------------------------------------------------------------------------
   private async runFix(): Promise<EngineReport> {
+    if (!this.aiAvailable) {
+      logger.warn("runFix: AI provider not available — cannot apply fixes");
+      return {
+        mode: "fix",
+        summary: "AI provider not reachable. Cannot apply fixes without an AI provider.",
+        findings: [],
+        score: null,
+        comments: [],
+        generatedTests: [],
+        fixAttempts: [],
+        metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
+      };
+    }
     const allFixAttempts: FixAttempt[] = [];
     const allFindings: Finding[] = [];
     const modifiedFiles = new Set<string>();
