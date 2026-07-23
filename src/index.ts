@@ -447,6 +447,9 @@ async function main(): Promise<void> {
     secrets,
   });
 
+  const runMode = modeArg ?? engine.config.mode;
+  process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     const answer = await engine.ask(values["ask"]);
     process.stdout.write(answer + "\n");
