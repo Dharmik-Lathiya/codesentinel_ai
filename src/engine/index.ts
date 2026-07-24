@@ -644,28 +644,37 @@ export class Engine {
         else fileGroups.set(f.file, [f]);
       }
       const groups = [...fileGroups.entries()];
-      const batchResults = await concurrentMap(groups, async ([filePath, fileFindings], idx) => {
-        logger.info(`runFix: batch ${idx + 1}/${fileGroups.size} — ${filePath} (${fileFindings.length} issues)`);
-        try {
-          const attempt = await this.batchApplyFix(filePath, fileFindings, idx + 1);
-          logger.info(`runFix: batch result — fixed=${attempt.fixed} verified=${attempt.verified}`);
-          return attempt;
-        } catch (err) {
-          logger.warn(`runFix: batch fix failed for ${filePath}: ${err instanceof Error ? err.message : err}`);
-          return {
-            iteration: idx + 1,
-            file: filePath,
-            fixed: false,
-            explanation: `Error: ${err instanceof Error ? err.message : err}`,
-            verified: false,
-            newIssuesIntroduced: [],
-          } as FixAttempt;
+      const PHASE_SIZE = 5;
+      for (let phase = 0; phase < groups.length; phase += PHASE_SIZE) {
+        const phaseGroups = groups.slice(phase, phase + PHASE_SIZE);
+        logger.info(`runFix: phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)} (${phaseGroups.length} files)`);
+        const batchResults = await concurrentMap(phaseGroups, async ([filePath, fileFindings], idx) => {
+          logger.info(`runFix: batch ${phase + idx + 1}/${fileGroups.size} — ${filePath} (${fileFindings.length} issues)`);
+          try {
+            const attempt = await this.batchApplyFix(filePath, fileFindings, phase + idx + 1);
+            logger.info(`runFix: batch result — fixed=${attempt.fixed} verified=${attempt.verified}`);
+            return attempt;
+          } catch (err) {
+            logger.warn(`runFix: batch fix failed for ${filePath}: ${err instanceof Error ? err.message : err}`);
+            return {
+              iteration: phase + idx + 1,
+              file: filePath,
+              fixed: false,
+              explanation: `Error: ${err instanceof Error ? err.message : err}`,
+              verified: false,
+              newIssuesIntroduced: [],
+            } as FixAttempt;
+          }
+        }, 3);
+        for (const attempt of batchResults) {
+          allFixAttempts.push(attempt);
+          if (attempt.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
+            modifiedFiles.add(attempt.file);
+          }
         }
-      }, 5);
-      for (const attempt of batchResults) {
-        allFixAttempts.push(attempt);
-        if (attempt.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
-          modifiedFiles.add(attempt.file);
+        if (modifiedFiles.size > 0 && phase + PHASE_SIZE < groups.length) {
+          await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)}`);
+          modifiedFiles.clear();
         }
       }
     }
@@ -688,12 +697,13 @@ export class Engine {
   }
 
   /** Commit and push fixed files to the PR head branch (or main). */
-  private async pushFixes(modifiedFiles: Set<string>): Promise<void> {
+  private async pushFixes(modifiedFiles: Set<string>, tag?: string): Promise<void> {
     const { execSync } = await import("node:child_process");
     try {
       const files = [...modifiedFiles].join(" ");
       execSync(`git add ${files}`, { cwd: this.root, stdio: "pipe" });
-      execSync('git commit -m "CodeSentinel: auto-fix issues [skip ci]"', {
+      const msg = tag ? `CodeSentinel: auto-fix issues ${tag}` : 'CodeSentinel: auto-fix issues [skip ci]';
+      execSync(`git commit -m "${msg}"`, {
         cwd: this.root,
         stdio: "pipe",
       });
