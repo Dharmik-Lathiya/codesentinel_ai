@@ -11,47 +11,49 @@ export class ProviderUnavailableError extends Error {
  * JSON in markdown fences or add commentary, so we are defensive here.
  * Returns null instead of throwing if JSON cannot be parsed.
  */
-export function extractJson(text) {
+function tryParseJson(s) {
     try {
-        const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-        const candidate = fenced ? fenced[1] : text;
-        const start = candidate.indexOf("{");
-        const end = candidate.lastIndexOf("}");
-        if (start === -1 || end === -1 || end < start) {
-            logger.warn("extractJson: No JSON object found in model response");
-            return null;
+        return JSON.parse(s);
+    }
+    catch { }
+    const cleaned = s.replace(/,(\s*[}\]])/g, "$1").replace(/,\s*,/g, ",");
+    try {
+        return JSON.parse(cleaned);
+    }
+    catch { }
+    const single = s.replace(/'/g, '"');
+    try {
+        return JSON.parse(single.replace(/,(\s*[}\]])/g, "$1"));
+    }
+    catch { }
+    return null;
+}
+export function extractJson(text) {
+    const fenced = text.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi);
+    for (const match of fenced) {
+        const result = tryParseJson(match[1].trim());
+        if (result !== null)
+            return result;
+    }
+    let depth = 0;
+    let start = -1;
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] === "{") {
+            if (start === -1)
+                start = i;
+            depth++;
         }
-        const raw = candidate.slice(start, end + 1);
-        try {
-            return JSON.parse(raw);
-        }
-        catch {
-            const cleaned = raw
-                .replace(/,(\s*[}\]])/g, "$1")
-                .replace(/,\s*,/g, ",");
-            try {
-                return JSON.parse(cleaned);
-            }
-            catch {
-                const bracketStart = candidate.indexOf("[");
-                const bracketEnd = candidate.lastIndexOf("]");
-                if (bracketStart !== -1 && bracketEnd > bracketStart) {
-                    const rawArr = candidate.slice(bracketStart, bracketEnd + 1);
-                    const cleanedArr = rawArr
-                        .replace(/,(\s*[}\]])/g, "$1")
-                        .replace(/,\s*,/g, ",");
-                    try {
-                        return JSON.parse(cleanedArr);
-                    }
-                    catch { }
-                }
-                throw new Error(`Unparseable JSON after cleanup`);
+        else if (text[i] === "}") {
+            depth--;
+            if (depth === 0 && start !== -1) {
+                const result = tryParseJson(text.slice(start, i + 1));
+                if (result !== null)
+                    return result;
+                start = -1;
             }
         }
     }
-    catch (err) {
-        logger.warn(`extractJson: Failed to parse JSON — ${err instanceof Error ? err.message : err}`);
-        return null;
-    }
+    logger.warn("extractJson: No valid JSON object found in model response");
+    return null;
 }
 //# sourceMappingURL=provider.js.map

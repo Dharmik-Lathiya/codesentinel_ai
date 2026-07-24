@@ -48,44 +48,38 @@ export class ProviderUnavailableError extends Error {
  * JSON in markdown fences or add commentary, so we are defensive here.
  * Returns null instead of throwing if JSON cannot be parsed.
  */
+function tryParseJson<T>(s: string): T | null {
+  try { return JSON.parse(s) as T; } catch {}
+  const cleaned = s.replace(/,(\s*[}\]])/g, "$1").replace(/,\s*,/g, ",");
+  try { return JSON.parse(cleaned) as T; } catch {}
+  const single = s.replace(/'/g, '"');
+  try { return JSON.parse(single.replace(/,(\s*[}\]])/g, "$1")) as T; } catch {}
+  return null;
+}
+
 export function extractJson<T = unknown>(text: string): T | null {
-  try {
-    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const candidate = fenced ? fenced[1] : text;
-    const start = candidate.indexOf("{");
-    const end = candidate.lastIndexOf("}");
-    if (start === -1 || end === -1 || end < start) {
-      logger.warn("extractJson: No JSON object found in model response");
-      return null;
-    }
-    const raw = candidate.slice(start, end + 1);
-    try {
-      return JSON.parse(raw) as T;
-    } catch {
-      const cleaned = raw
-        .replace(/,(\s*[}\]])/g, "$1")
-        .replace(/,\s*,/g, ",");
-      try {
-        return JSON.parse(cleaned) as T;
-      } catch {
-        const bracketStart = candidate.indexOf("[");
-        const bracketEnd = candidate.lastIndexOf("]");
-        if (bracketStart !== -1 && bracketEnd > bracketStart) {
-          const rawArr = candidate.slice(bracketStart, bracketEnd + 1);
-          const cleanedArr = rawArr
-            .replace(/,(\s*[}\]])/g, "$1")
-            .replace(/,\s*,/g, ",");
-          try {
-            return JSON.parse(cleanedArr) as T;
-          } catch {}
-        }
-        throw new Error(`Unparseable JSON after cleanup`);
+  const fenced = text.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi);
+  for (const match of fenced) {
+    const result = tryParseJson<T>(match[1].trim());
+    if (result !== null) return result;
+  }
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "{") {
+      if (start === -1) start = i;
+      depth++;
+    } else if (text[i] === "}") {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        const result = tryParseJson<T>(text.slice(start, i + 1));
+        if (result !== null) return result;
+        start = -1;
       }
     }
-  } catch (err) {
-    logger.warn(`extractJson: Failed to parse JSON — ${err instanceof Error ? err.message : err}`);
-    return null;
   }
+  logger.warn("extractJson: No valid JSON object found in model response");
+  return null;
 }
 
 export type ProviderFactory = (
