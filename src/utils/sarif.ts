@@ -31,12 +31,33 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
+const MAX_COMMENT_LENGTH = 40;
+
+function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
+  return {
+    physicalLocation: {
+      artifactLocation: { uri: file },
+      ...(line ? { region: { startLine: line } } : {}),
+    },
+  };
+}
+
+function createToolDriver(
+  rules: Map<string, { id: string; shortDescription: { text: string } }>
+): { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } {
+  return {
+    name: "CodeSentinel AI",
+    version: "0.1.6",
+    rules: [...rules.values()],
+  };
+}
+
 export function renderSarif(report: EngineReport): string {
   const rules = new Map<string, { id: string; shortDescription: { text: string } }>();
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
-    const ruleId = `${f.category}:${f.comment.slice(0, 40).replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const ruleId = `${f.category}:${f.comment.slice(0, MAX_COMMENT_LENGTH).replace(/[^a-zA-Z0-9]/g, "_")}`;
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
@@ -47,14 +68,7 @@ export function renderSarif(report: EngineReport): string {
       ruleId,
       level: SEVERITY_MAP[f.severity] ?? "note",
       message: { text: f.comment },
-      locations: [
-        {
-          physicalLocation: {
-            artifactLocation: { uri: f.file },
-            ...(f.line ? { region: { startLine: f.line } } : {}),
-          },
-        },
-      ],
+      locations: [createSarifLocation(f.file, f.line)],
     });
   }
 
@@ -64,11 +78,7 @@ export function renderSarif(report: EngineReport): string {
     runs: [
       {
         tool: {
-          driver: {
-            name: "CodeSentinel AI",
-            version: "0.1.6",
-            rules: [...rules.values()],
-          },
+          driver: createToolDriver(rules),
         },
         results,
       },
