@@ -25,6 +25,10 @@ concurrency:
   group: self-review-${{ github.event.pull_request.number || github.event.issue.number || github.sha }}-${{ github.actor }}
   cancel-in-progress: false
 
+env:
+  OPENCODE_BASE_URL: ${{ vars.OPENCODE_BASE_URL }}
+  OPENCODE_API_KEY: ${{ vars.OPENCODE_API_KEY }}
+
 jobs:
   review:
     if: |
@@ -69,12 +73,16 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ steps.resolve-ref.outputs.ref }}
-      - uses: ./
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          mode: review
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          opencode_base_url: ${{ vars.OPENCODE_BASE_URL }}
-          opencode_api_key: ${{ vars.OPENCODE_API_KEY }}
+          node-version: 22
+      - name: Build
+        run: npm ci && npm run build
+      - name: Run review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node dist/index.js review 2>&1 | tee /tmp/cs-out.txt; true
 
   autofix:
     concurrency:
@@ -122,15 +130,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install & Build
-        run: npm install && npm run build
-      - uses: ./
-        with:
-          mode: fix
-          max_fix_iterations: 3
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          opencode_base_url: ${{ vars.OPENCODE_BASE_URL }}
-          opencode_api_key: ${{ vars.OPENCODE_API_KEY }}
+      - name: Build
+        run: npm ci && npm run build
+      - name: Run fix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node dist/index.js fix --auto-fix 2>&1 | tee /tmp/cs-out.txt; true
 
   scheduled-review:
     if: github.event_name == 'schedule'
@@ -140,12 +145,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: ./
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          mode: review
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          opencode_base_url: ${{ vars.OPENCODE_BASE_URL }}
-          opencode_api_key: ${{ vars.OPENCODE_API_KEY }}
+          node-version: 22
+      - name: Build
+        run: npm ci && npm run build
+      - name: Run review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node dist/index.js review 2>&1 | tee /tmp/cs-out.txt; true
 
   audit:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -155,20 +164,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Ensure labels exist
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh label create "autofix" --force --color "243cd4" 2>/dev/null || true
-          gh label create "autofix-trigger" --force --color "c2e0c6" --description "Triggers autofix workflow on issues" 2>/dev/null || true
-      - uses: ./
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          mode: audit
-          audit_create_issues: true
-          audit_auto_fix: true
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          opencode_base_url: ${{ vars.OPENCODE_BASE_URL }}
-          opencode_api_key: ${{ vars.OPENCODE_API_KEY }}
+          node-version: 22
+      - name: Build
+        run: npm ci && npm run build
+      - name: Run audit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node dist/index.js audit 2>&1 | tee /tmp/cs-out.txt; true
 
   fix-issue:
     if: |
@@ -184,20 +189,16 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Ensure labels exist
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh label create "autofix" --force --color "243cd4" 2>/dev/null || true
-          gh label create "autofix:ready" --force --color "0e8a16" --description "Approved — ready to merge" 2>/dev/null || true
-          gh label create "autofix:needs-manual-review" --force --color "d93f0b" --description "Max iterations reached" 2>/dev/null || true
-      - uses: ./
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          mode: fix
-          max_fix_iterations: 1
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          opencode_base_url: ${{ vars.OPENCODE_BASE_URL }}
-          opencode_api_key: ${{ vars.OPENCODE_API_KEY }}
+          node-version: 22
+      - name: Build
+        run: npm ci && npm run build
+      - name: Run fix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node dist/index.js fix --auto-fix 2>&1 | tee /tmp/cs-out.txt; true
 
   auto-merge:
     if: |
