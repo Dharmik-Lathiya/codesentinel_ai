@@ -409,24 +409,44 @@ export class EnhancedAnalyzer {
   ): Finding[] {
     const findings: Finding[] = [];
     const maxDepth = 4;
+    let blockStart = -1;
+    let blockDepth = 0;
 
     lines.forEach((line, idx) => {
       const indent = line.search(/\S/);
       if (indent >= 0) {
         const depth = Math.floor(indent / 2);
         if (depth > maxDepth) {
-          findings.push(this.createFinding(
-            this.adjustSeverity("medium", severityMultiplier),
-            "smell",
-            path,
-            idx + 1,
-            `Deep nesting detected (depth: ${depth}).`,
-            "Consider extracting logic into separate functions.",
-            Math.min(0.5 + (depth - maxDepth) * 0.1, 0.9), // Higher depth = higher confidence
-          ));
+          if (blockStart === -1) { blockStart = idx + 1; blockDepth = depth; }
+          if (depth > blockDepth) blockDepth = depth;
+          return;
         }
       }
+      if (blockStart !== -1) {
+        findings.push(this.createFinding(
+          this.adjustSeverity("medium", severityMultiplier),
+          "smell",
+          path,
+          blockStart,
+          `Deep nesting detected (depth: ${blockDepth}, lines ${blockStart}-${idx}).`,
+          "Consider extracting logic into separate functions.",
+          Math.min(0.5 + (blockDepth - maxDepth) * 0.1, 0.9),
+        ));
+        blockStart = -1;
+        blockDepth = 0;
+      }
     });
+    if (blockStart !== -1) {
+      findings.push(this.createFinding(
+        this.adjustSeverity("medium", severityMultiplier),
+        "smell",
+        path,
+        blockStart,
+        `Deep nesting detected (depth: ${blockDepth}, lines ${blockStart}-${lines.length}).`,
+        "Consider extracting logic into separate functions.",
+        Math.min(0.5 + (blockDepth - maxDepth) * 0.1, 0.9),
+      ));
+    }
 
     return findings;
   }
