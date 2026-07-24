@@ -35,7 +35,7 @@ export class OpenCodeProvider implements AIProvider {
           model: req.model.model,
           messages: req.messages,
           temperature: req.temperature ?? 0.2,
-          max_tokens: req.maxTokens ?? 2048,
+          max_tokens: req.maxTokens ?? 4096,
         }),
       });
     } catch (err) {
@@ -52,7 +52,14 @@ export class OpenCodeProvider implements AIProvider {
     }
 
     const data = (await res.json()) as any;
-    const content = data?.choices?.[0]?.message?.content ?? "";
+    const msg = data?.choices?.[0]?.message;
+    let content = msg?.content ?? "";
+    if (!content && msg?.reasoning_content) {
+      content = msg.reasoning_content;
+    }
+    if (!content) {
+      logger.debug(`OpenCodeProvider: empty content — raw keys=${Object.keys(msg ?? {})} response_keys=${Object.keys(data)}`);
+    }
     logger.info(`OpenCodeProvider.complete: SUCCESS — tokens_in=${data?.usage?.prompt_tokens} tokens_out=${data?.usage?.completion_tokens}`);
     return {
       content,
