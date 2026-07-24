@@ -638,22 +638,28 @@ export class Engine {
         break;
       }
 
-      for (let i = 0; i < actionable.length; i++) {
-        const finding = actionable[i];
-        const iterId = (cycle - 1) * maxCycles + i + 1;
-        logger.info(`runFix: fix ${i + 1}/${actionable.length} — ${finding.file}:${finding.line}`);
+      const fileGroups = new Map<string, Finding[]>();
+      for (const f of actionable) {
+        const list = fileGroups.get(f.file);
+        if (list) list.push(f);
+        else fileGroups.set(f.file, [f]);
+      }
+      let idx = 0;
+      for (const [filePath, fileFindings] of fileGroups) {
+        idx++;
+        logger.info(`runFix: batch ${idx}/${fileGroups.size} — ${filePath} (${fileFindings.length} issues)`);
         try {
-          const attempt = await this.applyFix(finding, iterId);
+          const attempt = await this.batchApplyFix(filePath, fileFindings, idx);
           allFixAttempts.push(attempt);
           if (attempt.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
-            modifiedFiles.add(finding.file);
+            modifiedFiles.add(filePath);
           }
-          logger.info(`runFix: fix result — fixed=${attempt.fixed} verified=${attempt.verified}`);
+          logger.info(`runFix: batch result — fixed=${attempt.fixed} verified=${attempt.verified}`);
         } catch (err) {
-          logger.warn(`runFix: fix failed for ${finding.file}: ${err instanceof Error ? err.message : err}`);
+          logger.warn(`runFix: batch fix failed for ${filePath}: ${err instanceof Error ? err.message : err}`);
           allFixAttempts.push({
-            iteration: iterId,
-            file: finding.file,
+            iteration: idx,
+            file: filePath,
             fixed: false,
             explanation: `Error: ${err instanceof Error ? err.message : err}`,
             verified: false,
@@ -772,6 +778,59 @@ export class Engine {
       verified,
       newIssuesIntroduced,
     };
+  }
+
+  /** Apply fixes for ALL findings in a single file in ONE AI call. */
+  private async batchApplyFix(
+    filePath: string,
+    findings: Finding[],
+    iteration: number,
+  ): Promise<FixAttempt> {
+    const absPath = resolve(this.root, filePath);
+    const content = readText(absPath);
+    const issuesMd = findings.map((f, i) =>
+      `### Issue ${i + 1}\nSeverity: ${f.severity}\nCategory: ${f.category}\nLine: ${f.line ?? "N/A"}\nFeedback: ${f.comment}\nSuggestion: ${f.suggestion ?? ""}`
+    ).join("\n\n");
+
+    const prompt = `You are an expert engineer fixing ${findings.length} issue(s) in ${filePath}.
+
+## File Content
+\`\`\`${filePath.split(".").pop() ?? "text"}
+${content}
+\`\`\`
+
+## Issues to Fix
+${issuesMd}
+
+## Rules
+- Fix ALL listed issues with minimal changes.
+- Return the COMPLETE updated file.
+- Set "fixed": false if you cannot safely fix any issue.
+- Output: Markdown explanation, then \`\`\`json { "fixed": bool, "explanation": "...", "content": "<complete file>" } \`\`\``;
+
+    logger.info(`batchApplyFix[${iteration}]: ${filePath} — ${findings.length} issues`);
+    const res = await this.ai.complete("fix", [
+      { role: "system", content: "You apply minimal, safe code fixes." },
+      { role: "user", content: prompt },
+    ]);
+
+    const parsed = extractJson<{ fixed: boolean; explanation: string; content: string }>(res.content);
+    if (!parsed) {
+      return { iteration, file: filePath, fixed: false, explanation: "AI returned unparseable response", verified: false, newIssuesIntroduced: [] };
+    }
+
+    let verified = false;
+    let newIssuesIntroduced: Finding[] = [];
+    if (parsed.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
+      const findingsBefore = this.analyzer.analyzeMany([{ path: filePath, content }]);
+      writeFileSync(absPath, parsed.content, "utf8");
+      verified = await this.runVerification();
+      const fixedContent = readText(absPath);
+      const findingsAfter = this.analyzer.analyzeMany([{ path: filePath, content: fixedContent }]);
+      const beforeIds = new Set(findingsBefore.map((f) => `${f.category}:${f.line}:${f.comment}`));
+      newIssuesIntroduced = findingsAfter.filter((f) => !beforeIds.has(`${f.category}:${f.line}:${f.comment}`));
+    }
+    return { iteration, file: filePath, fixed: parsed.fixed, explanation: parsed.explanation, verified, newIssuesIntroduced };
   }
 
   /** Apply fixes for a batch of findings without the full re-analysis loop. */
