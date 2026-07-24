@@ -21,7 +21,33 @@ export function extractJson(text) {
             logger.warn("extractJson: No JSON object found in model response");
             return null;
         }
-        return JSON.parse(candidate.slice(start, end + 1));
+        const raw = candidate.slice(start, end + 1);
+        try {
+            return JSON.parse(raw);
+        }
+        catch {
+            const cleaned = raw
+                .replace(/,(\s*[}\]])/g, "$1")
+                .replace(/,\s*,/g, ",");
+            try {
+                return JSON.parse(cleaned);
+            }
+            catch {
+                const bracketStart = candidate.indexOf("[");
+                const bracketEnd = candidate.lastIndexOf("]");
+                if (bracketStart !== -1 && bracketEnd > bracketStart) {
+                    const rawArr = candidate.slice(bracketStart, bracketEnd + 1);
+                    const cleanedArr = rawArr
+                        .replace(/,(\s*[}\]])/g, "$1")
+                        .replace(/,\s*,/g, ",");
+                    try {
+                        return JSON.parse(cleanedArr);
+                    }
+                    catch { }
+                }
+                throw new Error(`Unparseable JSON after cleanup`);
+            }
+        }
     }
     catch (err) {
         logger.warn(`extractJson: Failed to parse JSON — ${err instanceof Error ? err.message : err}`);
