@@ -229,6 +229,9 @@ export interface CodeSentinelConfig {
   /** File batching configuration */
   batch: BatchConfig;
 
+  /** Enable auto-merge for PRs created by fix mode. */
+  autoMerge?: boolean;
+
   /** Auto-improvement type: test, util, or doc. Used by improve mode. */
   improve_type?: "test" | "util" | "doc";
 

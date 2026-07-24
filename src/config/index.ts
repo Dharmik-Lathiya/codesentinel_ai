@@ -297,6 +297,7 @@ export function configFromInputs(
       chat: providerModel,
     };
   }
+  if (inputs.auto_merge) out.autoMerge = inputs.auto_merge === "true";
   if (inputs.jsonl_output) out.jsonl_output = inputs.jsonl_output === "true";
   if (inputs.mcp_enabled) out.mcp = { enabled: inputs.mcp_enabled === "true", servers: [] };
   if (inputs.learning_enabled) {

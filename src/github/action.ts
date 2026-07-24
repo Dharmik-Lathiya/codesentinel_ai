@@ -22,6 +22,7 @@ export async function runAction(): Promise<void> {
     project_context: get("project_context"),
     test_runner: get("test_runner"),
     provider: get("provider"),
+    auto_merge: get("auto_merge"),
   };
 
   const configOverrides = configFromInputs(inputs);
@@ -42,11 +43,12 @@ export async function runAction(): Promise<void> {
   });
 
   const report = await engine.run();
-  await publishOutputs(report, secrets);
+  const autoMerge = configOverrides.autoMerge ?? false;
+  await publishOutputs(report, secrets, autoMerge);
 }
 
 /** Post comments / issues and write the step summary + metrics outputs. */
-async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets): Promise<void> {
+async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, autoMerge = false): Promise<void> {
   const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
   const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
   const pullNumber = process.env.GITHUB_PR_NUMBER
@@ -101,6 +103,12 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets): Pr
         description: report.gatePassed ? "All gate checks passed" : "Gate checks failed",
         context: "codesentinel/gate",
       });
+
+      // Auto-merge when gate passes
+      if (report.gatePassed && autoMerge && pullNumber) {
+        await reporter.enableAutoMerge(pullNumber, "squash");
+        logger.info(`publishOutputs: enabled auto-merge on PR #${pullNumber}`);
+      }
     }
   }
 

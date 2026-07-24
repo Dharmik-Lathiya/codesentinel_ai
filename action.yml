@@ -55,6 +55,10 @@ inputs:
     description: "OpenCode base URL"
     required: false
     default: ""
+  auto_merge:
+    description: "Auto-merge PRs when quality gates pass (true/false)"
+    required: false
+    default: "false"
   opencode_api_key:
     description: "OpenCode API key"
     required: false
