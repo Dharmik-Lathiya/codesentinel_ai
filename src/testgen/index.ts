@@ -34,7 +34,7 @@ export function detectFunctions(
     /^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*\(/gm;
 
   for (const { path, content } of files) {
-    if (\.(test|spec)\./.test(path)) continue;
+    if (/\.(test|spec)\./.test(path)) continue;
     const base = path.replace(/\.[^.]+$/, "");
     const hasTest = [...testSet].some((t) => t.startsWith(base));
     let m: RegExpExecArray | null;
@@ -87,12 +87,8 @@ export class TestGenerator {
     for (const rel of uniqueFiles) {
       const file = files.find((f) => f.path === rel);
       if (!file) continue;
-      try {
-        const gen = await this.generateForFile(root, file);
-        if (gen) results.push(gen);
-      } catch (err) {
-        console.error(`Failed to generate test for ${rel}:`, err);
-      }
+      const gen = await this.generateForFile(root, file);
+      if (gen) results.push(gen);
     }
     return results;
   }
@@ -116,16 +112,10 @@ export class TestGenerator {
       project_context: this.config.project_context || "(none)",
     });
 
-    let res;
-    try {
-      res = await this.ai.complete("testgen", [
-        { role: "system", content: "You generate precise unit tests." },
-        { role: "user", content: prompt },
-      ]);
-    } catch (err) {
-      console.error(`AI completion failed for ${file.path}:`, err);
-      return null;
-    }
+    const res = await this.ai.complete("testgen", [
+      { role: "system", content: "You generate precise unit tests." },
+      { role: "user", content: prompt },
+    ]);
 
     const parsed = extractJson<{ test_file_path?: string; content: string }>(
       res.content,

@@ -1,16 +1,10 @@
 import { z } from "zod";
 
-const SUMMARY_MAX = 2000;
-const TITLE_MAX = 200;
-const DESCRIPTION_MAX = 1000;
-const MESSAGE_MAX = 1000;
-const SUGGESTION_MAX = 2000;
-
 export const SeveritySchema = z.enum(["info", "low", "medium", "high", "critical"]);
 
 export const SummaryEntrySchema = z.object({
   type: z.literal("summary"),
-  summary: z.string().min(1).max(SUMMARY_MAX),
+  summary: z.string().min(1).max(2000),
 });
 
 export const VerdictEntrySchema = z.object({
@@ -20,8 +14,8 @@ export const VerdictEntrySchema = z.object({
 
 export const StrengthEntrySchema = z.object({
   type: z.literal("strength"),
-  title: z.string().min(1).max(TITLE_MAX),
-  description: z.string().max(DESCRIPTION_MAX).optional(),
+  title: z.string().min(1).max(200),
+  description: z.string().max(1000).optional(),
 });
 
 export const IssueEntrySchema = z.object({
@@ -30,8 +24,8 @@ export const IssueEntrySchema = z.object({
   category: z.enum(["bug", "security", "performance", "smell", "style"]),
   file: z.string().min(1),
   line: z.number().int().positive().nullable().optional(),
-  message: z.string().min(1).max(MESSAGE_MAX),
-  suggestion: z.string().max(SUGGESTION_MAX).optional(),
+  message: z.string().min(1).max(1000),
+  suggestion: z.string().max(2000).optional(),
 });
 
 export const ReviewEntrySchema = z.discriminatedUnion("type", [
