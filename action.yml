@@ -70,5 +70,27 @@ outputs:
     description: "Number of findings detected"
 
 runs:
-  using: "node20"
-  main: "dist/github/action.js"
+  using: "composite"
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: npm ci --prefix "${{ github.action_path }}" --ignore-scripts --no-audit --no-fund
+    - name: Run CodeSentinel
+      shell: bash
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_MAX_ITERATIONS: ${{ inputs.max_iterations }}
+        INPUT_ENABLE_AUTO_FIX: ${{ inputs.enable_auto_fix }}
+        INPUT_ENABLE_SCORING: ${{ inputs.enable_scoring }}
+        INPUT_ENABLE_TEST_GENERATION: ${{ inputs.enable_test_generation }}
+        INPUT_TEST_RUNNER: ${{ inputs.test_runner }}
+        INPUT_PROJECT_CONTEXT: ${{ inputs.project_context }}
+        INPUT_PROVIDER: ${{ inputs.provider }}
+        INPUT_CONFIG_PATH: ${{ inputs.config_path }}
+        INPUT_OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        INPUT_ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        INPUT_GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+        INPUT_OPENCODE_BASE_URL: ${{ inputs.opencode_base_url }}
+        INPUT_AUTO_MERGE: ${{ inputs.auto_merge }}
+        INPUT_OPENCODE_API_KEY: ${{ inputs.opencode_api_key }}
+      run: node "${{ github.action_path }}/dist/github/action.js"
