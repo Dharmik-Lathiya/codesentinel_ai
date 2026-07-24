@@ -150,7 +150,11 @@ jobs:
           echo "new_version=$VERSION" >> "$GITHUB_OUTPUT"
           git add package.json package-lock.json 2>/dev/null || true
           git commit -m "chore: bump to v$VERSION [skip ci]"
+          # Clean up tag if it exists from a previous failed run
+          git tag -d "v$VERSION" 2>/dev/null || true
+          git push origin --delete "v$VERSION" 2>/dev/null || true
           git tag "v$VERSION"
+          git pull --rebase origin main 2>/dev/null || true
           git push origin main --tags
           echo "Released v$VERSION"
 

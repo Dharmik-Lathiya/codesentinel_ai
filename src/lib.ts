@@ -1,5 +1,6 @@
 export { Engine } from "./engine/index.js";
-export type { EngineReport, ReviewComment, FixAttempt } from "./engine/index.js";
+export type { EngineReport, ReviewComment, FixAttempt, Hunk } from "./engine/index.js";
+export { applyHunks } from "./engine/index.js";
 
 export { loadConfig, configFromInputs } from "./config/index.js";
 export type {

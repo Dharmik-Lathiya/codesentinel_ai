@@ -40,7 +40,7 @@ export class GeminiProvider implements AIProvider {
     return this.model;
   }
 
-  private async #generateContent(model: any, prompt: string, req: CompletionRequest): Promise<any> {
+  async #generateContent(model: any, prompt: string, req: CompletionRequest): Promise<any> {
     try {
       return await model.generateContent({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -70,9 +70,7 @@ export class GeminiProvider implements AIProvider {
     const prompt = req.messages
       .map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
       .join("\n\n");
-
     const res = await this.#generateContent(model, prompt, req);
-
     const text = res.response?.text?.() ?? "";
     return { content: text, model: req.model.model, provider: this.name };
   }

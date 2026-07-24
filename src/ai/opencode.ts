@@ -3,6 +3,8 @@ import { ProviderUnavailableError } from "./provider.js";
 import type { RuntimeSecrets } from "../config/types.js";
 import { logger } from "../utils/logger.js";
 
+const DEFAULT_MAX_TOKENS = 4096;
+
 /**
  * OpenCode provider. OpenCode exposes an OpenAI-compatible HTTP API, so we call
  * it directly with `fetch` (no extra SDK dependency). The base URL defaults to
@@ -35,7 +37,7 @@ export class OpenCodeProvider implements AIProvider {
           model: req.model.model,
           messages: req.messages,
           temperature: req.temperature ?? 0.2,
-          max_tokens: req.maxTokens ?? 4096,
+          max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
         }),
       });
     } catch (err) {
