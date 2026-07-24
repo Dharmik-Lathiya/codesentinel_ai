@@ -1,0 +1,18 @@
+/** Minimal JSONC parser: strips // and /* *\/ comments then JSON.parse. */
+export function parseJsonc(raw) {
+    const placeholders = [];
+    let masked = raw.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+        placeholders.push(match);
+        return `\x00STR${placeholders.length - 1}\x00`;
+    });
+    masked = masked.replace(/\/\*[\s\S]*?\*\//g, "");
+    masked = masked.replace(/(^|[^:])\/\/.*$/gm, "$1");
+    masked = masked.replace(/\x00STR(\d+)\x00/g, (_, i) => placeholders[Number(i)]);
+    try {
+        return JSON.parse(masked);
+    }
+    catch (error) {
+        throw new Error(`Failed to parse JSONC: ${error.message}`);
+    }
+}
+//# sourceMappingURL=jsonc.js.map

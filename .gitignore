@@ -1,5 +1,5 @@
 node_modules/
-dist/
+# dist/ is committed because action.yml references dist/github/action.js
 codesentinel-reports/
 .codesentinel-cache/
 *.log

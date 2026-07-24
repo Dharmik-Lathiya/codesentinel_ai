@@ -1,0 +1,156 @@
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+/** Convert a glob pattern (subset) into a RegExp. Supports **, *, ?, {a,b}. */
+export function globToRegExp(glob) {
+    let re = "";
+    let i = 0;
+    while (i < glob.length) {
+        const c = glob[i];
+        if (c === "*") {
+            if (glob[i + 1] === "*") {
+                // ** matches across path separators
+                re += ".*";
+                i += 2;
+                if (glob[i] === "/")
+                    i += 1;
+                continue;
+            }
+            re += "[^/]*";
+        }
+        else if (c === "?") {
+            re += "[^/]";
+        }
+        else if (c === "{") {
+            const end = glob.indexOf("}", i);
+            if (end === -1) {
+                re += "\\{";
+            }
+            else {
+                const opts = glob.slice(i + 1, end).split(",");
+                re += "(?:" + opts.map(escapeRe).join("|") + ")";
+                i = end + 1;
+                continue;
+            }
+        }
+        else if (c === "." || c === "+" || c === "^" || c === "$") {
+            re += "\\" + c;
+        }
+        else if (c === "/") {
+            re += "/";
+        }
+        else {
+            re += c;
+        }
+        i++;
+    }
+    return new RegExp("^" + re + "$");
+}
+function escapeRe(s) {
+    return s.replace(/[.+^$*?{}|\\]/g, "\\$&");
+}
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".cache", ".codesentinel-cache", "coverage", "codesentinel"]);
+/** Recursively walk a directory yielding file paths (relative to root). */
+export function walk(root) {
+    const out = [];
+    const stack = [root];
+    while (stack.length) {
+        const dir = stack.pop();
+        let entries;
+        try {
+            entries = readdirSync(dir);
+        }
+        catch {
+            continue;
+        }
+        for (const entry of entries) {
+            if (SKIP_DIRS.has(entry))
+                continue;
+            const full = join(dir, entry);
+            let st;
+            try {
+                st = statSync(full);
+            }
+            catch {
+                continue;
+            }
+            if (st.isDirectory())
+                stack.push(full);
+            else
+                out.push(relative(root, full));
+        }
+    }
+    return out;
+}
+/** Read a .codesentinelignore file and return its patterns (one per line). */
+export function readIgnoreFile(root) {
+    const ignorePath = resolve(root, ".codesentinelignore");
+    if (!existsSync(ignorePath))
+        return [];
+    try {
+        const content = readFileSync(ignorePath, "utf8");
+        return content
+            .split("\n")
+            .map((l) => l.trim())
+            .filter((l) => l.length > 0 && !l.startsWith("#"));
+    }
+    catch {
+        return [];
+    }
+}
+/** Collect files under `root` matching include globs and not exclude globs. */
+export function collectFiles(root, include, exclude) {
+    const ignorePatterns = readIgnoreFile(root);
+    const allExclude = [...exclude, ...ignorePatterns];
+    const incRe = include.map(globToRegExp);
+    const excRe = allExclude.map(globToRegExp);
+    const all = walk(root);
+    return all.filter((rel) => {
+        const normalized = rel.split("\\").join("/");
+        if (!incRe.some((re) => re.test(normalized)))
+            return false;
+        if (excRe.some((re) => re.test(normalized)))
+            return false;
+        return true;
+    });
+}
+/** Read a file as UTF-8 (returns "" on failure). */
+export function readText(path) {
+    try {
+        return readFileSync(path, "utf8");
+    }
+    catch {
+        return "";
+    }
+}
+/** Map a file extension to a language label for prompt context. */
+export function languageOf(path) {
+    const ext = path.split(".").pop()?.toLowerCase() ?? "";
+    const map = {
+        ts: "typescript",
+        tsx: "typescript",
+        js: "javascript",
+        jsx: "javascript",
+        py: "python",
+        go: "go",
+        java: "java",
+        rb: "ruby",
+        rs: "rust",
+        c: "c",
+        cpp: "cpp",
+        cs: "csharp",
+    };
+    return map[ext] ?? "text";
+}
+/** Ensure a directory (and parents) exists. */
+export function ensureDir(path) {
+    if (!existsSync(path))
+        mkdirSync(path, { recursive: true });
+}
+/** Backup a file with a timestamp suffix. Returns the backup path. */
+export function backupFile(filePath) {
+    const backupPath = `${filePath}.${Date.now()}.bak`;
+    const content = readFileSync(filePath, "utf8");
+    writeFileSync(backupPath, content, "utf8");
+    return backupPath;
+}
+//# sourceMappingURL=files.js.map
