@@ -414,25 +414,47 @@ export class StaticAnalyzer {
   private detectDeepNesting(path: string, lines: string[]): Finding[] {
     const findings: Finding[] = [];
     const maxDepth = 4;
+    let blockStart = -1;
+    let blockDepth = 0;
 
     lines.forEach((line, idx) => {
       const indent = line.search(/\S/);
       if (indent >= 0) {
-        // Auto-detect tab vs space indentation from the first indented line.
         const depth = Math.floor(indent / 2);
         if (depth > maxDepth) {
-          findings.push({
-            severity: "medium",
-            category: "smell",
-            file: path,
-            line: idx + 1,
-            comment: `Deep nesting detected (depth: ${depth}).`,
-            suggestion: "Consider extracting logic into separate functions.",
-            source: "static",
-          });
+          if (blockStart === -1) {
+            blockStart = idx + 1;
+            blockDepth = depth;
+          }
+          if (depth > blockDepth) blockDepth = depth;
+          return;
         }
       }
+      if (blockStart !== -1) {
+        findings.push({
+          severity: "medium",
+          category: "smell",
+          file: path,
+          line: blockStart,
+          comment: `Deep nesting detected (depth: ${blockDepth}, lines ${blockStart}-${idx}).`,
+          suggestion: "Consider extracting logic into separate functions.",
+          source: "static",
+        });
+        blockStart = -1;
+        blockDepth = 0;
+      }
     });
+    if (blockStart !== -1) {
+      findings.push({
+        severity: "medium",
+        category: "smell",
+        file: path,
+        line: blockStart,
+        comment: `Deep nesting detected (depth: ${blockDepth}, lines ${blockStart}-${lines.length}).`,
+        suggestion: "Consider extracting logic into separate functions.",
+        source: "static",
+      });
+    }
 
     return findings;
   }

@@ -372,6 +372,15 @@ export class Engine {
   ): Promise<Finding[]> {
     const allFindings: Finding[] = [];
 
+    const linterResults: Finding[] =
+      this.config.linters.enabled
+        ? runLinters(this.root, { tools: this.config.linters.tools, args: this.config.linters.args })
+        : [];
+    const scannerResults: Finding[] =
+      this.config.enableSecretScanner
+        ? runThirdPartySecrets(this.root)
+        : [];
+
     for (const file of files) {
       const ch = this.cache.contentHash(file.content);
       const cacheKey = { task: "static", path: file.path, hash: ch };
@@ -388,25 +397,12 @@ export class Engine {
       const pluginFindings = await this.plugins.runAnalyze([file]);
       const secretFindings = scanSecrets(file.path, file.content, this.config.secretPatterns);
 
-      let linterFindings: Finding[] = [];
-      if (this.config.linters.enabled) {
-        linterFindings = runLinters(this.root, {
-          tools: this.config.linters.tools,
-          args: this.config.linters.args,
-        });
-      }
-
-      let scannerFindings: Finding[] = [];
-      if (this.config.enableSecretScanner) {
-        scannerFindings = runThirdPartySecrets(this.root);
-      }
-
       const fileFindings = [
         ...staticFindings,
         ...pluginFindings,
         ...secretFindings,
-        ...linterFindings,
-        ...scannerFindings,
+        ...linterResults,
+        ...scannerResults,
       ];
 
       if (this.config.enable_cache) {
