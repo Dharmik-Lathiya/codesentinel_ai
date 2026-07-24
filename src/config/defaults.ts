@@ -119,9 +119,9 @@ export const DEFAULT_MCP_CONFIG: MCPConfig = {
 };
 
 export const DEFAULT_BATCH_CONFIG: BatchConfig = {
-  enabled: false,
-  batchSize: 3,
-  maxFilesPerBatch: 3,
+  enabled: true,
+  batchSize: 5,
+  maxFilesPerBatch: 5,
   maxLinesPerFile: 500,
 };
 

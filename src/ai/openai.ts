@@ -37,7 +37,7 @@ export class OpenAIProvider implements AIProvider {
       model: req.model.model,
       messages: req.messages,
       temperature: req.temperature ?? 0.2,
-      max_tokens: req.maxTokens ?? 2048,
+      max_tokens: req.maxTokens ?? 4096,
     });
     const message = res.choices?.[0]?.message?.content ?? "";
     return {

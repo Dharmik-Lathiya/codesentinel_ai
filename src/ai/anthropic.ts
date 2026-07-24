@@ -44,7 +44,7 @@ export class AnthropicProvider implements AIProvider {
       system,
       messages,
       temperature: req.temperature ?? 0.2,
-      max_tokens: req.maxTokens ?? 2048,
+      max_tokens: req.maxTokens ?? 4096,
     });
     const text = Array.isArray(res.content)
       ? res.content.map((b: any) => b.text ?? "").join("")
