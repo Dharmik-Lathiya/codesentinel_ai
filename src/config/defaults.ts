@@ -190,6 +190,7 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   learning: DEFAULT_LEARNING_CONFIG,
   mcp: DEFAULT_MCP_CONFIG,
   batch: DEFAULT_BATCH_CONFIG,
+  autoMerge: false,
 };
 
 /** Deep-merge two configs (shallow per top-level key, special-cased objects/arrays). */
@@ -266,6 +267,9 @@ export function mergeConfig(
     if (override.analyzer.customRules) {
       merged.analyzer.customRules = [...base.analyzer.customRules, ...override.analyzer.customRules];
     }
+  }
+  if (override.autoMerge !== undefined) {
+    merged.autoMerge = override.autoMerge;
   }
   return merged;
 }

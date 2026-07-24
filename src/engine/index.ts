@@ -7,6 +7,7 @@ import type {
   RuntimeSecrets,
   Mode,
 } from "../config/types.js";
+import { GitHubReporter } from "../github/reporter.js";
 import { AIHub } from "../ai/index.js";
 import { PromptRegistry, type PromptName } from "../prompts/index.js";
 import { StaticAnalyzer, type Finding } from "../analyzer/index.js";
@@ -692,14 +693,16 @@ export class Engine {
           }
         }
         if (modifiedFiles.size > 0 && phase + PHASE_SIZE < groups.length) {
-          await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)}`);
+          const branch = await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)}`);
+          if (branch) await this.createFixPR(branch);
           modifiedFiles.clear();
         }
       }
     }
 
     if (modifiedFiles.size > 0 && !this.config.dry_run) {
-      await this.pushFixes(modifiedFiles);
+      const branch = await this.pushFixes(modifiedFiles);
+      if (branch) await this.createFixPR(branch);
     }
 
     const summary = this.buildSummary("fix", allFindings, allFixAttempts);
@@ -715,25 +718,60 @@ export class Engine {
     };
   }
 
-  /** Commit and push fixed files to the PR head branch (or main). */
-  private async pushFixes(modifiedFiles: Set<string>, tag?: string): Promise<void> {
+  /** Commit and push fixed files, returning the target branch name. */
+  private async pushFixes(modifiedFiles: Set<string>, tag?: string): Promise<string> {
     const { execSync } = await import("node:child_process");
     try {
       const files = [...modifiedFiles].join(" ");
       execSync(`git add ${files}`, { cwd: this.root, stdio: "pipe" });
-      const msg = tag ? `CodeSentinel: auto-fix issues ${tag}` : 'CodeSentinel: auto-fix issues [skip ci]';
-      execSync(`git commit -m "${msg}"`, {
-        cwd: this.root,
-        stdio: "pipe",
-      });
 
       const headRef = process.env.GITHUB_HEAD_REF || "";
-      const baseRef = process.env.GITHUB_BASE_REF || "main";
-      const target = headRef || baseRef;
+      let target: string;
+
+      if (headRef) {
+        target = headRef;
+      } else {
+        target = `codesentinel/fix-${Date.now()}`;
+        execSync(`git checkout -b ${target}`, { cwd: this.root, stdio: "pipe" });
+      }
+
+      const msg = tag ? `CodeSentinel: auto-fix issues ${tag}` : 'CodeSentinel: auto-fix issues [skip ci]';
+      execSync(`git commit -m "${msg}"`, { cwd: this.root, stdio: "pipe" });
       execSync(`git push origin HEAD:${target}`, { cwd: this.root, stdio: "pipe" });
       logger.info(`pushFixes: pushed ${files.length} file(s) to ${target}`);
+      return target;
     } catch (err) {
       logger.warn("pushFixes: failed to push:", err);
+      return "";
+    }
+  }
+
+  /** Create a PR from the fix branch and optionally enable auto-merge. */
+  private async createFixPR(fixBranch: string): Promise<void> {
+    if (!fixBranch || !process.env.GITHUB_TOKEN) return;
+
+    const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
+    const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
+    if (!owner || !repo) return;
+
+    const reporter = new GitHubReporter({ token: process.env.GITHUB_TOKEN, owner, repo });
+    const defaultBranch = process.env.GITHUB_BASE_REF || "main";
+
+    try {
+      const prNumber = await reporter.createPR({
+        title: "CodeSentinel: auto-fix issues",
+        body: "This PR was automatically created by CodeSentinel AI to fix code quality issues.",
+        head: fixBranch,
+        base: defaultBranch,
+      });
+      logger.info(`createFixPR: created PR #${prNumber} from ${fixBranch} to ${defaultBranch}`);
+
+      if (this.config.autoMerge) {
+        await reporter.enableAutoMerge(prNumber, "squash");
+        logger.info(`createFixPR: enabled auto-merge on PR #${prNumber}`);
+      }
+    } catch (err) {
+      logger.warn("createFixPR: failed:", err);
     }
   }
 
