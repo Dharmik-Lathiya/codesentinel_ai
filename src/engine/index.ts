@@ -892,6 +892,14 @@ ${issuesMd}
     const { execSync } = await import("node:child_process");
     let allPassed = true;
 
+    // Run typecheck
+    try {
+      execSync("npx tsc --noEmit", { cwd: this.root, stdio: "ignore", timeout: 30000 });
+    } catch {
+      logger.warn("runVerification: typecheck failed — fix introduced syntax/type errors");
+      allPassed = false;
+    }
+
     // Run tests
     try {
       if (this.config.test_runner === "jest") {
