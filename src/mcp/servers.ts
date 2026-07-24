@@ -1,5 +1,9 @@
 import type { MCPServerConfig } from "./client.js";
 
+const MS_PER_SECOND = 1000;
+const DEFAULT_CONTEXT7_TIMEOUT_MS = 10 * MS_PER_SECOND;
+const DEFAULT_GITHUB_TIMEOUT_MS = 15 * MS_PER_SECOND;
+
 export function context7Server(apiKey?: string): MCPServerConfig {
   const env: Record<string, string> = {};
   if (apiKey) env.CONTEXT7_API_KEY = apiKey;
@@ -8,7 +12,7 @@ export function context7Server(apiKey?: string): MCPServerConfig {
     type: "local",
     command: ["npx", "-y", "--quiet", "@upstash/context7-mcp"],
     environment: Object.keys(env).length ? env : undefined,
-    timeoutMs: 10000,
+    timeoutMs: DEFAULT_CONTEXT7_TIMEOUT_MS,
   };
 }
 
@@ -20,7 +24,7 @@ export function githubMCPServer(token?: string): MCPServerConfig {
     type: "local",
     command: ["npx", "-y", "--quiet", "@github/github-mcp-server"],
     environment: Object.keys(env).length ? env : undefined,
-    timeoutMs: 15000,
+    timeoutMs: DEFAULT_GITHUB_TIMEOUT_MS,
   };
 }
 

@@ -2,6 +2,8 @@ import type { Finding } from "../analyzer/index.js";
 import type { GateConfig } from "../config/types.js";
 import type { ScoreBreakdown } from "../scorer/index.js";
 
+const MAX_SCORE = 100;
+
 export interface GateResult {
   passed: boolean;
   reason: string;
@@ -30,7 +32,7 @@ export function evaluateGate(
     return { passed: false, reason: `Bug findings blocked: ${bugs.length} found` };
   }
   if (score && score.overall < config.minScore) {
-    return { passed: false, reason: `Score ${score.overall}/100 below minimum ${config.minScore}` };
+    return { passed: false, reason: `Score ${score.overall}/${MAX_SCORE} below minimum ${config.minScore}` };
   }
 
   return { passed: true, reason: "All gate checks passed" };
