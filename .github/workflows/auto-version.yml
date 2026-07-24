@@ -6,11 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       bump_type:
-        description: 'Version bump: patch | minor | major'
+        description: 'Override bump type (auto-detected from commits if empty)'
         required: false
-        default: 'patch'
+        default: ''
         type: choice
         options:
+          - ''
           - patch
           - minor
           - major
@@ -25,29 +26,13 @@ env:
   OPENCODE_API_KEY: ${{ vars.OPENCODE_API_KEY }}
 
 jobs:
-  review:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build
-        run: npm ci && npm run build
-      - name: Run review
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node dist/index.js review 2>&1 | tee /tmp/cs-out.txt; true
-
-  check-changes:
+  detect:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       has_changes: ${{ steps.check.outputs.has_changes }}
+      bump_type: ${{ steps.analyze.outputs.bump_type }}
+      commit_count: ${{ steps.check.outputs.commit_count }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,26 +43,87 @@ jobs:
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -z "$LAST_TAG" ]; then
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "commit_count=100" >> "$GITHUB_OUTPUT"
             echo "No tags yet — will create initial release"
           else
             COUNT=$(git rev-list "$LAST_TAG..HEAD" --count 2>/dev/null || echo 0)
+            echo "commit_count=$COUNT" >> "$GITHUB_OUTPUT"
             if [ "$COUNT" -gt 0 ]; then
               echo "has_changes=true" >> "$GITHUB_OUTPUT"
               echo "Found $COUNT new commit(s) since $LAST_TAG"
             else
               echo "has_changes=false" >> "$GITHUB_OUTPUT"
-              echo "No new commits since $LAST_TAG — skipping release"
+              echo "No new commits since $LAST_TAG — skipping"
+            fi
+          fi
+      - name: Auto-detect bump type from commits
+        id: analyze
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          BUMP="${{ inputs.bump_type }}"
+          if [ -n "$BUMP" ]; then
+            echo "bump_type=$BUMP" >> "$GITHUB_OUTPUT"
+            echo "Using manual override: $BUMP"
+          else
+            LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -z "$LAST_TAG" ]; then
+              echo "bump_type=minor" >> "$GITHUB_OUTPUT"
+              echo "No prior tag — bumping minor"
+            else
+              LOG=$(git log "$LAST_TAG..HEAD" --oneline 2>/dev/null)
+              if echo "$LOG" | grep -qi "breaking\|major\|!:"; then
+                echo "bump_type=major" >> "$GITHUB_OUTPUT"
+                echo "Detected breaking changes — major bump"
+              elif echo "$LOG" | grep -qi "feat\|feature\|add\|new"; then
+                echo "bump_type=minor" >> "$GITHUB_OUTPUT"
+                echo "Detected new features — minor bump"
+              else
+                echo "bump_type=patch" >> "$GITHUB_OUTPUT"
+                echo "Detected fixes/chores — patch bump"
+              fi
             fi
           fi
 
+  fix:
+    needs: [detect]
+    if: needs.detect.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build
+        run: npm ci && npm run build
+      - name: Auto-fix issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node dist/index.js fix --auto-fix 2>&1 | tee /tmp/cs-out.txt; true
+      - name: Commit fixes if any
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "CodeSentinel Bot"
+            git config user.email "bot@codesentinel.ai"
+            git add -A
+            git commit -m "chore: auto-fix issues [skip ci]"
+            git push origin main
+            echo "Fixes committed"
+          else
+            echo "No fixes to commit"
+          fi
+
   version:
-    needs: [review, check-changes]
-    if: needs.check-changes.outputs.has_changes == 'true'
+    needs: [detect, fix]
+    if: needs.detect.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
-      tag: ${{ steps.bump.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,53 +140,47 @@ jobs:
       - name: Bump version
         id: bump
         env:
-          BUMP: ${{ inputs.bump_type || 'patch' }}
+          BUMP: ${{ needs.detect.outputs.bump_type }}
         run: |
           npm version $BUMP --no-git-tag-version
           VERSION=$(node -p "require('./package.json').version")
           echo "new_version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
           git add package.json package-lock.json 2>/dev/null || true
-          git commit -m "chore: bump version to v$VERSION [skip ci]"
-          echo "Bumped to v$VERSION"
-      - name: Create tag & push
-        run: |
-          VERSION="${{ steps.bump.outputs.new_version }}"
+          git commit -m "chore: bump to v$VERSION [skip ci]"
           git tag "v$VERSION"
           git push origin main --tags
+          echo "Released v$VERSION"
 
   release:
-    needs: [version]
+    needs: [version, detect]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build artifact
-        run: npm ci && npm run build
       - name: Generate release notes
         id: notes
         run: |
+          VERSION="${{ needs.version.outputs.new_version }}"
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
-            LOG=$(git log --oneline "$PREV_TAG..HEAD" 2>/dev/null | grep -v 'chore:' | grep -v '\[skip ci\]' || echo "No significant changes")
+            LOG=$(git log --oneline "$PREV_TAG..HEAD" 2>/dev/null | grep -v '\[skip ci\]' || echo "No significant changes")
           else
             LOG="Initial release"
           fi
+          NOTES="## v$VERSION
+          Bump type: ${{ needs.detect.outputs.bump_type }}
+          Commits since last tag: ${{ needs.detect.outputs.commit_count }}
+
+          ## What's Changed
+          $LOG
+          ---
+          _🤖 Automated release by CodeSentinel AI_"
           echo "notes<<EOF" >> "$GITHUB_OUTPUT"
-          echo "## What's Changed" >> "$GITHUB_OUTPUT"
-          echo "" >> "$GITHUB_OUTPUT"
-          echo "$LOG" >> "$GITHUB_OUTPUT"
-          echo "" >> "$GITHUB_OUTPUT"
-          echo "---" >> "$GITHUB_OUTPUT"
-          echo "_🤖 Automated release by CodeSentinel AI_" >> "$GITHUB_OUTPUT"
+          echo "$NOTES" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
-      - name: Create release
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -148,26 +188,4 @@ jobs:
           gh release create "v$VERSION" \
             --repo "${{ github.repository }}" \
             --title "v$VERSION" \
-            --notes "${{ steps.notes.outputs.notes }}" \
-            --generate-notes
-
-  autofix-pr:
-    needs: [release]
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build
-        run: npm ci && npm run build
-      - name: Run fix
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node dist/index.js fix --auto-fix 2>&1 | tee /tmp/cs-out.txt; true
+            --notes "${{ steps.notes.outputs.notes }}"
