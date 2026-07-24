@@ -55,6 +55,25 @@ export interface FixAttempt {
   newIssuesIntroduced: Finding[];
 }
 
+/** A single hunk (line-based patch) returned by the AI. */
+export interface Hunk {
+  startLine: number;
+  deleteCount: number;
+  newLines: string[];
+}
+
+/** Apply hunks to file content (sorts bottom-to-top to preserve line numbers). */
+export function applyHunks(content: string, hunks: Hunk[]): string {
+  const lines = content.split("\n");
+  const sorted = [...hunks].sort((a, b) => b.startLine - a.startLine);
+  for (const hunk of sorted) {
+    const idx = hunk.startLine - 1;
+    if (idx < 0 || idx > lines.length) continue;
+    lines.splice(idx, hunk.deleteCount, ...hunk.newLines);
+  }
+  return lines.join("\n");
+}
+
 /** The full machine-readable report produced by a run. */
 export interface EngineReport {
   mode: Mode;
@@ -746,7 +765,7 @@ export class Engine {
     const parsed = extractJson<{
       fixed: boolean;
       explanation: string;
-      content: string;
+      hunks: Hunk[];
     }>(res.content);
 
     if (!parsed) {
@@ -766,12 +785,13 @@ export class Engine {
       // Capture findings before fix for comparison
       const findingsBefore = this.analyzer.analyzeMany([{ path: finding.file, content }]);
 
-      writeFileSync(filePath, parsed.content, "utf8");
+      const fixedContent = applyHunks(content, parsed.hunks ?? []);
+      writeFileSync(filePath, fixedContent, "utf8");
       verified = await this.runVerification();
 
       // Re-analyze the fixed file to detect new issues introduced
-      const fixedContent = readText(filePath);
-      const findingsAfter = this.analyzer.analyzeMany([{ path: finding.file, content: fixedContent }]);
+      const contentAfter = readText(filePath);
+      const findingsAfter = this.analyzer.analyzeMany([{ path: finding.file, content: contentAfter }]);
       const beforeIds = new Set(findingsBefore.map((f) => `${f.category}:${f.line}:${f.comment}`));
       newIssuesIntroduced = findingsAfter.filter((f) => {
         const id = `${f.category}:${f.line}:${f.comment}`;
@@ -815,9 +835,10 @@ ${issuesMd}
 
 ## Rules
 - Fix ALL listed issues with minimal changes.
-- Return the COMPLETE updated file.
+- Return changes as "hunks" (line-based patch), NOT the complete file.
 - Set "fixed": false if you cannot safely fix any issue.
-- Output: Markdown explanation, then \`\`\`json { "fixed": bool, "explanation": "...", "content": "<complete file>" } \`\`\``;
+- hunks format: { startLine: <1-indexed>, deleteCount: <lines to remove>, newLines: ["replacement", "lines"] }
+- Output: Markdown explanation, then \`\`\`json { "fixed": bool, "explanation": "...", "hunks": [...] } \`\`\``;
 
     logger.info(`batchApplyFix[${iteration}]: ${filePath} — ${findings.length} issues`);
     const res = await this.ai.complete("fix", [
@@ -825,7 +846,7 @@ ${issuesMd}
       { role: "user", content: prompt },
     ]);
 
-    const parsed = extractJson<{ fixed: boolean; explanation: string; content: string }>(res.content);
+    const parsed = extractJson<{ fixed: boolean; explanation: string; hunks: Hunk[] }>(res.content);
     if (!parsed) {
       return { iteration, file: filePath, fixed: false, explanation: "AI returned unparseable response", verified: false, newIssuesIntroduced: [] };
     }
@@ -834,10 +855,11 @@ ${issuesMd}
     let newIssuesIntroduced: Finding[] = [];
     if (parsed.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
       const findingsBefore = this.analyzer.analyzeMany([{ path: filePath, content }]);
-      writeFileSync(absPath, parsed.content, "utf8");
+      const fixedContent = applyHunks(content, parsed.hunks ?? []);
+      writeFileSync(absPath, fixedContent, "utf8");
       verified = await this.runVerification();
-      const fixedContent = readText(absPath);
-      const findingsAfter = this.analyzer.analyzeMany([{ path: filePath, content: fixedContent }]);
+      const contentAfter = readText(absPath);
+      const findingsAfter = this.analyzer.analyzeMany([{ path: filePath, content: contentAfter }]);
       const beforeIds = new Set(findingsBefore.map((f) => `${f.category}:${f.line}:${f.comment}`));
       newIssuesIntroduced = findingsAfter.filter((f) => !beforeIds.has(`${f.category}:${f.line}:${f.comment}`));
     }

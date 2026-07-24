@@ -72,7 +72,6 @@ export class AnthropicProvider implements AIProvider {
         `[anthropic] API call failed: ${(err as Error).message}`
       );
     }
-
     const text = Array.isArray(res.content)
       ? res.content.map((b: any) => b.text ?? "").join("")
       : String(res.content);

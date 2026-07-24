@@ -71,12 +71,20 @@ Return a Markdown explanation of the fix followed by a structured JSON block.
 {
   "fixed": <true|false>,
   "explanation": "<exactly what you changed and why — be specific>",
-  "content": "<the COMPLETE updated file content if fixed, otherwise the original content>"
+  "hunks": [
+    {
+      "startLine": <1-indexed line number>,
+      "deleteCount": <number of lines to remove>,
+      "newLines": ["<replacement line 1>", "<replacement line 2>"]
+    }
+  ]
 }
 ```
 
 ## Rules
-- Return the **complete file** as `content`, not a diff or snippet
+- Return changes as `hunks`, NOT the complete file
+- Each hunk: `startLine` (1-indexed), `deleteCount` (lines to remove), `newLines` (replacement lines)
+- Use MULTIPLE hunks if changes are in different parts of the file
 - Set `fixed: true` only if you actually made a change
 - If you cannot fix the issue safely, set `fixed: false` and explain why in `explanation`
 - Do NOT change indentation style, line endings, or whitespace unrelated to the fix

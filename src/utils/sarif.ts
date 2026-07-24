@@ -68,7 +68,7 @@ export function renderSarif(report: EngineReport): string {
       ruleId,
       level: SEVERITY_MAP[f.severity] ?? "note",
       message: { text: f.comment },
-      locations: [createSarifLocation(f.file, f.line)],
+      locations: [createSarifLocation(f.file, f.line ?? undefined)],
     });
   }
 
