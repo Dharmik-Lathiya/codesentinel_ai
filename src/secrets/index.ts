@@ -1,6 +1,32 @@
 import type { Finding } from "../analyzer/index.js";
 import type { SecretPattern, Severity } from "../config/types.js";
 
+function checkLine(
+  line: string,
+  lineNumber: number,
+  path: string,
+  pattern: SecretPattern,
+  re: RegExp,
+): Finding | null {
+  const trimmed = line.trim();
+  if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")) return null;
+  if (trimmed.startsWith("#")) return null;
+
+  re.lastIndex = 0;
+  if (re.test(line)) {
+    return {
+      severity: pattern.severity as Severity,
+      category: "security",
+      file: path,
+      line: lineNumber,
+      comment: pattern.message,
+      suggestion: pattern.suggestion,
+      source: "static",
+    };
+  }
+  return null;
+}
+
 export function scanSecrets(
   path: string,
   content: string,
@@ -20,22 +46,8 @@ export function scanSecrets(
     }
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const trimmed = line.trim();
-      if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")) continue;
-      if (trimmed.startsWith("#")) continue;
-
-      re.lastIndex = 0;
-      if (re.test(line)) {
-        findings.push({
-          severity: pattern.severity as Severity,
-          category: "security",
-          file: path,
-          line: i + 1,
-          comment: pattern.message,
-          suggestion: pattern.suggestion,
-          source: "static",
-        });
-      }
+      const finding = checkLine(line, i + 1, path, pattern, re);
+      if (finding) findings.push(finding);
     }
   }
 

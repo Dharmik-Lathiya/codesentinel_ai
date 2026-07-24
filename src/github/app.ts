@@ -4,6 +4,11 @@ import { Engine, type EngineReport } from "../engine/index.js";
 import type { Mode, RuntimeSecrets } from "../config/types.js";
 import { logger } from "../utils/logger.js";
 
+// Constants
+const MAX_PROCESSED_COMMENT_IDS = 10000;
+const KEEP_LAST_PROCESSED_IDS = 5000;
+const MAX_SCORE = 100;
+
 const processedCommentIds = new Set<number>();
 
 /**
@@ -19,11 +24,19 @@ export function codesentinelApp(app: Probot): void {
   });
 
   app.on("issue_comment.created", async (ctx) => {
-    await handleComment(ctx);
+    try {
+      await handleComment(ctx);
+    } catch (error) {
+      logger.error(error, "Error handling issue_comment.created");
+    }
   });
 
   app.on("issue_comment.edited", async (ctx) => {
-    await handleComment(ctx);
+    try {
+      await handleComment(ctx);
+    } catch (error) {
+      logger.error(error, "Error handling issue_comment.edited");
+    }
   });
 }
 
@@ -33,10 +46,10 @@ async function handleComment(ctx: any): Promise<void> {
   processedCommentIds.add(commentId);
 
   // Cap dedupe set size to prevent memory leak
-  if (processedCommentIds.size > 10000) {
+  if (processedCommentIds.size > MAX_PROCESSED_COMMENT_IDS) {
     const ids = [...processedCommentIds];
     processedCommentIds.clear();
-    ids.slice(-5000).forEach((id) => processedCommentIds.add(id));
+    ids.slice(-KEEP_LAST_PROCESSED_IDS).forEach((id) => processedCommentIds.add(id));
   }
 
   const comment = ctx.payload.comment.body.trim();
@@ -64,18 +77,32 @@ async function handleComment(ctx: any): Promise<void> {
 
   let reply: string;
   if (cmd.mode === "chat") {
-    reply = await engine.ask(cmd.arg);
+    try {
+      reply = await engine.ask(cmd.arg);
+    } catch (error) {
+      logger.error(error, "Failed to run engine.ask");
+      reply = "❌ An error occurred while processing your ask command.";
+    }
   } else {
-    const report: EngineReport = await engine.run();
-    reply = formatReport(report);
+    try {
+      const report: EngineReport = await engine.run();
+      reply = formatReport(report);
+    } catch (error) {
+      logger.error(error, "Failed to run engine");
+      reply = "❌ An error occurred while executing the command.";
+    }
   }
 
-  await ctx.octokit.issues.createComment({
-    owner,
-    repo,
-    issue_number: pullNumber,
-    body: reply,
-  });
+  try {
+    await ctx.octokit.issues.createComment({
+      owner,
+      repo,
+      issue_number: pullNumber,
+      body: reply,
+    });
+  } catch (error) {
+    logger.error(error, "Failed to create comment");
+  }
 }
 
 /** Parse a slash command from a comment body. */
@@ -92,7 +119,7 @@ function parseCommand(
 
 function formatReport(report: EngineReport): string {
   const parts = [`### CodeSentinel — ${report.mode}`, "", report.summary];
-  if (report.score) parts.push(`\n**Score:** ${report.score.overall}/100`);
+  if (report.score) parts.push(`\n**Score:** ${report.score.overall}/${MAX_SCORE}`);
   if (report.gatePassed !== undefined) {
     parts.push(`\n**Gate:** ${report.gatePassed ? "PASSED" : "FAILED"}`);
   }

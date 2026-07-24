@@ -8,5 +8,9 @@ export function parseJsonc(raw: string): Record<string, unknown> {
   masked = masked.replace(/\/\*[\s\S]*?\*\//g, "");
   masked = masked.replace(/(^|[^:])\/\/.*$/gm, "$1");
   masked = masked.replace(/\x00STR(\d+)\x00/g, (_, i) => placeholders[Number(i)]);
-  return JSON.parse(masked);
+  try {
+    return JSON.parse(masked);
+  } catch (error) {
+    throw new Error(`Failed to parse JSONC: ${(error as Error).message}`);
+  }
 }

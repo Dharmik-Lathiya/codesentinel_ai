@@ -12,11 +12,19 @@ export async function concurrentMap<T, R>(
   async function worker(): Promise<void> {
     while (nextIndex < items.length) {
       const index = nextIndex++;
-      results[index] = await fn(items[index], index);
+      try {
+        results[index] = await fn(items[index], index);
+      } catch (error) {
+        throw error; // rethrow to propagate failure
+      }
     }
   }
 
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
-  await Promise.all(workers);
+  try {
+    await Promise.all(workers);
+  } catch (error) {
+    throw error; // rethrow to propagate failure
+  }
   return results;
 }
