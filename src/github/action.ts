@@ -28,11 +28,11 @@ export async function runAction(): Promise<void> {
 
   const secrets: RuntimeSecrets = {
     github_token: process.env.GITHUB_TOKEN,
-    openai_api_key: process.env.OPENAI_API_KEY,
-    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-    gemini_api_key: process.env.GEMINI_API_KEY,
-    opencode_api_key: process.env.OPENCODE_API_KEY,
-    opencode_base_url: process.env.OPENCODE_BASE_URL,
+    openai_api_key: process.env.OPENAI_API_KEY || get("openai_api_key"),
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY || get("anthropic_api_key"),
+    gemini_api_key: process.env.GEMINI_API_KEY || get("gemini_api_key"),
+    opencode_api_key: process.env.OPENCODE_API_KEY || get("opencode_api_key"),
+    opencode_base_url: process.env.OPENCODE_BASE_URL || get("opencode_base_url"),
   };
 
   const engine = Engine.fromInputs({
