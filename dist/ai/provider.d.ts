@@ -36,10 +36,5 @@ export interface AIProvider {
 export declare class ProviderUnavailableError extends Error {
     constructor(provider: string, reason: string);
 }
-/**
- * Parse a JSON object out of a model's free-text response. Models often wrap
- * JSON in markdown fences or add commentary, so we are defensive here.
- * Returns null instead of throwing if JSON cannot be parsed.
- */
 export declare function extractJson<T = unknown>(text: string): T | null;
 export type ProviderFactory = (secrets: RuntimeSecrets) => AIProvider | null;
