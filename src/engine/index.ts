@@ -657,11 +657,16 @@ export class Engine {
         break;
       }
 
+      const MAX_FINDINGS_PER_FILE = 20;
       const fileGroups = new Map<string, Finding[]>();
       for (const f of actionable) {
         const list = fileGroups.get(f.file);
-        if (list) list.push(f);
-        else fileGroups.set(f.file, [f]);
+        if (list) {
+          if (list.length >= MAX_FINDINGS_PER_FILE) continue;
+          list.push(f);
+        } else {
+          fileGroups.set(f.file, [f]);
+        }
       }
       const groups = [...fileGroups.entries()];
       const PHASE_SIZE = 5;
