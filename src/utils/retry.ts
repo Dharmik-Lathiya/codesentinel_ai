@@ -1,5 +1,10 @@
 import { logger } from "./logger.js";
 
+const DEFAULT_BASE_DELAY_MS = 1000;
+const HTTP_RATE_LIMIT = "429";
+const HTTP_SERVICE_UNAVAILABLE = "503";
+const HTTP_BAD_GATEWAY = "502";
+
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
   maxAttempts?: number;
@@ -15,9 +20,9 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes("429") ||
-      msg.includes("503") ||
-      msg.includes("502") ||
+      msg.includes(HTTP_RATE_LIMIT) ||
+      msg.includes(HTTP_SERVICE_UNAVAILABLE) ||
+      msg.includes(HTTP_BAD_GATEWAY) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
@@ -36,7 +41,7 @@ export async function retry<T>(
   opts: RetryOptions = {},
 ): Promise<T> {
   const maxAttempts = opts.maxAttempts ?? 3;
-  const baseDelayMs = opts.baseDelayMs ?? 1000;
+  const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
 
   let lastError: unknown;

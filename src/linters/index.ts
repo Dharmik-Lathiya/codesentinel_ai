@@ -4,10 +4,27 @@ import { resolve } from "node:path";
 import type { Finding } from "../analyzer/index.js";
 import { logger } from "../utils/logger.js";
 
+const MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+const BIOME_MAX_DIAGNOSTICS = 200;
+
 export interface LinterTool {
   name: string;
   detect(root: string): boolean;
   run(root: string, extraArgs: string[]): Finding[];
+}
+
+function parseEsLintFindings(results: { filePath: string; messages: { line: number; severity: number; message: string; ruleId: string | null }[] }[]): Finding[] {
+  return results.flatMap((f) =>
+    f.messages.map((m) => ({
+      file: f.filePath,
+      line: m.line || null,
+      severity: m.severity >= 2 ? "high" as const : "low" as const,
+      category: "smell" as const,
+      comment: m.message,
+      suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
+      source: "linter" as const,
+    })),
+  );
 }
 
 const eslint: LinterTool = {
@@ -19,21 +36,17 @@ const eslint: LinterTool = {
     try {
       const out = execSync(
         `npx eslint --format json --no-color ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER_BYTES },
       );
       if (!out.trim()) return [];
-      const results: { filePath: string; messages: { line: number; severity: number; message: string; ruleId: string | null }[] }[] = JSON.parse(out);
-      return results.flatMap((f) =>
-        f.messages.map((m) => ({
-          file: f.filePath,
-          line: m.line || null,
-          severity: m.severity >= 2 ? "high" as const : "low" as const,
-          category: "smell" as const,
-          comment: m.message,
-          suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
-          source: "linter" as const,
-        })),
-      );
+      const results = (() => {
+        try {
+          return JSON.parse(out);
+        } catch {
+          return [];
+        }
+      })();
+      return parseEsLintFindings(results);
     } catch (e) {
       logger.warn(`eslint run failed: ${e}`);
       return [];
@@ -49,11 +62,17 @@ const biome: LinterTool = {
   run(root: string, extraArgs: string[]): Finding[] {
     try {
       const out = execSync(
-        `npx biome lint --diagnostic-level=warn --max-diagnostics=200 ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        `npx biome lint --diagnostic-level=warn --max-diagnostics=${BIOME_MAX_DIAGNOSTICS} ${extraArgs.join(" ")} . 2>/dev/null || true`,
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER_BYTES },
       );
       if (!out.trim()) return [];
-      const parsed: { diagnostics: { location: { path: { file: string }; span: { start: { line: number } } | null }; severity: string; message: { text: string }; category: string }[] } = JSON.parse(out);
+      const parsed = (() => {
+        try {
+          return JSON.parse(out);
+        } catch {
+          return { diagnostics: [] };
+        }
+      })();
       return (parsed.diagnostics ?? []).map((d) => ({
         file: d.location.path.file,
         line: d.location.span?.start.line ?? null,
@@ -84,11 +103,17 @@ const pylint: LinterTool = {
     try {
       const out = execSync(
         `pylint --output-format=json ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER_BYTES },
       );
       if (!out.trim()) return [];
-      const results: { path: string; line: number; message: string; symbol: string; type: string }[] = JSON.parse(out);
-      return results.map((m) => ({
+      const results = (() => {
+        try {
+          return JSON.parse(out);
+        } catch {
+          return [];
+        }
+      })();
+      return results.map((m: { path: string; line: number; message: string; symbol: string; type: string }) => ({
         file: m.path,
         line: m.line || null,
         severity: (m.type === "error" || m.type === "fatal" ? "high" : m.type === "warning" ? "medium" : "low") as "high" | "medium" | "low",

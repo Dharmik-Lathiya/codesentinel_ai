@@ -3,6 +3,8 @@ import { dirname, resolve } from "node:path";
 import type { Finding } from "../analyzer/index.js";
 import type { Dismissal } from "../config/types.js";
 
+const MAX_RULE_ID_COMMENT_LENGTH = 40;
+
 export class DismissalManager {
   private dismissals: Dismissal[] = [];
 
@@ -27,13 +29,17 @@ export class DismissalManager {
     writeFileSync(this.filePath, JSON.stringify(this.dismissals, null, 2), "utf8");
   }
 
+  private getUtcTimestamp(): string {
+    return new Date().toISOString();
+  }
+
   dismiss(finding: Finding, reason: string): void {
     this.dismissals.push({
       file: finding.file,
       line: finding.line,
-      ruleId: `${finding.category}:${finding.comment.slice(0, 40)}`,
+      ruleId: `${finding.category}:${finding.comment.slice(0, MAX_RULE_ID_COMMENT_LENGTH)}`,
       reason,
-      dismissedAt: new Date().toISOString(),
+      dismissedAt: this.getUtcTimestamp(),
     });
     this.save();
   }
@@ -44,7 +50,7 @@ export class DismissalManager {
       line: null,
       ruleId,
       reason,
-      dismissedAt: new Date().toISOString(),
+      dismissedAt: this.getUtcTimestamp(),
     });
     this.save();
   }
@@ -55,13 +61,13 @@ export class DismissalManager {
       line,
       ruleId,
       reason,
-      dismissedAt: new Date().toISOString(),
+      dismissedAt: this.getUtcTimestamp(),
     });
     this.save();
   }
 
   isDismissed(finding: Finding): boolean {
-    const ruleId = `${finding.category}:${finding.comment.slice(0, 40)}`;
+    const ruleId = `${finding.category}:${finding.comment.slice(0, MAX_RULE_ID_COMMENT_LENGTH)}`;
     return this.dismissals.some(
       (d) =>
         d.ruleId === ruleId &&

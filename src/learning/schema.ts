@@ -68,6 +68,9 @@ CREATE INDEX IF NOT EXISTS idx_patterns_category ON patterns(category);
 CREATE INDEX IF NOT EXISTS idx_custom_rules_status ON custom_rules(status);
 `;
 
+const ID_RADIX = 36;
+const ID_SUBSTRING_END = 10;
+
 export function generateId(): string {
-  return `cs_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  return `cs_${Date.now()}_${Math.random().toString(ID_RADIX).slice(2, ID_SUBSTRING_END)}`;
 }
