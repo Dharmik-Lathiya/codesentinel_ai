@@ -132,6 +132,7 @@ codesentinel dismiss ...        # Dismiss false positives
 | `--min-score <n>` | Gate min score (0-100) |
 | `--max-critical <n>` | Gate max critical findings |
 | `--max-high <n>` | Gate max high findings |
+| `--auto-merge` | Auto-merge fix PRs when quality gates pass |
 | `--version` | Version flex |
 | `--help` | You're looking at it |
 
@@ -212,6 +213,7 @@ codesentinel review --provider anthropic
     "writeReportFile": true,
     "reportDir": "codesentinel-reports"
   },
+  "autoMerge": false,
   "enable_cache": true,
   "cache_dir": ".codesentinel-cache",
   "plugins": [],
@@ -375,10 +377,88 @@ Works on **both PRs and issues**. On issues it runs against the default branch; 
 | `/describe` | Generate PR description |
 | `/ask <question>` | Chat with the codebase |
 
+---
+
+## 📦 Integration Into Other Projects
+
+Add CodeSentinel to **any** GitHub repo's workflow. It runs against **that** repo's code, not CodeSentinel's own code.
+
+### Quick Integration
+
+```yaml
+# .github/workflows/codesentinel.yml
+name: CodeSentinel AI
+on:
+  pull_request:
+    types: [opened, synchronize]
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours
+  workflow_dispatch:
+
+jobs:
+  codesentinel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Dharmik-Lathiya/codesentinel_ai@main
+        with:
+          mode: review
+          opencode_api_key: ${{ secrets.OPENCODE_API_KEY }}
+```
+
+The `GITHUB_TOKEN` and `GITHUB_REPOSITORY` are automatically set by GitHub Actions — all API calls go to **your repo**, not CodeSentinel's.
+
+### Fix Mode — Auto PR Creation
+
+When `mode: fix` with `--auto-fix`, CodeSentinel runs on the default branch and:
+
+1. Finds issues across your codebase
+2. Applies AI-powered fixes
+3. Creates a branch `codesentinel/fix-<timestamp>`
+4. Opens a **Pull Request** against the default branch
+5. Optionally **auto-merges** (squash) when `auto_merge: true`
+
+```yaml
+- uses: Dharmik-Lathiya/codesentinel_ai@main
+  with:
+    mode: fix
+    enable_auto_fix: "true"
+    auto_merge: "true"
+    opencode_api_key: ${{ secrets.OPENCODE_API_KEY }}
+```
+
+### Gate Mode — Auto-Merge on Pass
+
+When `mode: gate` with `auto_merge: true`, CodeSentinel enables GitHub auto-merge on the PR **if** all quality checks pass:
+
+```yaml
+- uses: Dharmik-Lathiya/codesentinel_ai@main
+  with:
+    mode: gate
+    auto_merge: "true"
+    opencode_api_key: ${{ secrets.OPENCODE_API_KEY }}
+```
+
+### All Inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `mode` | `review` | Operation mode |
+| `enable_auto_fix` | `false` | Allow AI to modify files |
+| `auto_merge` | `false` | Auto-merge PRs when quality gates pass |
+| `enable_scoring` | `true` | Compute quality score |
+| `opencode_api_key` | — | API key for OpenCode provider |
+| `openai_api_key` | — | API key for OpenAI |
+| `anthropic_api_key` | — | API key for Anthropic |
+| `gemini_api_key` | — | API key for Gemini |
+| `config_path` | — | Path to codesentinel config file |
+
 ### Reusable Action
 
 ```yaml
-- uses: your-org/codesentinel-ai@v1
+- uses: Dharmik-Lathiya/codesentinel_ai@main
   with:
     mode: review
     enable_scoring: "true"
@@ -389,7 +469,18 @@ The Action:
 - Posts inline PR comments
 - Creates Check Runs with annotations (`gate` mode)
 - Sets commit status (`codesentinel/gate`)
+- Opens fix PRs with auto-merge (`fix` mode + `auto_merge: true`)
 - Outputs `score` + `findings` for downstream steps
+
+### Slash Commands via Probot App
+
+For PR comments, deploy the Probot app:
+
+```bash
+node dist/github/app.js
+```
+
+Then comment on any PR: `/review`, `/fix`, `/audit`, `/score`, `/testgen`, `/gate`, `/deadcode`, `/describe`, `/ask <question>`
 
 ---
 
