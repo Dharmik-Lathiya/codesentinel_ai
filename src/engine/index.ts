@@ -620,8 +620,11 @@ export class Engine {
       }
 
       const staticFindings = await this.analyzeFiles(files);
-      const { findings: aiFindings } = await this.aiReview(files);
-      const findings = [...staticFindings, ...aiFindings];
+      let findings = staticFindings;
+      if (cycle === 1 && this.aiAvailable) {
+        const { findings: aiFindings } = await this.aiReview(files);
+        if (aiFindings.length) findings = [...staticFindings, ...aiFindings];
+      }
       allFindings.length = 0;
       allFindings.push(...findings);
 
@@ -644,27 +647,29 @@ export class Engine {
         if (list) list.push(f);
         else fileGroups.set(f.file, [f]);
       }
-      let idx = 0;
-      for (const [filePath, fileFindings] of fileGroups) {
-        idx++;
-        logger.info(`runFix: batch ${idx}/${fileGroups.size} — ${filePath} (${fileFindings.length} issues)`);
+      const groups = [...fileGroups.entries()];
+      const batchResults = await concurrentMap(groups, async ([filePath, fileFindings], idx) => {
+        logger.info(`runFix: batch ${idx + 1}/${fileGroups.size} — ${filePath} (${fileFindings.length} issues)`);
         try {
-          const attempt = await this.batchApplyFix(filePath, fileFindings, idx);
-          allFixAttempts.push(attempt);
-          if (attempt.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
-            modifiedFiles.add(filePath);
-          }
+          const attempt = await this.batchApplyFix(filePath, fileFindings, idx + 1);
           logger.info(`runFix: batch result — fixed=${attempt.fixed} verified=${attempt.verified}`);
+          return attempt;
         } catch (err) {
           logger.warn(`runFix: batch fix failed for ${filePath}: ${err instanceof Error ? err.message : err}`);
-          allFixAttempts.push({
-            iteration: idx,
+          return {
+            iteration: idx + 1,
             file: filePath,
             fixed: false,
             explanation: `Error: ${err instanceof Error ? err.message : err}`,
             verified: false,
             newIssuesIntroduced: [],
-          });
+          } as FixAttempt;
+        }
+      }, 5);
+      for (const attempt of batchResults) {
+        allFixAttempts.push(attempt);
+        if (attempt.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
+          modifiedFiles.add(attempt.file);
         }
       }
     }
