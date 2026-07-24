@@ -1,0 +1,173 @@
+name: Auto Version & Release
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump: patch | minor | major'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  OPENCODE_BASE_URL: ${{ vars.OPENCODE_BASE_URL }}
+  OPENCODE_API_KEY: ${{ vars.OPENCODE_API_KEY }}
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build
+        run: npm ci && npm run build
+      - name: Run review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node dist/index.js review 2>&1 | tee /tmp/cs-out.txt; true
+
+  check-changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_changes: ${{ steps.check.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check for new commits since last tag
+        id: check
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "No tags yet — will create initial release"
+          else
+            COUNT=$(git rev-list "$LAST_TAG..HEAD" --count 2>/dev/null || echo 0)
+            if [ "$COUNT" -gt 0 ]; then
+              echo "has_changes=true" >> "$GITHUB_OUTPUT"
+              echo "Found $COUNT new commit(s) since $LAST_TAG"
+            else
+              echo "has_changes=false" >> "$GITHUB_OUTPUT"
+              echo "No new commits since $LAST_TAG — skipping release"
+            fi
+          fi
+
+  version:
+    needs: [review, check-changes]
+    if: needs.check-changes.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      new_version: ${{ steps.bump.outputs.new_version }}
+      tag: ${{ steps.bump.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Configure git
+        run: |
+          git config user.name "CodeSentinel Bot"
+          git config user.email "bot@codesentinel.ai"
+      - name: Bump version
+        id: bump
+        env:
+          BUMP: ${{ inputs.bump_type || 'patch' }}
+        run: |
+          npm version $BUMP --no-git-tag-version
+          VERSION=$(node -p "require('./package.json').version")
+          echo "new_version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          git add package.json package-lock.json 2>/dev/null || true
+          git commit -m "chore: bump version to v$VERSION [skip ci]"
+          echo "Bumped to v$VERSION"
+      - name: Create tag & push
+        run: |
+          VERSION="${{ steps.bump.outputs.new_version }}"
+          git tag "v$VERSION"
+          git push origin main --tags
+
+  release:
+    needs: [version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build artifact
+        run: npm ci && npm run build
+      - name: Generate release notes
+        id: notes
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            LOG=$(git log --oneline "$PREV_TAG..HEAD" 2>/dev/null | grep -v 'chore:' | grep -v '\[skip ci\]' || echo "No significant changes")
+          else
+            LOG="Initial release"
+          fi
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "## What's Changed" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "$LOG" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "---" >> "$GITHUB_OUTPUT"
+          echo "_🤖 Automated release by CodeSentinel AI_" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.version.outputs.new_version }}"
+          gh release create "v$VERSION" \
+            --repo "${{ github.repository }}" \
+            --title "v$VERSION" \
+            --notes "${{ steps.notes.outputs.notes }}" \
+            --generate-notes
+
+  autofix-pr:
+    needs: [release]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build
+        run: npm ci && npm run build
+      - name: Run fix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node dist/index.js fix --auto-fix 2>&1 | tee /tmp/cs-out.txt; true
