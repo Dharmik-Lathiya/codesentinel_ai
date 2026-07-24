@@ -42,7 +42,18 @@ export class PluginManager {
       try {
         const mod = (await import(p)) as { default?: CodeSentinelPlugin };
         const plugin = mod.default;
-        if (!this.isValidPlugin(plugin, p)) continue;
+        if (!plugin) {
+          this.ctx.logger.warn(
+            `Plugin "${p}" does not export a default CodeSentinelPlugin.`,
+          );
+          continue;
+        }
+        if (typeof plugin.name !== "string" || plugin.name.length === 0) {
+          this.ctx.logger.warn(
+            `Plugin "${p}" is missing a valid "name" property.`,
+          );
+          continue;
+        }
         this.plugins.push(plugin);
         await plugin.init?.(this.ctx);
         this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
@@ -50,25 +61,6 @@ export class PluginManager {
         this.ctx.logger.warn(`Failed to load plugin "${p}":`, err);
       }
     }
-  }
-
-  private isValidPlugin(
-    plugin: CodeSentinelPlugin | undefined,
-    path: string,
-  ): boolean {
-    if (!plugin) {
-      this.ctx.logger.warn(
-        `Plugin "${path}" does not export a default CodeSentinelPlugin.`,
-      );
-      return false;
-    }
-    if (typeof plugin.name !== "string" || plugin.name.length === 0) {
-      this.ctx.logger.warn(
-        `Plugin "${path}" is missing a valid "name" property.`,
-      );
-      return false;
-    }
-    return true;
   }
 
   get all(): CodeSentinelPlugin[] {
@@ -80,16 +72,7 @@ export class PluginManager {
     files: { path: string; content: string }[],
   ): Promise<Finding[]> {
     const results = await Promise.all(
-      this.plugins.map(async (p) => {
-        try {
-          return (await p.analyze?.(files)) ?? [];
-        } catch (e) {
-          this.ctx.logger.warn(
-            `Plugin "${p.name}" analyze threw: ${e}`,
-          );
-          return [];
-        }
-      }),
+      this.plugins.map((p) => p.analyze?.(files) ?? []),
     );
     return results.flat();
   }
@@ -101,13 +84,7 @@ export class PluginManager {
   ): Promise<ScoreBreakdown> {
     let b = breakdown;
     for (const p of this.plugins) {
-      try {
-        b = (await p.score?.(b, files)) ?? b;
-      } catch (e) {
-        this.ctx.logger.warn(
-          `Plugin "${p.name}" score threw: ${e}`,
-        );
-      }
+      b = (await p.score?.(b, files)) ?? b;
     }
     return b;
   }

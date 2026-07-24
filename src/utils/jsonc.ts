@@ -1,4 +1,4 @@
-/** Minimal JSONC parser: strips // and /* */ comments then JSON.parse. */
+/** Minimal JSONC parser: strips // and /* *\/ comments then JSON.parse. */
 export function parseJsonc(raw: string): Record<string, unknown> {
   const placeholders: string[] = [];
   let masked = raw.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
@@ -8,9 +8,5 @@ export function parseJsonc(raw: string): Record<string, unknown> {
   masked = masked.replace(/\/\*[\s\S]*?\*\//g, "");
   masked = masked.replace(/(^|[^:])\/\/.*$/gm, "$1");
   masked = masked.replace(/\x00STR(\d+)\x00/g, (_, i) => placeholders[Number(i)]);
-  try {
-    return JSON.parse(masked);
-  } catch (e) {
-    throw new Error(`Failed to parse JSONC: ${String(e)}`);
-  }
+  return JSON.parse(masked);
 }

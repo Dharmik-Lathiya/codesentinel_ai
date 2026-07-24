@@ -15,46 +15,6 @@ export interface ValidationResult {
   errors: string[];
 }
 
-function validateNumberField(
-  field: string,
-  value: unknown,
-  min?: number,
-  max?: number,
-): string[] {
-  const errors: string[] = [];
-  const num = Number(value);
-  if (isNaN(num)) {
-    errors.push(`Field ${field} must be a number`);
-    return errors;
-  }
-  if (min !== undefined && num <= min) {
-    errors.push(`Field ${field} must be greater than ${min}`);
-  }
-  if (max !== undefined && num >= max) {
-    errors.push(`Field ${field} must be less than ${max}`);
-  }
-  return errors;
-}
-
-function validateRegexField(
-  field: string,
-  value: unknown,
-  pattern: string,
-): string[] {
-  const errors: string[] = [];
-  let re: RegExp;
-  try {
-    re = new RegExp(pattern);
-  } catch {
-    errors.push(`Field ${field} has invalid regex pattern`);
-    return errors;
-  }
-  if (typeof value === "string" && !re.test(value)) {
-    errors.push(`Field ${field} does not match pattern ${pattern}`);
-  }
-  return errors;
-}
-
 export function validateConfig(
   config: Record<string, unknown>,
   rules: ValidationRule[],
@@ -75,11 +35,29 @@ export function validateConfig(
     if (value === undefined || value === null) continue;
 
     if (rule.type === "number") {
-      errors.push(...validateNumberField(rule.field, value, rule.min, rule.max));
+      const num = Number(value);
+      if (isNaN(num)) {
+        errors.push(`Field ${rule.field} must be a number`);
+      } else {
+        if (rule.min !== undefined && num <= rule.min) {
+          errors.push(`Field ${rule.field} must be greater than ${rule.min}`);
+        }
+        if (rule.max !== undefined && num >= rule.max) {
+          errors.push(`Field ${rule.field} must be less than ${rule.max}`);
+        }
+      }
     }
 
     if (rule.type === "regex" && rule.pattern) {
-      errors.push(...validateRegexField(rule.field, value, rule.pattern));
+      try {
+        new RegExp(rule.pattern);
+      } catch {
+        errors.push(`Field ${rule.field} has invalid regex pattern`);
+      }
+      const re = new RegExp(rule.pattern);
+      if (typeof value === "string" && !re.test(value)) {
+        errors.push(`Field ${rule.field} does not match pattern ${rule.pattern}`);
+      }
     }
   }
 
@@ -92,11 +70,6 @@ export function validateConfigFile(
 ): ValidationResult {
   const absPath = resolve(filePath);
   const content = readFileSync(absPath, "utf8");
-  let config: Record<string, unknown>;
-  try {
-    config = JSON.parse(content) as Record<string, unknown>;
-  } catch {
-    return { valid: false, errors: [`Invalid JSON in file: ${filePath}`] };
-  }
+  const config = JSON.parse(content) as Record<string, unknown>;
   return validateConfig(config, schema);
 }
