@@ -445,7 +445,7 @@ export class Engine {
                         allSummaries.push(parsed.summary);
                     const fileFindings = (parsed.findings ?? []).map((f) => ({
                         ...f,
-                        file: f.file || file.path,
+                        file: file.path,
                         source: "ai",
                     }));
                     logger.info(`aiReview: ${file.path} -> ${fileFindings.length} findings (cached=${!!cached})`);
@@ -590,8 +590,10 @@ export class Engine {
                 }
                 if (modifiedFiles.size > 0 && phase + PHASE_SIZE < groups.length) {
                     const branch = await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)}`);
-                    if (branch)
+                    const isDirectPush = branch === process.env.GITHUB_REF_NAME && !process.env.GITHUB_HEAD_REF;
+                    if (branch && !isDirectPush) {
                         await this.createFixPR(branch);
+                    }
                     modifiedFiles.clear();
                 }
             }
@@ -602,8 +604,10 @@ export class Engine {
         }
         if (modifiedFiles.size > 0 && !this.config.dry_run) {
             const branch = await this.pushFixes(modifiedFiles);
-            if (branch)
+            const isDirectPush = branch === process.env.GITHUB_REF_NAME && !process.env.GITHUB_HEAD_REF;
+            if (branch && !isDirectPush) {
                 await this.createFixPR(branch);
+            }
         }
         const summary = this.buildSummary("fix", allFindings, allFixAttempts);
         return {
@@ -632,9 +636,13 @@ export class Engine {
                 // diff exists — we can commit
             }
             const headRef = process.env.GITHUB_HEAD_REF || "";
+            const refName = process.env.GITHUB_REF_NAME || "";
             let target;
             if (headRef) {
                 target = headRef;
+            }
+            else if (refName) {
+                target = refName;
             }
             else {
                 target = `codesentinel/fix-${Date.now()}`;
@@ -684,6 +692,16 @@ export class Engine {
     async applyFix(finding, iteration) {
         const filePath = resolve(this.root, finding.file);
         const content = readText(filePath);
+        if (!content.trim()) {
+            return {
+                iteration,
+                file: finding.file,
+                fixed: false,
+                explanation: "File content is empty or file not found.",
+                verified: false,
+                newIssuesIntroduced: [],
+            };
+        }
         const prompt = this.prompts.render("fix", {
             severity: finding.severity,
             category: finding.category,
@@ -748,6 +766,9 @@ export class Engine {
     async batchApplyFix(filePath, findings, iteration) {
         const absPath = resolve(this.root, filePath);
         const content = readText(absPath);
+        if (!content.trim()) {
+            return { iteration, file: filePath, fixed: false, explanation: "File content is empty or file not found.", verified: false, newIssuesIntroduced: [] };
+        }
         const issuesMd = findings.map((f, i) => `### Issue ${i + 1}\nSeverity: ${f.severity}\nCategory: ${f.category}\nLine: ${f.line ?? "N/A"}\nFeedback: ${f.comment}\nSuggestion: ${f.suggestion ?? ""}`).join("\n\n");
         const prompt = `You are an expert engineer fixing ${findings.length} issue(s) in ${filePath}.
 
