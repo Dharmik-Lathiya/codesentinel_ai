@@ -8,9 +8,7 @@ interface SubscriberHealth {
 }
 
 const MAX_CONCURRENCY_LIMIT = 10;
-const DEFAULT_MAX_CONCURRENCY = MAX_CONCURRENCY_LIMIT;
 const MAX_HISTORY_COUNT = 100;
-const MAX_HISTORY_LENGTH = MAX_HISTORY_COUNT;
 
 export class EventBus {
   private subscribers = new Map<string, Subscriber>();
@@ -21,7 +19,7 @@ export class EventBus {
   private readonly maxFailures: number;
   private readonly cooldownMs: number;
 
-  constructor(opts?: { maxConcurrency?: number; subscriberTimeoutMs?: number; maxFailures?: number; cooldownMs?: number }) {
+    this.maxConcurrency = opts?.maxConcurrency ?? MAX_CONCURRENCY_LIMIT;
     this.maxConcurrency = opts?.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
     this.subscriberTimeoutMs = opts?.subscriberTimeoutMs ?? 120_000;
     this.maxFailures = opts?.maxFailures ?? 5;
@@ -49,7 +47,7 @@ export class EventBus {
     const matching = Array.from(this.subscribers.values()).filter((s) =>
       s.eventTypes.includes(event.type),
     );
-
+    if (this.history.length > MAX_HISTORY_COUNT) this.history.shift();
     try {
       const results = await Promise.allSettled(
         matching.map((s) => this.dispatch(s, event)),
