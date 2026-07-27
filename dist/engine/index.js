@@ -558,6 +558,7 @@ export class Engine {
             }
             const groups = [...fileGroups.entries()];
             const PHASE_SIZE = 5;
+            let anyFixed = false;
             for (let phase = 0; phase < groups.length; phase += PHASE_SIZE) {
                 const phaseGroups = groups.slice(phase, phase + PHASE_SIZE);
                 logger.info(`runFix: phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)} (${phaseGroups.length} files)`);
@@ -582,8 +583,9 @@ export class Engine {
                 }, 3);
                 for (const attempt of batchResults) {
                     allFixAttempts.push(attempt);
-                    if (attempt.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
+                    if (attempt.fixed === true && this.config.enable_auto_fix && !this.config.dry_run) {
                         modifiedFiles.add(attempt.file);
+                        anyFixed = true;
                     }
                 }
                 if (modifiedFiles.size > 0 && phase + PHASE_SIZE < groups.length) {
@@ -592,6 +594,10 @@ export class Engine {
                         await this.createFixPR(branch);
                     modifiedFiles.clear();
                 }
+            }
+            if (!anyFixed) {
+                logger.info("runFix: no files were modified in this cycle — fix loop cannot make progress, exiting");
+                break;
             }
         }
         if (modifiedFiles.size > 0 && !this.config.dry_run) {
@@ -732,7 +738,7 @@ export class Engine {
         return {
             iteration,
             file: finding.file,
-            fixed: parsed.fixed,
+            fixed: parsed.fixed === true,
             explanation: parsed.explanation,
             verified,
             newIssuesIntroduced,
@@ -785,7 +791,7 @@ ${issuesMd}
             const beforeIds = new Set(findingsBefore.map((f) => `${f.category}:${f.line}:${f.comment}`));
             newIssuesIntroduced = findingsAfter.filter((f) => !beforeIds.has(`${f.category}:${f.line}:${f.comment}`));
         }
-        return { iteration, file: filePath, fixed: parsed.fixed, explanation: parsed.explanation, verified, newIssuesIntroduced };
+        return { iteration, file: filePath, fixed: parsed.fixed === true, explanation: parsed.explanation, verified, newIssuesIntroduced };
     }
     /** Apply fixes for a batch of findings without the full re-analysis loop. */
     async runFixLoopFor(actionable) {

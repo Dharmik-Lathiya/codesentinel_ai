@@ -867,7 +867,7 @@ export class Engine {
     return {
       iteration,
       file: finding.file,
-      fixed: parsed.fixed,
+      fixed: parsed.fixed === true,
       explanation: parsed.explanation,
       verified,
       newIssuesIntroduced,
@@ -931,7 +931,7 @@ ${issuesMd}
       const beforeIds = new Set(findingsBefore.map((f) => `${f.category}:${f.line}:${f.comment}`));
       newIssuesIntroduced = findingsAfter.filter((f) => !beforeIds.has(`${f.category}:${f.line}:${f.comment}`));
     }
-    return { iteration, file: filePath, fixed: parsed.fixed, explanation: parsed.explanation, verified, newIssuesIntroduced };
+    return { iteration, file: filePath, fixed: parsed.fixed === true, explanation: parsed.explanation, verified, newIssuesIntroduced };
   }
 
   /** Apply fixes for a batch of findings without the full re-analysis loop. */
