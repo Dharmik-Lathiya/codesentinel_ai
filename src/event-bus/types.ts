@@ -1,6 +1,6 @@
-export interface GitHubEvent {
+export interface GitHubEvent<TPayload = unknown> {
   type: string;
-  payload: Record<string, unknown>;
+  payload: TPayload;
   prNumber?: number;
   repo?: string;
   owner?: string;
@@ -8,6 +8,7 @@ export interface GitHubEvent {
 
 export interface Subscriber {
   name: string;
-  eventTypes: string[];
+  eventTypes: readonly string[];
+  // ℹ️ Any errors thrown by the handler must be caught by the subscriber invoker.
   handler: (event: GitHubEvent) => Promise<void>;
 }
