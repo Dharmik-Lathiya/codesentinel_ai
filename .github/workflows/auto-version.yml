@@ -22,8 +22,8 @@ permissions:
   issues: write
 
 env:
-  OPENCODE_BASE_URL: ${{ vars.OPENCODE_BASE_URL }}
-  OPENCODE_API_KEY: ${{ vars.OPENCODE_API_KEY }}
+  OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL || vars.OPENCODE_BASE_URL || 'https://opencode.ai/zen' }}
+  OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
 
 jobs:
   detect:
