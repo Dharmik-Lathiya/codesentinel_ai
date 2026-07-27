@@ -52,6 +52,18 @@ function createToolDriver(
   };
 }
 
+function createSarifRun(
+  rules: Map<string, { id: string; shortDescription: { text: string } }>,
+  results: SarifResult[]
+): SarifRun {
+  return {
+    tool: {
+      driver: createToolDriver(rules),
+    },
+    results,
+  };
+}
+
 export function renderSarif(report: EngineReport): string {
   const rules = new Map<string, { id: string; shortDescription: { text: string } }>();
   const results: SarifResult[] = [];
@@ -75,14 +87,7 @@ export function renderSarif(report: EngineReport): string {
   const sarif: SarifLog = {
     $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
     version: "2.1.0",
-    runs: [
-      {
-        tool: {
-          driver: createToolDriver(rules),
-        },
-        results,
-      },
-    ],
+    runs: [createSarifRun(rules, results)],
   };
 
   return JSON.stringify(sarif, null, 2);

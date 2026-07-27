@@ -1,4 +1,5 @@
 import type { Finding } from "../analyzer/index.js";
+const MAX_FINDINGS = 10;
 
 /**
  * Format a finding as a GitHub committable suggestion block.
@@ -23,7 +24,6 @@ export function buildSuggestionsComment(
   fileContents: Map<string,string>,
 ): string {
   const parts: string[] = ["### CodeSentinel — Suggested Fixes\n"];
-  const MAX_FINDINGS = 10;
   for (const f of findings.slice(0, MAX_FINDINGS)) {
     const content = fileContents.get(f.file) ?? "";
     const lines = content.split("\n");
