@@ -2,11 +2,11 @@ import { z } from "zod";
 
 export const SeveritySchema = z.enum(["info", "low", "medium", "high", "critical"]);
 
-const MAX_SUMMARY_LENGTH = 2000;
-const MAX_TITLE_LENGTH = 200;
-const MAX_DESCRIPTION_LENGTH = 1000;
-const MAX_MESSAGE_LENGTH = 1000;
-const MAX_SUGGESTION_LENGTH = 2000;
+export const MAX_SUMMARY_LENGTH = 2000;
+export const MAX_TITLE_LENGTH = 200;
+export const MAX_DESCRIPTION_LENGTH = 1000;
+export const MAX_MESSAGE_LENGTH = 1000;
+export const MAX_SUGGESTION_LENGTH = 2000;
 
 export const SummaryEntrySchema = z.object({
   type: z.literal("summary"),
