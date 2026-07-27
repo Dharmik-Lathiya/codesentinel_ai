@@ -27,9 +27,9 @@ export const StrengthEntrySchema = z.object({
 export const IssueEntrySchema = z.object({
   type: z.literal("issue"),
   severity: SeveritySchema,
-  category: z.enum(["bug", "security", "performance", "smell", "style"]),
+  category: z.enum(["bug", "security", "performance", "smell", "style", "reliability", "architecture", "testing", "praise"]),
   file: z.string().min(1),
-  line: z.number().int().positive().nullable().optional(),
+  line: z.number().int().positive().nullish(),
   message: z.string().min(1).max(MAX_MESSAGE_LENGTH),
   suggestion: z.string().max(MAX_SUGGESTION_LENGTH).optional(),
 });
