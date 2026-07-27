@@ -31,7 +31,8 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
-const MAX_COMMENT_LENGTH = 40;
+const COMMENT_TRUNCATION_LENGTH = 40;
+const MAX_COMMENT_LENGTH = COMMENT_TRUNCATION_LENGTH;
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
