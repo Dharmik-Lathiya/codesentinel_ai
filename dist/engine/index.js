@@ -753,7 +753,7 @@ ${issuesMd}
         const res = await this.ai.complete("fix", [
             { role: "system", content: "You apply minimal, safe code fixes." },
             { role: "user", content: prompt },
-        ]);
+        ], { maxTokens: 8192 });
         const parsed = extractJson(res.content);
         if (!parsed) {
             return { iteration, file: filePath, fixed: false, explanation: "AI returned unparseable response", verified: false, newIssuesIntroduced: [] };
