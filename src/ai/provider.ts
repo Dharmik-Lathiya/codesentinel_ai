@@ -50,14 +50,22 @@ export class ProviderUnavailableError extends Error {
  */
 function tryParseJson<T>(s: string): T | null {
   try { return JSON.parse(s) as T; } catch {}
-  const cleaned = s.replace(/,(\s*[}\]])/g, "$1").replace(/,\s*,/g, ",");
+  const cleaned = s.replace(/,(\s*[}\]])/g, "$1").replace(/,\s*,/g, ",").replace(/\/\/[^\n]*/g, "");
   try { return JSON.parse(cleaned) as T; } catch {}
   const single = s.replace(/'/g, '"');
   try { return JSON.parse(single.replace(/,(\s*[}\]])/g, "$1")) as T; } catch {}
+  const lastBrace = s.lastIndexOf("}");
+  if (lastBrace > s.indexOf("{")) {
+    try { return JSON.parse(s.slice(0, lastBrace + 1)) as T; } catch {}
+    const closed = s.slice(0, lastBrace + 1).replace(/,(\s*[}\]])/g, "$1").replace(/,\s*,/g, ",");
+    try { return JSON.parse(closed) as T; } catch {}
+  }
   return null;
 }
 
 export function extractJson<T = unknown>(text: string): T | null {
+  const result = tryParseJson<T>(text.trim());
+  if (result !== null) return result;
   const fenced = text.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi);
   for (const match of fenced) {
     const result = tryParseJson<T>(match[1].trim());

@@ -627,8 +627,10 @@ export class Engine {
                 execSync(`git checkout -b ${target}`, { cwd: this.root, stdio: "pipe" });
             }
             const msg = tag ? `CodeSentinel: auto-fix issues ${tag}` : 'CodeSentinel: auto-fix issues [skip ci]';
+            execSync(`git config user.email "bot@codesentinel.ai"`, { cwd: this.root, stdio: "pipe" });
+            execSync(`git config user.name "CodeSentinel Bot"`, { cwd: this.root, stdio: "pipe" });
             execSync(`git commit -m "${msg}"`, { cwd: this.root, stdio: "pipe" });
-            execSync(`git push origin HEAD:${target}`, { cwd: this.root, stdio: "pipe" });
+            execSync(`git push origin HEAD:${target} --set-upstream`, { cwd: this.root, stdio: "pipe" });
             logger.info(`pushFixes: pushed ${files.length} file(s) to ${target}`);
             return target;
         }
@@ -745,7 +747,8 @@ ${issuesMd}
 - Return changes as "hunks" (line-based patch), NOT the complete file.
 - Set "fixed": false if you cannot safely fix any issue.
 - hunks format: { startLine: <1-indexed>, deleteCount: <lines to remove>, newLines: ["replacement", "lines"] }
-- Output: Markdown explanation, then \`\`\`json { "fixed": bool, "explanation": "...", "hunks": [...] } \`\`\``;
+- Output ONLY valid JSON inside \`\`\`json ... \`\`\` with NO other text.  
+- JSON format: { "fixed": bool, "explanation": "...", "hunks": [...] }`;
         logger.info(`batchApplyFix[${iteration}]: ${filePath} — ${findings.length} issues`);
         const res = await this.ai.complete("fix", [
             { role: "system", content: "You apply minimal, safe code fixes." },
