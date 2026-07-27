@@ -79,9 +79,14 @@ interface ReleaseInfo {
 
 async function fetchReleaseInfo(version: string): Promise<ReleaseInfo> {
   const url = version === "latest" ? OPENCODE_RELEASES : `https://api.github.com/repos/anomalyco/opencode/releases/tags/${version}`;
-  const res = await fetch(url, {
-    headers: { "Accept": "application/json", "User-Agent": "codesentinel-ai" },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { "Accept": "application/json", "User-Agent": "codesentinel-ai" },
+    });
+  } catch (err) {
+    throw new Error(`Failed to fetch release info: ${err}`);
+  }
   if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
   return res.json() as Promise<ReleaseInfo>;
 }
@@ -98,9 +103,19 @@ function findAsset(release: ReleaseInfo, binaryName: string): { name: string; ur
 }
 
 async function downloadBinary(url: string): Promise<Buffer> {
-  const res = await fetch(url);
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (err) {
+    throw new Error(`Failed to download binary: ${err}`);
+  }
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
+  let buffer: Buffer;
+  try {
+    buffer = Buffer.from(await res.arrayBuffer());
+  } catch (err) {
+    throw new Error(`Failed to read binary response: ${err}`);
+  }
   return buffer;
 }
 
