@@ -1,8 +1,10 @@
 import type { MCPServerConfig } from "./client.js";
 
-const MS_PER_SECOND = 1000;
-const CONTEXT7_TIMEOUT_MS = 10 * MS_PER_SECOND;
-const GITHUB_TIMEOUT_MS = 15 * MS_PER_SECOND;
+const MILLISECONDS_PER_SECOND = 1000;
+const CONTEXT7_TIMEOUT_SECONDS = 10;
+const GITHUB_TIMEOUT_SECONDS = 15;
+const CONTEXT7_SERVER_TIMEOUT_MS = CONTEXT7_TIMEOUT_SECONDS * MILLISECONDS_PER_SECOND;
+const GITHUB_TIMEOUT_MS = GITHUB_TIMEOUT_SECONDS * MILLISECONDS_PER_SECOND;
 
 export function context7Server(apiKey?: string): MCPServerConfig {
   const env: Record<string, string> = {};
@@ -10,9 +12,10 @@ export function context7Server(apiKey?: string): MCPServerConfig {
   return {
     name: "context7",
     type: "local",
-    command: ["npx", "-y", "--quiet", "@upstash/context7-mcp"],
+    command: "npx",
+    args: ["-y", "--quiet", "@upstash/context7-mcp"],
     environment: Object.keys(env).length ? env : undefined,
-    timeoutMs: CONTEXT7_TIMEOUT_MS,
+    timeoutMs: CONTEXT7_SERVER_TIMEOUT_MS,
   };
 }
 
@@ -22,7 +25,8 @@ export function githubMCPServer(token?: string): MCPServerConfig {
   return {
     name: "github",
     type: "local",
-    command: ["npx", "-y", "--quiet", "@github/github-mcp-server"],
+    command: "npx",
+    args: ["-y", "--quiet", "@github/github-mcp-server"],
     environment: Object.keys(env).length ? env : undefined,
     timeoutMs: GITHUB_TIMEOUT_MS,
   };
@@ -30,9 +34,9 @@ export function githubMCPServer(token?: string): MCPServerConfig {
 
 export function getDefaultMCPServers(token?: string, context7Key?: string): MCPServerConfig[] {
   const servers: MCPServerConfig[] = [];
-  try { servers.push(context7Server(context7Key)); } catch { /* skip */ }
-  if (token) {
-    try { servers.push(githubMCPServer(token)); } catch { /* skip */ }
+  try { servers.push(context7Server(context7Key)); } catch (e) { console.error("Failed to add context7 server:", e); }
+  if (token !== undefined) {
+    try { servers.push(githubMCPServer(token)); } catch (e) { console.error("Failed to add GitHub server:", e); }
   }
   return servers;
 }
