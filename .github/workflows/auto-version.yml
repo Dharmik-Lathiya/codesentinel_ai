@@ -104,8 +104,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node dist/index.js fix --auto-fix 2>&1 | tee /tmp/cs-out.txt; true
-      - name: Commit fixes if any
+      - name: Merge fix branch and commit fixes
         run: |
+          git checkout main
+          FIX_BRANCH=$(git branch --list 'codesentinel/fix-*' --sort=-committerdate | head -1 | tr -d ' ')
+          if [ -n "$FIX_BRANCH" ] && git merge-base --is-ancestor main "$FIX_BRANCH" 2>/dev/null; then
+            echo "Merging fix branch: $FIX_BRANCH"
+            git merge "$FIX_BRANCH" --no-edit
+          fi
           if [ -n "$(git status --porcelain)" ]; then
             git config user.name "CodeSentinel Bot"
             git config user.email "bot@codesentinel.ai"

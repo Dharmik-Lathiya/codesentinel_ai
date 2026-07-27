@@ -617,6 +617,14 @@ export class Engine {
         try {
             const files = [...modifiedFiles].join(" ");
             execSync(`git add ${files}`, { cwd: this.root, stdio: "pipe" });
+            try {
+                execSync("git diff --cached --quiet", { cwd: this.root, stdio: "pipe" });
+                logger.info("pushFixes: no changes to commit — skipping");
+                return "";
+            }
+            catch {
+                // diff exists — we can commit
+            }
             const headRef = process.env.GITHUB_HEAD_REF || "";
             let target;
             if (headRef) {
@@ -701,9 +709,12 @@ export class Engine {
         let verified = false;
         let newIssuesIntroduced = [];
         if (parsed.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
-            // Capture findings before fix for comparison
-            const findingsBefore = this.analyzer.analyzeMany([{ path: finding.file, content }]);
             const fixedContent = applyHunks(content, parsed.hunks ?? []);
+            if (fixedContent === content) {
+                logger.info(`applyFix[${iteration}]: hunks produced no changes — treating as not fixed`);
+                return { iteration, file: finding.file, fixed: false, explanation: "AI returned hunks that produced no changes", verified: false, newIssuesIntroduced: [] };
+            }
+            const findingsBefore = this.analyzer.analyzeMany([{ path: finding.file, content }]);
             writeFileSync(filePath, fixedContent, "utf8");
             verified = await this.runVerification();
             // Re-analyze the fixed file to detect new issues introduced
@@ -761,8 +772,12 @@ ${issuesMd}
         let verified = false;
         let newIssuesIntroduced = [];
         if (parsed.fixed && this.config.enable_auto_fix && !this.config.dry_run) {
-            const findingsBefore = this.analyzer.analyzeMany([{ path: filePath, content }]);
             const fixedContent = applyHunks(content, parsed.hunks ?? []);
+            if (fixedContent === content) {
+                logger.info(`batchApplyFix[${iteration}]: hunks produced no changes — treating as not fixed`);
+                return { iteration, file: filePath, fixed: false, explanation: "AI returned hunks that produced no changes", verified: false, newIssuesIntroduced: [] };
+            }
+            const findingsBefore = this.analyzer.analyzeMany([{ path: filePath, content }]);
             writeFileSync(absPath, fixedContent, "utf8");
             verified = await this.runVerification();
             const contentAfter = readText(absPath);
