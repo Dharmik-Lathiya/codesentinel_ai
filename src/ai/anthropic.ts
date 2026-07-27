@@ -2,7 +2,7 @@ import type { CompletionRequest, CompletionResult, AIProvider } from "./provider
 import { ProviderUnavailableError } from "./provider.js";
 import type { RuntimeSecrets } from "../config/types.js";
 
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_ANTHROPIC_MAX_TOKENS = 4096;
 
 /**
  * Anthropic (Claude) provider. Maps our role-based messages to Anthropic's
@@ -39,7 +39,7 @@ export class AnthropicProvider implements AIProvider {
     }
     return this.client;
   }
-
+        max_tokens: req.maxTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
   async complete(req: CompletionRequest): Promise<CompletionResult> {
     let client;
     try {
