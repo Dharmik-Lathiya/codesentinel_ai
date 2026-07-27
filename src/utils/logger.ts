@@ -33,7 +33,6 @@ export class Logger {
       if (level === "error") console.error(entry);
       else if (level === "warn") console.warn(entry);
       else if (level === "info") console.info(entry);
-      else console.debug(entry);
       return;
     }
 
@@ -41,7 +40,6 @@ export class Logger {
     if (level === "error") console.error(prefix, ...args);
     else if (level === "warn") console.warn(prefix, ...args);
     else if (level === "info") console.info(prefix, ...args);
-    else console.debug(prefix, ...args);
   }
 
   debug(...args: unknown[]): void {
