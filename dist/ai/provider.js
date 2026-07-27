@@ -16,7 +16,7 @@ function tryParseJson(s) {
         return JSON.parse(s);
     }
     catch { }
-    const cleaned = s.replace(/,(\s*[}\]])/g, "$1").replace(/,\s*,/g, ",");
+    const cleaned = s.replace(/,(\s*[}\]])/g, "$1").replace(/,\s*,/g, ",").replace(/\/\/[^\n]*/g, "");
     try {
         return JSON.parse(cleaned);
     }
@@ -26,9 +26,24 @@ function tryParseJson(s) {
         return JSON.parse(single.replace(/,(\s*[}\]])/g, "$1"));
     }
     catch { }
+    const lastBrace = s.lastIndexOf("}");
+    if (lastBrace > s.indexOf("{")) {
+        try {
+            return JSON.parse(s.slice(0, lastBrace + 1));
+        }
+        catch { }
+        const closed = s.slice(0, lastBrace + 1).replace(/,(\s*[}\]])/g, "$1").replace(/,\s*,/g, ",");
+        try {
+            return JSON.parse(closed);
+        }
+        catch { }
+    }
     return null;
 }
 export function extractJson(text) {
+    const result = tryParseJson(text.trim());
+    if (result !== null)
+        return result;
     const fenced = text.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi);
     for (const match of fenced) {
         const result = tryParseJson(match[1].trim());
