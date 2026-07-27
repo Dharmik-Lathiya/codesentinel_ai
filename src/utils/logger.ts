@@ -1,11 +1,16 @@
 /** Lightweight leveled logger. Keeps secrets out of output by default. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
+const LEVEL_DEBUG = 10;
+const LEVEL_INFO = 20;
+const LEVEL_WARN = 30;
+const LEVEL_ERROR = 40;
+
 const LEVELS: Record<LogLevel, number> = {
-  debug: 10,
-  info: 20,
-  warn: 30,
-  error: 40,
+  debug: LEVEL_DEBUG,
+  info: LEVEL_INFO,
+  warn: LEVEL_WARN,
+  error: LEVEL_ERROR,
 };
 
 let jsonMode = false;
