@@ -7,8 +7,10 @@ interface SubscriberHealth {
   cooldownUntil: number;
 }
 
-const DEFAULT_MAX_CONCURRENCY = 10;
-const MAX_HISTORY_LENGTH = 100;
+const MAX_CONCURRENCY_LIMIT = 10;
+const DEFAULT_MAX_CONCURRENCY = MAX_CONCURRENCY_LIMIT;
+const MAX_HISTORY_COUNT = 100;
+const MAX_HISTORY_LENGTH = MAX_HISTORY_COUNT;
 
 export class EventBus {
   private subscribers = new Map<string, Subscriber>();
