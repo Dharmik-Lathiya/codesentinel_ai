@@ -1,8 +1,9 @@
 /** Lightweight leveled logger. Keeps secrets out of output by default. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
-const LEVEL_BASE = 10;
-const LEVEL_STEP = 10;
+const LEVEL_OFFSET = 10;
+const LEVEL_BASE = LEVEL_OFFSET;
+const LEVEL_STEP = LEVEL_OFFSET;
 const LEVEL_DEBUG = LEVEL_BASE;
 const LEVEL_INFO = LEVEL_DEBUG + LEVEL_STEP;
 const LEVEL_WARN = LEVEL_INFO + LEVEL_STEP;
