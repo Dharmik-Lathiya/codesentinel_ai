@@ -26,7 +26,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL || vars.OPENCODE_BASE_URL || 'https://opencode.ai/zen' }}
+  OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL || 'https://opencode.ai/zen' }}
   OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
 
 jobs:
