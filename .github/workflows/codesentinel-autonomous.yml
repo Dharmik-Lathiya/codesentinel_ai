@@ -36,10 +36,10 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL || 'https://opencode.ai/zen' }}
         run: |
+          git config user.name "CodeSentinel Bot"
+          git config user.email "bot@codesentinel.dev"
           node dist/index.js fix --auto-fix 2>&1 || true
           if [[ -n "$(git status --porcelain)" ]]; then
-            git config user.name "CodeSentinel Bot"
-            git config user.email "bot@codesentinel.dev"
             git add -A
             git commit -m "CodeSentinel: auto-fix issues [skip ci]"
             git pull --rebase origin main 2>/dev/null || true
