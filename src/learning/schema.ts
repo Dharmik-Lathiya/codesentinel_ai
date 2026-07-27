@@ -69,7 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_custom_rules_status ON custom_rules(status);
 `;
 
 const DIGITS = '0123456789';
-const RADIX = '0123456789abcdefghijklmnopqrstuvwxyz'.length;
+const RADIX = (DIGITS + 'abcdefghijklmnopqrstuvwxyz').length;
 const SLICE_END = DIGITS.length;
 
 export function generateId(): string {
