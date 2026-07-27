@@ -23,7 +23,8 @@ export function buildSuggestionsComment(
   fileContents: Map<string,string>,
 ): string {
   const parts: string[] = ["### CodeSentinel — Suggested Fixes\n"];
-  for (const f of findings.slice(0, 10)) {
+  const MAX_FINDINGS = 10;
+  for (const f of findings.slice(0, MAX_FINDINGS)) {
     const content = fileContents.get(f.file) ?? "";
     const lines = content.split("\n");
     if (f.line && f.line > 0 && f.line <= lines.length) {
@@ -32,7 +33,7 @@ export function buildSuggestionsComment(
       const context = ctxBefore ? ctxBefore + "\n" : "";
       const after = ctxAfter ? "\n" + ctxAfter : "";
       const suggested = f.suggestion?.replace(/^```[\s\S]*?\n/gm, "").replace(/```$/gm, "").trim() ?? "";
-      const code = suggested || `${context}  // FIXME: ${f.comment}\n${after}`;
+      const code = suggested || `${context}  // ${f.comment}\n${after}`;
       parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
     }
   }
