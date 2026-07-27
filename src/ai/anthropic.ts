@@ -39,7 +39,6 @@ export class AnthropicProvider implements AIProvider {
     }
     return this.client;
   }
-        max_tokens: req.maxTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
   async complete(req: CompletionRequest): Promise<CompletionResult> {
     let client;
     try {
@@ -65,7 +64,7 @@ export class AnthropicProvider implements AIProvider {
         system,
         messages,
         temperature: req.temperature ?? 0.2,
-        max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+        max_tokens: req.maxTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
       });
     } catch (err) {
       throw new Error(
