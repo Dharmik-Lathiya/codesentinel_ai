@@ -1,6 +1,6 @@
 import type { Finding } from "../analyzer/index.js";
-const MAX_FINDINGS = 10;
-const MAX_FINDINGS = DEFAULT_MAX_FINDINGS as const;
+const DEFAULT_MAX_FINDINGS = 10 as const;
+const MAX_FINDINGS = DEFAULT_MAX_FINDINGS;
 
 /**
  * Format a finding as a GitHub committable suggestion block.
