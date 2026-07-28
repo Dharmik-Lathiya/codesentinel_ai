@@ -140,15 +140,15 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   custom_prompt_paths: {},
   project_context: "",
 
-  default_model: { provider: "opencode", model: "deepseek-v4-flash-free" },
+  default_model: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
   models: {
-    review: { provider: "opencode", model: "deepseek-v4-flash-free" },
-    fix: { provider: "opencode", model: "deepseek-v4-flash-free" },
-    audit: { provider: "opencode", model: "deepseek-v4-flash-free" },
-    score: { provider: "opencode", model: "deepseek-v4-flash-free" },
-    testgen: { provider: "opencode", model: "deepseek-v4-flash-free" },
-    chat: { provider: "opencode", model: "deepseek-v4-flash-free" },
-    describe: { provider: "opencode", model: "deepseek-v4-flash-free" },
+    review: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },
+    fix: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
+    audit: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
+    score: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
+    testgen: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },
+    chat: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
+    describe: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
   },
 
   test_runner: "vitest",

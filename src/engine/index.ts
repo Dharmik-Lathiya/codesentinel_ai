@@ -90,6 +90,8 @@ export interface EngineReport {
     filesAnalyzed: number;
     findingsBySeverity: Record<string, number>;
     durationMs: number;
+    truncatedResponses?: number;
+    repairedResponses?: number;
   };
 }
 
@@ -113,6 +115,10 @@ export class Engine {
   private readonly learning: LearningStore | null = null;
   private readonly eventBus: EventBus;
   private aiAvailable = true;
+  /** Count of AI responses that were truncated (unterminated JSON). */
+  private truncatedCount = 0;
+  /** Count of truncated responses successfully repaired via extractJson. */
+  private repairedCount = 0;
 
   constructor(
     config: CodeSentinelConfig,
@@ -502,6 +508,11 @@ export class Engine {
         severity: f.severity,
       }));
 
+    const truncInfo = this.truncatedCount
+      ? ` | ⚠ ${this.truncatedCount} truncated, ${this.repairedCount} repaired`
+      : "";
+    logger.info(`runReview: ${findings.length} total findings (${staticFindings.length} static, ${aiFindings.length} AI)${truncInfo}`);
+
     const summary = this.buildSummary("review", findings, undefined, aiSummaries);
 
     const report: EngineReport = {
@@ -531,19 +542,42 @@ export class Engine {
     }
     logger.info(`aiReview: starting AI review for ${files.length} files`);
 
+    // Split large files into chunks by maxLinesPerFile
+    const maxLines = this.config.batch.maxLinesPerFile;
+    const expandedFiles: { path: string; content: string; diff?: string; chunk?: number }[] = [];
+    for (const file of files) {
+      const lines = file.content.split("\n");
+      if (maxLines > 0 && lines.length > maxLines) {
+        const nChunks = Math.ceil(lines.length / maxLines);
+        logger.info(`aiReview: splitting ${file.path} (${lines.length} lines) into ${nChunks} chunks of ${maxLines} lines`);
+        for (let i = 0; i < nChunks; i++) {
+          const chunkLines = lines.slice(i * maxLines, (i + 1) * maxLines);
+          expandedFiles.push({
+            path: file.path,
+            content: chunkLines.join("\n"),
+            diff: file.diff,
+            chunk: i + 1,
+          });
+        }
+      } else {
+        expandedFiles.push({ ...file });
+      }
+    }
+
     // Group into batches if batching is enabled
     const batches = this.config.batch.enabled
-      ? groupIntoBatches(files, this.config.batch.batchSize)
-      : files.map((f) => [f]);
+      ? groupIntoBatches(expandedFiles, this.config.batch.batchSize)
+      : expandedFiles.map((f) => [f]);
 
     const allResults: Finding[] = [];
     const allSummaries: string[] = [];
     for (const batch of batches) {
       logger.info(`aiReview: batch size=${batch.length}`);
       const results = await concurrentMap(batch, async (file) => {
-        logger.info(`aiReview: processing ${file.path} (diff_len=${(file.diff ?? "").length}, content_len=${file.content.length})`);
+        const chunkLabel = file.chunk ? ` (chunk ${file.chunk})` : "";
+        logger.info(`aiReview: processing ${file.path}${chunkLabel} (content_len=${file.content.length})`);
         try {
-          const cacheKey = { task: "review", path: file.path, content: file.content };
+          const cacheKey = { task: "review", path: file.path, content: file.content, chunk: file.chunk };
           const cached = this.config.enable_cache
             ? this.cache.get<{ findings: any[]; summary?: string }>("review", cacheKey)
             : null;
@@ -557,11 +591,11 @@ export class Engine {
             file: file.path,
             source: "ai" as const,
           }));
-          logger.info(`aiReview: ${file.path} -> ${fileFindings.length} findings (cached=${!!cached})`);
+          logger.info(`aiReview: ${file.path}${chunkLabel} -> ${fileFindings.length} findings (cached=${!!cached})`);
           return fileFindings;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          logger.warn(`AI review failed for ${file.path}: ${msg}`);
+          logger.warn(`AI review failed for ${file.path}${chunkLabel}: ${msg}`);
           return [];
         }
       }, 5);
@@ -569,7 +603,7 @@ export class Engine {
     }
 
     const out = allResults;
-    logger.info(`aiReview: total AI findings = ${out.length}`);
+    logger.info(`aiReview: total AI findings = ${out.length} | truncated=${this.truncatedCount} repaired=${this.repairedCount}`);
     return { findings: out, summaries: allSummaries };
   }
 
@@ -1442,6 +1476,7 @@ ${issuesMd}
     task: "review",
     promptName: PromptName,
     file: { path: string; content: string; diff?: string },
+    maxTokensOverride?: number,
   ): Promise<{ findings: any[]; outputFormat?: string }> {
     const code = file.diff && file.diff.trim() ? file.diff : file.content;
     let projectContext = this.config.project_context || "(none)";
@@ -1492,10 +1527,39 @@ ${issuesMd}
     const res = await this.ai.complete(task, [
       { role: "system", content: "You are an expert code reviewer." },
       { role: "user", content: prompt },
-    ]);
+    ], { maxTokens: maxTokensOverride });
     logger.info(`callAI response: provider=${res.provider} model=${res.model} tokens_in=${res.usage?.promptTokens} tokens_out=${res.usage?.completionTokens} content_len=${res.content.length}`);
 
-    const parsedFindings = extractJson<{ findings: any[] }>(res.content)?.findings ?? [];
+    const parsed = extractJson<{ findings: any[] }>(res.content, { detailed: true });
+
+    // Detect truncation — retry once with double tokens
+    if (parsed.truncated && !parsed.parsed) {
+      this.truncatedCount++;
+      const modelConfig = this.ai.modelForTask(task);
+      const currentTokens = maxTokensOverride ?? modelConfig.maxTokens ?? 4096;
+      const doubledTokens = currentTokens * 2;
+      logger.warn(`callAI: truncated response for ${file.path} — retrying with maxTokens=${doubledTokens} (was ${currentTokens})`);
+      const res2 = await this.ai.complete(task, [
+        { role: "system", content: "You are an expert code reviewer." },
+        { role: "user", content: prompt },
+      ], { maxTokens: doubledTokens });
+      logger.info(`callAI retry response: provider=${res2.provider} model=${res2.model} tokens_in=${res2.usage?.promptTokens} tokens_out=${res2.usage?.completionTokens} content_len=${res2.content.length}`);
+
+      const parsed2 = extractJson<{ findings: any[] }>(res2.content, { detailed: true });
+      if (parsed2.parsed) {
+        if (parsed2.repaired) this.repairedCount++;
+        const finalFindings = this.#processFindings(file, parsed2.parsed, res2.content);
+        return { findings: finalFindings };
+      }
+      // Even truncated retry failed — fall through to original attempt
+      if (parsed2.truncated) this.truncatedCount++;
+    }
+
+    if (parsed.parsed) {
+      if (parsed.repaired) this.repairedCount++;
+    }
+
+    const parsedFindings = parsed.parsed?.findings ?? [];
 
     // Try JSONL if configured
     let finalFindings = parsedFindings;
@@ -1533,6 +1597,28 @@ ${issuesMd}
     }
 
     return { findings: finalFindings };
+  }
+
+  /** Helper: process findings from extracted JSON, including JSONL fallback. */
+  #processFindings(
+    file: { path: string },
+    parsed: { findings?: any[] },
+    rawContent: string,
+  ): any[] {
+    const pf = parsed.findings ?? [];
+    if (pf.length || !this.config.jsonl_output) return pf;
+    const jsonlResult = parseJsonlString(rawContent);
+    if (!jsonlResult.length) return pf;
+    const normalized = validateAndNormalize(jsonlResult);
+    return normalized.issues.map((i: any) => ({
+      file: i.file,
+      line: i.line,
+      severity: i.severity,
+      message: i.message,
+      category: i.category,
+      suggestion: i.suggestion,
+      source: "ai" as const,
+    }));
   }
 
   private async callScoreAI(
@@ -1668,6 +1754,8 @@ ${issuesMd}
 
   private finalizeReport(report: EngineReport): void {
     report.metrics.findingsBySeverity = this.tallySeverity(report.findings);
+    report.metrics.truncatedResponses = this.truncatedCount;
+    report.metrics.repairedResponses = this.repairedCount;
   }
 
   private writeReportFile(report: EngineReport): void {

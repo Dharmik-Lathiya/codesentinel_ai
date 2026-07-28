@@ -43,6 +43,57 @@ export class ProviderUnavailableError extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Truncation detection helpers
+// ---------------------------------------------------------------------------
+
+/** Count opening vs closing braces/brackets. Positive = unterminated. */
+function balanceCount(text: string): { braces: number; brackets: number; inString: boolean } {
+  let braces = 0;
+  let brackets = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") braces++;
+    else if (ch === "}") braces--;
+    else if (ch === "[") brackets++;
+    else if (ch === "]") brackets--;
+  }
+  return { braces, brackets, inString };
+}
+
+/** Check if the response looks truncated (unterminated JSON). */
+export function isTruncated(text: string): boolean {
+  const b = balanceCount(text);
+  if (b.braces > 0 || b.brackets > 0 || b.inString) return true;
+  return false;
+}
+
+/**
+ * Attempt to repair truncated JSON by closing unterminated structures.
+ * Only closes top-level braces/brackets and unterminated strings.
+ */
+function repairTruncated(text: string): string {
+  let repaired = text;
+  const b = balanceCount(repaired);
+
+  // Close unterminated string first
+  if (b.inString) {
+    repaired += '"';
+  }
+
+  // Close unterminated brackets then braces (LIFO order)
+  for (let i = 0; i < b.brackets; i++) repaired += "]";
+  for (let i = 0; i < b.braces; i++) repaired += "}";
+
+  return repaired;
+}
+
 /**
  * Parse a JSON object out of a model's free-text response. Models often wrap
  * JSON in markdown fences or add commentary, so we are defensive here.
@@ -63,14 +114,44 @@ function tryParseJson<T>(s: string): T | null {
   return null;
 }
 
-export function extractJson<T = unknown>(text: string): T | null {
-  const result = tryParseJson<T>(text.trim());
-  if (result !== null) return result;
+export interface ExtractJsonResult<T> {
+  parsed: T | null;
+  truncated: boolean;
+  repaired: boolean;
+}
+
+/**
+ * Parse a JSON object from model response text. Returns structured result
+ * indicating whether parsing succeeded, whether truncation was detected, and
+ * whether a repair pass was applied.
+ */
+export function extractJson<T = unknown>(text: string): T | null;
+export function extractJson<T = unknown>(text: string, opts: { detailed: true }): ExtractJsonResult<T>;
+export function extractJson<T = unknown>(
+  text: string,
+  opts?: { detailed: true },
+): T | null | ExtractJsonResult<T> {
+  const truncated = isTruncated(text);
+  let repaired = false;
+
+  // Try direct parse first
+  let result = tryParseJson<T>(text.trim());
+  if (result !== null) {
+    if (opts?.detailed) return { parsed: result, truncated, repaired };
+    return result;
+  }
+
+  // Try fenced code blocks
   const fenced = text.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi);
   for (const match of fenced) {
-    const result = tryParseJson<T>(match[1].trim());
-    if (result !== null) return result;
+    result = tryParseJson<T>(match[1].trim());
+    if (result !== null) {
+      if (opts?.detailed) return { parsed: result, truncated, repaired };
+      return result;
+    }
   }
+
+  // Try to extract top-level JSON object by brace matching
   let depth = 0;
   let start = -1;
   for (let i = 0; i < text.length; i++) {
@@ -80,13 +161,47 @@ export function extractJson<T = unknown>(text: string): T | null {
     } else if (text[i] === "}") {
       depth--;
       if (depth === 0 && start !== -1) {
-        const result = tryParseJson<T>(text.slice(start, i + 1));
-        if (result !== null) return result;
+        result = tryParseJson<T>(text.slice(start, i + 1));
+        if (result !== null) {
+          if (opts?.detailed) return { parsed: result, truncated, repaired };
+          return result;
+        }
         start = -1;
       }
     }
   }
-  logger.warn("extractJson: No valid JSON object found in model response");
+
+  // --- Truncation repair pass ---
+  if (truncated) {
+    const repairedText = repairTruncated(text);
+    repaired = repairedText !== text;
+
+    result = tryParseJson<T>(repairedText.trim());
+    if (result !== null) {
+      logger.warn(`extractJson: repaired truncated response (${repairedText.length - text.length} chars appended)`);
+      if (opts?.detailed) return { parsed: result, truncated, repaired };
+      return result;
+    }
+
+    // Also try fenced blocks in repaired text
+    const repairedFenced = repairedText.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi);
+    for (const match of repairedFenced) {
+      result = tryParseJson<T>(match[1].trim());
+      if (result !== null) {
+        logger.warn("extractJson: repaired truncated response (fenced block)");
+        if (opts?.detailed) return { parsed: result, truncated, repaired };
+        return result;
+      }
+    }
+  }
+
+  // --- Diagnostics ---
+  const snippet = text.length > 500
+    ? `first_500=${JSON.stringify(text.slice(0, 500))} ... last_500=${JSON.stringify(text.slice(-500))}`
+    : JSON.stringify(text);
+  logger.warn(`extractJson: No valid JSON object found in model response — truncated=${truncated} content_len=${text.length} ${snippet}`);
+
+  if (opts?.detailed) return { parsed: null, truncated, repaired };
   return null;
 }
 

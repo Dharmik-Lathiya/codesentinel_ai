@@ -37,7 +37,7 @@ export class OpenCodeProvider implements AIProvider {
           model: req.model.model,
           messages: req.messages,
           temperature: req.temperature ?? 0.2,
-          max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+          max_tokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_TOKENS,
         }),
       });
     } catch (err) {
