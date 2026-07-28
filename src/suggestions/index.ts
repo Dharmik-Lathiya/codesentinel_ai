@@ -1,6 +1,5 @@
 import type { Finding } from "../analyzer/index.js";
-// Maximum number of findings to include in a single suggestion comment.
-const DEFAULT_MAX_FINDINGS = 10;
+const MAX_FINDINGS = 10;
 const MAX_FINDINGS = DEFAULT_MAX_FINDINGS as const;
 
 /**
