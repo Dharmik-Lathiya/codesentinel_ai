@@ -20,7 +20,7 @@ import { collectFiles, readText, ensureDir } from "../utils/files.js";
 import { logger } from "../utils/logger.js";
 import { extractJson } from "../ai/provider.js";
 import { renderHtmlReport } from "../utils/html-report.js";
-import { scanSecrets } from "../secrets/index.js";
+import { scanSecrets, redactSecrets } from "../secrets/index.js";
 import { DismissalManager } from "../dismiss/index.js";
 import { DashboardServer } from "../dashboard/index.js";
 import { detectDeadCode } from "../deadcode/index.js";
@@ -467,7 +467,9 @@ export class Engine {
     const files = await this.collectedFiles();
     const staticFindings = await this.analyzeFiles(files);
 
-    const { findings: aiFindings, summaries: aiSummaries } = await this.aiReview(files);
+    // Send redacted content to AI — secrets are flagged as findings in static scan
+    const aiFiles = this.redactFilesForAI(files);
+    const { findings: aiFindings, summaries: aiSummaries } = await this.aiReview(aiFiles);
     const findings = [...staticFindings, ...aiFindings];
 
     this.recordPatterns(findings).catch(() => {});
@@ -483,7 +485,8 @@ export class Engine {
         // Re-read files to get updated findings after fixes
         const updatedFiles = await this.collectedFiles();
         const updatedStatic = await this.analyzeFiles(updatedFiles);
-        const { findings: updatedAi } = await this.aiReview(updatedFiles);
+        const updatedAiFiles = this.redactFilesForAI(updatedFiles);
+        const { findings: updatedAi } = await this.aiReview(updatedAiFiles);
         const updatedFindings = [...updatedStatic, ...updatedAi];
         const summary = this.buildSummary("review", updatedFindings, fixAttempts, aiSummaries);
         return {
@@ -530,6 +533,22 @@ export class Engine {
       report.score = await this.computeScore(files, findings);
     }
     return report;
+  }
+
+  /**
+   * Create a deep copy of the file list with secrets redacted from `content`
+   * before sending to the AI provider. Never mutates files on disk.
+   */
+  private redactFilesForAI(
+    files: { path: string; content: string; diff?: string }[],
+  ): { path: string; content: string; diff?: string }[] {
+    const patterns = this.config.secretPatterns;
+    if (!patterns.length) return files;
+    return files.map((f) => ({
+      ...f,
+      content: redactSecrets(f.content, patterns),
+      diff: f.diff ? redactSecrets(f.diff, patterns) : f.diff,
+    }));
   }
 
   /** Ask the AI model to review each changed file (cached per file). */
@@ -672,7 +691,8 @@ export class Engine {
       const staticFindings = await this.analyzeFiles(files);
       let findings = staticFindings;
       if (cycle === 1 && this.aiAvailable) {
-        const { findings: aiFindings } = await this.aiReview(files);
+        const aiFiles = this.redactFilesForAI(files);
+        const { findings: aiFindings } = await this.aiReview(aiFiles);
         if (aiFindings.length) findings = [...staticFindings, ...aiFindings];
       }
       allFindings.length = 0;
@@ -959,10 +979,13 @@ export class Engine {
       `### Issue ${i + 1}\nSeverity: ${f.severity}\nCategory: ${f.category}\nLine: ${f.line ?? "N/A"}\nFeedback: ${f.comment}\nSuggestion: ${f.suggestion ?? ""}`
     ).join("\n\n");
 
+    // Redact secrets before sending fix prompt to AI provider
+    const redactedContent = redactSecrets(content, this.config.secretPatterns);
+
     const MAX_FILE_CHARS = 30000;
-    const truncatedContent = content.length > MAX_FILE_CHARS
-      ? content.slice(0, MAX_FILE_CHARS) + `\n\n// ... [file truncated from ${content.length} to ${MAX_FILE_CHARS} chars]`
-      : content;
+    const truncatedContent = redactedContent.length > MAX_FILE_CHARS
+      ? redactedContent.slice(0, MAX_FILE_CHARS) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FILE_CHARS} chars]`
+      : redactedContent;
 
     const prompt = `You are an expert engineer fixing ${findings.length} issue(s) in ${filePath}.
 
@@ -1682,6 +1705,9 @@ ${issuesMd}
       }
     }
 
+    if (this.truncatedCount > 0) {
+      parts.push(`⚠ **AI response truncation:** ${this.truncatedCount} file(s) hit the output token limit, ${this.repairedCount} repaired automatically. Some findings may be incomplete.`);
+    }
     parts.push("");
     parts.push(`**Ready to merge?** ${readyToMerge}`);
 
