@@ -1,9 +1,10 @@
 import { logger } from "./logger.js";
 
-const DEFAULT_BASE_DELAY_MS = 1000;
-const HTTP_STATUS_429 = "429";
-const HTTP_STATUS_503 = "503";
-const HTTP_STATUS_502 = "502";
+const ONE_SECOND_MS = 1000;
+const DEFAULT_BASE_DELAY_MS = ONE_SECOND_MS;
+const HTTP_STATUS_RATE_LIMIT = "429";
+const HTTP_STATUS_SERVICE_UNAVAILABLE = "503";
+const HTTP_STATUS_BAD_GATEWAY = "502";
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -23,9 +24,9 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(HTTP_STATUS_429) ||
-      msg.includes(HTTP_STATUS_503) ||
-      msg.includes(HTTP_STATUS_502) ||
+      msg.includes(HTTP_STATUS_RATE_LIMIT) ||
+      msg.includes(HTTP_STATUS_SERVICE_UNAVAILABLE) ||
+      msg.includes(HTTP_STATUS_BAD_GATEWAY) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
