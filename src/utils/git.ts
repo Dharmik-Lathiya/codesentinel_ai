@@ -110,6 +110,7 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
     await git(["rev-parse", "--verify", ref], cwd);
     return true;
   } catch {
+    logger.debug(`Ref ${ref} does not exist`);
     return false;
   }
 }

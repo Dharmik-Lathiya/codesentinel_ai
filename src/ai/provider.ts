@@ -95,6 +95,77 @@ function repairTruncated(text: string): string {
 }
 
 /**
+ * Scan truncated text for any complete, parseable JSON objects that look
+ * like findings. This salvages individual findings from responses that were
+ * cut off mid-JSON (the closing `]}` of the findings array got truncated).
+ *
+ * Returns `{ findings: [...] }` if any complete finding-like objects were
+ * found, or null if nothing salvageable was detected.
+ */
+function salvagePartialFindings(text: string): Record<string, unknown> | null {
+  const results: Record<string, unknown>[] = [];
+
+  let idx = 0;
+  while (idx < text.length) {
+    const braceStart = text.indexOf("{", idx);
+    if (braceStart === -1) break;
+
+    let depth = 0;
+    let inStr = false;
+    let escaped = false;
+    let end = -1;
+    for (let i = braceStart; i < text.length; i++) {
+      const ch = text[i];
+      if (escaped) { escaped = false; continue; }
+      if (ch === "\\") { escaped = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) { end = i; break; }
+      }
+    }
+
+    if (end !== -1) {
+      const candidate = text.slice(braceStart, end + 1);
+      try {
+        const parsed = JSON.parse(candidate) as Record<string, unknown>;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          // Heuristic: looks like a finding if it has relevant fields
+          const hasFindingShape =
+            "severity" in parsed ||
+            "comment" in parsed ||
+            "category" in parsed ||
+            "title" in parsed ||
+            "message" in parsed ||
+            "description" in parsed;
+          if (hasFindingShape) {
+            results.push(parsed);
+          }
+        }
+      } catch {
+        // individual object parse failed — skip
+      }
+      idx = end + 1;
+    } else {
+      idx = braceStart + 1;
+    }
+  }
+
+  // Recurse into fenced code blocks
+  if (results.length === 0) {
+    const fenced = text.matchAll(/```(?:json)?\s*\n?([\s\S]*?)```/gi);
+    for (const match of fenced) {
+      const inner = salvagePartialFindings(match[1]);
+      if (inner !== null) return inner;
+    }
+  }
+
+  return results.length > 0 ? { findings: results } : null;
+}
+
+/**
  * Parse a JSON object out of a model's free-text response. Models often wrap
  * JSON in markdown fences or add commentary, so we are defensive here.
  * Returns null instead of throwing if JSON cannot be parsed.
@@ -192,6 +263,17 @@ export function extractJson<T = unknown>(
         if (opts?.detailed) return { parsed: result, truncated, repaired };
         return result;
       }
+    }
+  }
+
+  // --- Partial salvage pass (truncated only) ---
+  if (truncated) {
+    const salvaged = salvagePartialFindings(text);
+    if (salvaged !== null) {
+      const s = salvaged as { findings?: unknown[] };
+      logger.warn(`extractJson: salvaged ${s.findings?.length ?? 0} finding(s) from truncated response`);
+      if (opts?.detailed) return { parsed: salvaged as T, truncated, repaired };
+      return salvaged as T;
     }
   }
 
