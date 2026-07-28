@@ -1,4 +1,4 @@
-name: CodeSentinel AI
+name: CodeSentinel Comment Commands
 
 on:
   issue_comment:

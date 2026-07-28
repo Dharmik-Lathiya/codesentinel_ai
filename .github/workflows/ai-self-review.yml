@@ -1,4 +1,4 @@
-name: AI Self Review & Audit
+name: CodeSentinel CI/CD
 
 on:
   pull_request:
