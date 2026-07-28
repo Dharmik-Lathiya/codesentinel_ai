@@ -59,9 +59,15 @@ export function runOpenCode(binaryPath, args, opts) {
 }
 async function fetchReleaseInfo(version) {
     const url = version === "latest" ? OPENCODE_RELEASES : `https://api.github.com/repos/anomalyco/opencode/releases/tags/${version}`;
-    const res = await fetch(url, {
-        headers: { "Accept": "application/json", "User-Agent": "codesentinel-ai" },
-    });
+    let res;
+    try {
+        res = await fetch(url, {
+            headers: { "Accept": "application/json", "User-Agent": "codesentinel-ai" },
+        });
+    }
+    catch (err) {
+        throw new Error(`Failed to fetch release info: ${err}`);
+    }
     if (!res.ok)
         throw new Error(`GitHub API returned ${res.status}`);
     return res.json();
@@ -77,10 +83,22 @@ function findAsset(release, binaryName) {
     return null;
 }
 async function downloadBinary(url) {
-    const res = await fetch(url);
+    let res;
+    try {
+        res = await fetch(url);
+    }
+    catch (err) {
+        throw new Error(`Failed to download binary: ${err}`);
+    }
     if (!res.ok)
         throw new Error(`Download failed: ${res.status}`);
-    const buffer = Buffer.from(await res.arrayBuffer());
+    let buffer;
+    try {
+        buffer = Buffer.from(await res.arrayBuffer());
+    }
+    catch (err) {
+        throw new Error(`Failed to read binary response: ${err}`);
+    }
     return buffer;
 }
 function verifyChecksum(buffer, release) {

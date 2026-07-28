@@ -57,7 +57,14 @@ export class TestGenerator {
             const file = files.find((f) => f.path === rel);
             if (!file)
                 continue;
-            const gen = await this.generateForFile(root, file);
+            let gen;
+            try {
+                gen = await this.generateForFile(root, file);
+            }
+            catch (e) {
+                console.error(`Failed to generate tests for ${rel}:`, e);
+                continue;
+            }
             if (gen)
                 results.push(gen);
         }
@@ -76,10 +83,17 @@ export class TestGenerator {
             code: file.content,
             project_context: this.config.project_context || "(none)",
         });
-        const res = await this.ai.complete("testgen", [
-            { role: "system", content: "You generate precise unit tests." },
-            { role: "user", content: prompt },
-        ]);
+        let res;
+        try {
+            res = await this.ai.complete("testgen", [
+                { role: "system", content: "You generate precise unit tests." },
+                { role: "user", content: prompt },
+            ]);
+        }
+        catch (e) {
+            console.error(`AI completion failed for ${file.path}:`, e);
+            return null;
+        }
         const parsed = extractJson(res.content);
         if (!parsed?.content)
             return null;
