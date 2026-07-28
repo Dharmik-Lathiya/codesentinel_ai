@@ -8,8 +8,10 @@ interface SubscriberHealth {
 }
 
 
-  static readonly MAX_CONCURRENCY_LIMIT = 10;
-  static readonly MAX_HISTORY_COUNT = 100;
+const DEFAULT_MAX_CONCURRENCY = 10;
+const DEFAULT_MAX_HISTORY = 100;
+  static readonly MAX_CONCURRENCY_LIMIT = DEFAULT_MAX_CONCURRENCY;
+  static readonly MAX_HISTORY_COUNT = DEFAULT_MAX_HISTORY;
 export class EventBus {
   private subscribers = new Map<string, Subscriber>();
   private health = new Map<string, SubscriberHealth>();
