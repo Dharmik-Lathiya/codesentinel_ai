@@ -657,18 +657,23 @@ export class Engine {
         break;
       }
 
-      const MAX_FINDINGS_PER_FILE = 20;
+      const MAX_FINDINGS_PER_FILE = 5;
       const fileGroups = new Map<string, Finding[]>();
       for (const f of actionable) {
         const list = fileGroups.get(f.file);
         if (list) {
-          if (list.length >= MAX_FINDINGS_PER_FILE) continue;
           list.push(f);
         } else {
           fileGroups.set(f.file, [f]);
         }
       }
-      const groups = [...fileGroups.entries()];
+      // Split findings per file into chunks of MAX_FINDINGS_PER_FILE
+      const groups: [string, Finding[]][] = [];
+      for (const [filePath, findings] of fileGroups) {
+        for (let pos = 0; pos < findings.length; pos += MAX_FINDINGS_PER_FILE) {
+          groups.push([filePath, findings.slice(pos, pos + MAX_FINDINGS_PER_FILE)]);
+        }
+      }
       const PHASE_SIZE = 5;
       let anyFixed = false;
       for (let phase = 0; phase < groups.length; phase += PHASE_SIZE) {
@@ -768,7 +773,12 @@ export class Engine {
       execSync(`git config user.email "bot@codesentinel.ai"`, { cwd: this.root, stdio: "pipe" });
       execSync(`git config user.name "CodeSentinel Bot"`, { cwd: this.root, stdio: "pipe" });
       execSync(`git commit -m "${msg}"`, { cwd: this.root, stdio: "pipe" });
-      execSync(`git push origin HEAD:${target} --set-upstream`, { cwd: this.root, stdio: "pipe" });
+      try {
+        execSync(`git pull --rebase origin ${target} 2>&1`, { cwd: this.root, stdio: "pipe", timeout: 30000 });
+      } catch {
+        logger.warn(`pushFixes: pull --rebase failed for ${target}, pushing anyway`);
+      }
+      execSync(`git push origin HEAD:${target} --set-upstream`, { cwd: this.root, stdio: "pipe", timeout: 60000 });
       logger.info(`pushFixes: pushed ${files.length} file(s) to ${target}`);
       return target;
     } catch (err) {
