@@ -836,26 +836,25 @@ export class Engine {
     });
 
     logger.info(`applyFix[${iteration}]: prompt=${JSON.stringify(finding.file)} severity=${finding.severity} category=${finding.category}`);
-    const res = await this.ai.complete("fix", [
-      { role: "system", content: "You apply minimal, safe code fixes." },
-      { role: "user", content: prompt },
-    ]);
-    logger.info(`applyFix[${iteration}]: AI response len=${res.content.length}`);
-    const parsed = extractJson<{
-      fixed: boolean;
-      explanation: string;
-      hunks: Hunk[];
-    }>(res.content);
+    let parsed: { fixed: boolean; explanation: string; hunks: Hunk[] } | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        logger.info(`applyFix[${iteration}]: retry ${attempt + 1}/3 for ${finding.file}`);
+      }
+      const res = await this.ai.complete("fix", [
+        { role: "system", content: "You apply minimal, safe code fixes." },
+        { role: "user", content: prompt + (attempt > 0 ? "\n\nIMPORTANT: You MUST output ONLY valid JSON. No explanations, no markdown, no extra text." : "") },
+      ], { maxTokens: 16384 });
 
+      const snippet = res.content.length > 500 ? res.content.slice(0, 500) + "..." : res.content;
+      logger.info(`applyFix[${iteration}]: AI response len=${res.content.length} preview=${JSON.stringify(snippet)}`);
+
+      parsed = extractJson<{ fixed: boolean; explanation: string; hunks: Hunk[] }>(res.content);
+      if (parsed) break;
+      logger.warn(`applyFix[${iteration}]: unparseable response (attempt ${attempt + 1}/3) — raw snippet: ${JSON.stringify(snippet)}`);
+    }
     if (!parsed) {
-      return {
-        iteration,
-        file: finding.file,
-        fixed: false,
-        explanation: "AI returned unparseable response",
-        verified: false,
-        newIssuesIntroduced: [],
-      };
+      return { iteration, file: finding.file, fixed: false, explanation: "AI returned unparseable response after 3 attempts", verified: false, newIssuesIntroduced: [] };
     }
 
     let verified = false;
@@ -908,11 +907,16 @@ export class Engine {
       `### Issue ${i + 1}\nSeverity: ${f.severity}\nCategory: ${f.category}\nLine: ${f.line ?? "N/A"}\nFeedback: ${f.comment}\nSuggestion: ${f.suggestion ?? ""}`
     ).join("\n\n");
 
+    const MAX_FILE_CHARS = 30000;
+    const truncatedContent = content.length > MAX_FILE_CHARS
+      ? content.slice(0, MAX_FILE_CHARS) + `\n\n// ... [file truncated from ${content.length} to ${MAX_FILE_CHARS} chars]`
+      : content;
+
     const prompt = `You are an expert engineer fixing ${findings.length} issue(s) in ${filePath}.
 
 ## File Content
 \`\`\`${filePath.split(".").pop() ?? "text"}
-${content}
+${truncatedContent}
 \`\`\`
 
 ## Issues to Fix
@@ -927,14 +931,25 @@ ${issuesMd}
 - JSON format: { "fixed": bool, "explanation": "...", "hunks": [...] }`;
 
     logger.info(`batchApplyFix[${iteration}]: ${filePath} — ${findings.length} issues`);
-    const res = await this.ai.complete("fix", [
-      { role: "system", content: "You apply minimal, safe code fixes." },
-      { role: "user", content: prompt },
-    ], { maxTokens: 8192 });
+    let parsed: { fixed: boolean; explanation: string; hunks: Hunk[] } | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        logger.info(`batchApplyFix[${iteration}]: retry ${attempt + 1} for ${filePath}`);
+      }
+      const res = await this.ai.complete("fix", [
+        { role: "system", content: "You apply minimal, safe code fixes." },
+        { role: "user", content: prompt + (attempt > 0 ? "\n\nIMPORTANT: You MUST output ONLY valid JSON. No explanations, no markdown, no extra text. The JSON must parse correctly." : "") },
+      ], { maxTokens: 16384 });
 
-    const parsed = extractJson<{ fixed: boolean; explanation: string; hunks: Hunk[] }>(res.content);
+      const snippet = res.content.length > 500 ? res.content.slice(0, 500) + "..." : res.content;
+      logger.info(`batchApplyFix[${iteration}]: AI response len=${res.content.length} preview=${JSON.stringify(snippet)}`);
+
+      parsed = extractJson<{ fixed: boolean; explanation: string; hunks: Hunk[] }>(res.content);
+      if (parsed) break;
+      logger.warn(`batchApplyFix[${iteration}]: unparseable response (attempt ${attempt + 1}/3) — raw snippet: ${JSON.stringify(snippet)}`);
+    }
     if (!parsed) {
-      return { iteration, file: filePath, fixed: false, explanation: "AI returned unparseable response", verified: false, newIssuesIntroduced: [] };
+      return { iteration, file: filePath, fixed: false, explanation: "AI returned unparseable response after 3 attempts", verified: false, newIssuesIntroduced: [] };
     }
 
     let verified = false;
