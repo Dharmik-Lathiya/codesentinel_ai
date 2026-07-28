@@ -5,8 +5,14 @@ export interface GitHubEvent<TPayload = unknown> {
     repo?: string;
     owner?: string;
 }
-export interface Subscriber {
+export type HandlerResult = {
+    success: true;
+} | {
+    success: false;
+    error: Error;
+};
+export interface Subscriber<T = unknown> {
     name: string;
     eventTypes: readonly string[];
-    handler: (event: GitHubEvent) => Promise<void>;
+    handler: (event: GitHubEvent<T>) => Promise<HandlerResult>;
 }

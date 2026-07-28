@@ -36,6 +36,7 @@ const MAX_COMMENT_LENGTH = COMMENT_TRUNCATION_LENGTH;
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
+    physicalLocation: {
       artifactLocation: { uri: file },
       ...(line ? { region: { startLine: line } } : {}),
     },
@@ -74,7 +75,7 @@ export function renderSarif(report: EngineReport): string {
       rules.set(ruleId, {
         id: ruleId,
         shortDescription: { text: f.comment },
-    const ruleId = `${f.category}:${f.comment.slice(0, COMMENT_TRUNCATION_LENGTH).replace(/[^a-zA-Z0-9]/g, "_")}`;
+      });
     }
     results.push({
       ruleId,

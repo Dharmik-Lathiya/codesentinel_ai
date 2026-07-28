@@ -38,7 +38,7 @@ export class EventBus {
 
   registerAll(subscribers: Subscriber[]): void {
     for (const s of subscribers) this.register(s);
-    if (this.history.length > EventBus.MAX_HISTORY_COUNT) this.history.shift();
+  }
 
   async emit(event: GitHubEvent): Promise<void> {
     this.history.push(event);

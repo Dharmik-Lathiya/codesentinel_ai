@@ -1,16 +1,21 @@
 import { logger } from "./logger.js";
-const DEFAULT_BASE_DELAY_MS = 1000;
-const HTTP_STATUS_429 = "429";
-const HTTP_STATUS_503 = "503";
-const HTTP_STATUS_502 = "502";
+const MS_PER_SECOND = 1000;
+const ONE_SECOND_MS = MS_PER_SECOND;
+const DEFAULT_BASE_DELAY_MS = ONE_SECOND_MS;
+const HTTP_429 = 429;
+const HTTP_503 = 503;
+const HTTP_502 = 502;
+const HTTP_STATUS_RATE_LIMIT = String(HTTP_429);
+const HTTP_STATUS_SERVICE_UNAVAILABLE = String(HTTP_503);
+const HTTP_STATUS_BAD_GATEWAY = String(HTTP_502);
 const DEFAULT_SHOULD_RETRY = (err) => {
     if (err instanceof Error) {
         const msg = err.message.toLowerCase();
         return (msg.includes("rate limit") ||
             msg.includes("rate-limited") ||
-            msg.includes(HTTP_STATUS_429) ||
-            msg.includes(HTTP_STATUS_503) ||
-            msg.includes(HTTP_STATUS_502) ||
+            msg.includes(HTTP_STATUS_RATE_LIMIT) ||
+            msg.includes(HTTP_STATUS_SERVICE_UNAVAILABLE) ||
+            msg.includes(HTTP_STATUS_BAD_GATEWAY) ||
             msg.includes("timeout") ||
             msg.includes("econnreset") ||
             msg.includes("overloaded"));

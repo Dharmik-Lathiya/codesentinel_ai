@@ -1,7 +1,7 @@
 import { logger } from "../utils/logger.js";
-const MAX_CONCURRENCY_LIMIT = 10;
-const MAX_HISTORY_COUNT = 100;
 export class EventBus {
+    static MAX_CONCURRENCY_LIMIT = 10;
+    static MAX_HISTORY_COUNT = 100;
     subscribers = new Map();
     health = new Map();
     history = [];
@@ -10,7 +10,7 @@ export class EventBus {
     maxFailures;
     cooldownMs;
     constructor(opts) {
-        this.maxConcurrency = opts?.maxConcurrency ?? MAX_CONCURRENCY_LIMIT;
+        this.maxConcurrency = opts?.maxConcurrency ?? EventBus.MAX_CONCURRENCY_LIMIT;
         this.subscriberTimeoutMs = opts?.subscriberTimeoutMs ?? 120_000;
         this.maxFailures = opts?.maxFailures ?? 5;
         this.cooldownMs = opts?.cooldownMs ?? 30_000;
@@ -29,7 +29,7 @@ export class EventBus {
     }
     async emit(event) {
         this.history.push(event);
-        if (this.history.length > MAX_HISTORY_COUNT)
+        if (this.history.length > EventBus.MAX_HISTORY_COUNT)
             this.history.shift();
         const matching = Array.from(this.subscribers.values()).filter((s) => s.eventTypes.includes(event.type));
         try {

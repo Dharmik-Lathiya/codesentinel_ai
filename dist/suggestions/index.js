@@ -1,5 +1,5 @@
-// Maximum number of findings to include in a single suggestion comment.
-const MAX_FINDINGS = 10;
+const DEFAULT_MAX_FINDINGS = 10;
+const MAX_FINDINGS = DEFAULT_MAX_FINDINGS;
 /**
  * Format a finding as a GitHub committable suggestion block.
  * GitHub shows "Commit suggestion" button on fenced code blocks with `suggestion` tag.
