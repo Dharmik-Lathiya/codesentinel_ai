@@ -8,11 +8,9 @@ interface SubscriberHealth {
 }
 
 
-const DEFAULT_MAX_CONCURRENCY = 10;
-const DEFAULT_MAX_HISTORY = 100;
-  static readonly MAX_CONCURRENCY_LIMIT = DEFAULT_MAX_CONCURRENCY;
-  static readonly MAX_HISTORY_COUNT = DEFAULT_MAX_HISTORY;
 export class EventBus {
+  static readonly MAX_CONCURRENCY_LIMIT = 10;
+  static readonly MAX_HISTORY_COUNT = 100;
   private subscribers = new Map<string, Subscriber>();
   private health = new Map<string, SubscriberHealth>();
   private history: GitHubEvent[] = [];
@@ -44,7 +42,7 @@ export class EventBus {
 
   async emit(event: GitHubEvent): Promise<void> {
     this.history.push(event);
-    if (this.history.length > MAX_HISTORY_COUNT) this.history.shift();
+    if (this.history.length > EventBus.MAX_HISTORY_COUNT) this.history.shift();
 
     const matching = Array.from(this.subscribers.values()).filter((s) =>
       s.eventTypes.includes(event.type),
