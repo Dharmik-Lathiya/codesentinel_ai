@@ -2,7 +2,7 @@ import type { CompletionRequest, CompletionResult, AIProvider } from "./provider
 import { ProviderUnavailableError } from "./provider.js";
 import type { RuntimeSecrets } from "../config/types.js";
 
-const DEFAULT_ANTHROPIC_MAX_TOKENS = 4096;
+const DEFAULT_ANTHROPIC_MAX_TOKENS = 4 * 1024;
 
 /**
  * Anthropic (Claude) provider. Maps our role-based messages to Anthropic's
