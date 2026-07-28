@@ -3,11 +3,17 @@ import { promisify } from "node:util";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
+const MAX_BUFFER = 64 * 1024 * 1024;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(args: string[], cwd = process.cwd()): Promise<string> {
-  const { stdout } = await exec("git", args, { cwd, maxBuffer: 64 * 1024 * 1024 });
-  return stdout;
+  try {
+    const { stdout } = await exec("git", args, { cwd, maxBuffer: MAX_BUFFER });
+    return stdout;
+  } catch (err) {
+    logger.error(`git command failed: git ${args.join(' ')}`, err);
+    throw err;
+  }
 }
 
 export interface DiffFile {
@@ -30,7 +36,17 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  const baseRef = base || (await defaultBaseRef(cwd));
+  let baseRef: string;
+  if (base) {
+    baseRef = base;
+  } else {
+    try {
+      baseRef = await defaultBaseRef(cwd);
+    } catch (err) {
+      logger.error("Failed to determine default base ref", err);
+      throw err;
+    }
+  }
   let nameStatus: string;
   try {
     nameStatus = await git(
