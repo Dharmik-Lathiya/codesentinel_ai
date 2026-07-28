@@ -774,9 +774,12 @@ export class Engine {
       execSync(`git config user.name "CodeSentinel Bot"`, { cwd: this.root, stdio: "pipe" });
       execSync(`git commit -m "${msg}"`, { cwd: this.root, stdio: "pipe" });
       try {
-        execSync(`git pull --rebase origin ${target} 2>&1`, { cwd: this.root, stdio: "pipe", timeout: 30000 });
+        execSync(`git fetch origin ${target} 2>&1`, { cwd: this.root, stdio: "pipe", timeout: 30000 });
+        execSync(`git rebase origin/${target} 2>&1`, { cwd: this.root, stdio: "pipe", timeout: 30000 });
       } catch {
-        logger.warn(`pushFixes: pull --rebase failed for ${target}, pushing anyway`);
+        logger.warn(`pushFixes: rebase failed for ${target}, will push to fix branch instead`);
+        target = `codesentinel/fix-${Date.now()}`;
+        execSync(`git checkout -b ${target}`, { cwd: this.root, stdio: "pipe" });
       }
       execSync(`git push origin HEAD:${target} --set-upstream`, { cwd: this.root, stdio: "pipe", timeout: 60000 });
       logger.info(`pushFixes: pushed ${files.length} file(s) to ${target}`);
