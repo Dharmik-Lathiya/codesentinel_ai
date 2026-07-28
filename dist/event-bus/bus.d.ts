@@ -5,6 +5,8 @@ interface SubscriberHealth {
     cooldownUntil: number;
 }
 export declare class EventBus {
+    static readonly MAX_CONCURRENCY_LIMIT = 10;
+    static readonly MAX_HISTORY_COUNT = 100;
     private subscribers;
     private health;
     private history;

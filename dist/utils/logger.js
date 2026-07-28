@@ -1,3 +1,4 @@
+/** Base offset value for log level numeric values. */
 const LEVEL_OFFSET = 10;
 const LEVEL_BASE = LEVEL_OFFSET;
 const LEVEL_STEP = LEVEL_OFFSET;
