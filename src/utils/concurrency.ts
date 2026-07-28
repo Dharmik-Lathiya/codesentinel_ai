@@ -6,25 +6,25 @@ export async function concurrentMap<T, R>(
   fn: (item: T, index: number) => Promise<R>,
   concurrency: number = 5,
 ): Promise<R[]> {
+  if (!Array.isArray(items)) throw new TypeError('items must be an array');
+  if (concurrency < 1) throw new Error('concurrency must be >= 1');
   const results: R[] = new Array(items.length);
   let nextIndex = 0;
+  let aborted = false;
 
   async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
+    while (nextIndex < items.length && !aborted) {
       const index = nextIndex++;
       try {
         results[index] = await fn(items[index], index);
       } catch (error) {
-        throw error; // rethrow to propagate failure
+        aborted = true;
+        throw error;
       }
     }
   }
 
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
-  try {
-    await Promise.all(workers);
-  } catch (error) {
-    throw error; // rethrow to propagate failure
-  }
+  await Promise.all(workers);
   return results;
 }
