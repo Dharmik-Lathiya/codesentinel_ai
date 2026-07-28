@@ -61,7 +61,7 @@ const WORKFLOW_CONTENT = [
   "",
   "      - name: Get PR info (PR comments only)",
   "        id: pr",
-  "        if: steps.is_pr.outputs.value == 'true'",
+"        if: steps.is_pr.outputs.value === 'true'",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
@@ -73,7 +73,7 @@ const WORKFLOW_CONTENT = [
   "            core.setOutput('head_sha', pr.head.sha);",
   "",
   "      - name: Checkout PR (PR comments only)",
-  "        if: steps.is_pr.outputs.value == 'true'",
+"        if: steps.is_pr.outputs.value === 'true'",
   "        uses: actions/checkout@v4",
   "        with:",
   "          ref: ${{ steps.pr.outputs.head_sha }}",
@@ -283,9 +283,14 @@ function runSetup(): void {
 }
 
 function showHelp(): void {
-  const pkg = JSON.parse(
-    readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-  );
+  let pkg;
+  try {
+    pkg = JSON.parse(
+      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
+    );
+  } catch {
+    pkg = { version: "unknown" };
+  }
   process.stdout.write(`CodeSentinel AI v${pkg.version}
 AI-powered code review, fix, audit, scoring, and test generation.
 
@@ -358,9 +363,14 @@ Examples:
 }
 
 function showVersion(): void {
-  const pkg = JSON.parse(
-    readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-  );
+  let pkg;
+  try {
+    pkg = JSON.parse(
+      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
+    );
+  } catch {
+    pkg = { version: "unknown" };
+  }
   process.stdout.write(`${pkg.version}\n`);
 }
 
@@ -603,7 +613,7 @@ async function main(): Promise<void> {
   if (values.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
-      process.exit(1);
+    throw new Error("Gate check failed");
     }
     return;
   }
