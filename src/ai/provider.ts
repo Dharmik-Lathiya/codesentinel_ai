@@ -14,6 +14,7 @@ export interface CompletionRequest {
   /** Lower temperature for deterministic analysis tasks. */
   temperature?: number;
   maxTokens?: number;
+  responseFormat?: "json_object";
 }
 
 /** Normalized completion result. */

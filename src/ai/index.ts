@@ -74,7 +74,7 @@ export class AIHub {
   async complete(
     task: TaskName,
     messages: CompletionRequest["messages"],
-    opts: { temperature?: number; maxTokens?: number } = {},
+    opts: { temperature?: number; maxTokens?: number; responseFormat?: "json_object" } = {},
   ): Promise<CompletionResult> {
     const model = this.modelForTask(task);
     const provider = this.providerFor(model);
@@ -86,6 +86,7 @@ export class AIHub {
         messages,
         temperature: opts.temperature,
         maxTokens,
+        responseFormat: opts.responseFormat,
       }),
     );
   }

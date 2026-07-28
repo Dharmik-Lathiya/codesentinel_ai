@@ -2,10 +2,17 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { logger } from "./logger.js";
 const exec = promisify(execFile);
+const MAX_BUFFER = 64 * 1024 * 1024;
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(args, cwd = process.cwd()) {
-    const { stdout } = await exec("git", args, { cwd, maxBuffer: 64 * 1024 * 1024 });
-    return stdout;
+    try {
+        const { stdout } = await exec("git", args, { cwd, maxBuffer: MAX_BUFFER });
+        return stdout;
+    }
+    catch (err) {
+        logger.error(`git command failed: git ${args.join(' ')}`, err);
+        throw err;
+    }
 }
 /**
  * Collect the changed files for the current PR/branch relative to a base ref.
@@ -13,7 +20,19 @@ export async function git(args, cwd = process.cwd()) {
  * upstream branch is configured.
  */
 export async function collectDiff(base, cwd = process.cwd()) {
-    const baseRef = base || (await defaultBaseRef(cwd));
+    let baseRef;
+    if (base) {
+        baseRef = base;
+    }
+    else {
+        try {
+            baseRef = await defaultBaseRef(cwd);
+        }
+        catch (err) {
+            logger.error("Failed to determine default base ref", err);
+            throw err;
+        }
+    }
     let nameStatus;
     try {
         nameStatus = await git(["diff", "--name-status", "--no-renames", baseRef + "..."], cwd);
@@ -77,6 +96,7 @@ async function refExists(ref, cwd) {
         return true;
     }
     catch {
+        logger.debug(`Ref ${ref} does not exist`);
         return false;
     }
 }

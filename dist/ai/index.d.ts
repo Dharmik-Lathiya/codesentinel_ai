@@ -21,5 +21,6 @@ export declare class AIHub {
     complete(task: TaskName, messages: CompletionRequest["messages"], opts?: {
         temperature?: number;
         maxTokens?: number;
+        responseFormat?: "json_object";
     }): Promise<CompletionResult>;
 }

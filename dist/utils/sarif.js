@@ -6,7 +6,6 @@ const SEVERITY_MAP = {
     info: "note",
 };
 const COMMENT_TRUNCATION_LENGTH = 40;
-const MAX_COMMENT_LENGTH = COMMENT_TRUNCATION_LENGTH;
 function createSarifLocation(file, line) {
     return {
         physicalLocation: {
@@ -34,7 +33,7 @@ export function renderSarif(report) {
     const rules = new Map();
     const results = [];
     for (const f of report.findings) {
-        const ruleId = `${f.category}:${f.comment.slice(0, MAX_COMMENT_LENGTH).replace(/[^a-zA-Z0-9]/g, "_")}`;
+        const ruleId = `${f.category}:${f.comment.slice(0, COMMENT_TRUNCATION_LENGTH).replace(/[^a-zA-Z0-9]/g, "_")}`;
         if (!rules.has(ruleId)) {
             rules.set(ruleId, {
                 id: ruleId,

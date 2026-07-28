@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { logger } from "./logger.js";
 /** Convert a glob pattern (subset) into a RegExp. Supports **, *, ?, {a,b}. */
 export function globToRegExp(glob) {
     let re = "";
@@ -60,6 +61,7 @@ export function walk(root) {
             entries = readdirSync(dir);
         }
         catch {
+            logger.debug(`Cannot read directory ${dir}`);
             continue;
         }
         for (const entry of entries) {
@@ -71,6 +73,7 @@ export function walk(root) {
                 st = statSync(full);
             }
             catch {
+                logger.debug(`Cannot stat ${full}`);
                 continue;
             }
             if (st.isDirectory())
@@ -94,6 +97,7 @@ export function readIgnoreFile(root) {
             .filter((l) => l.length > 0 && !l.startsWith("#"));
     }
     catch {
+        logger.debug("Cannot read .codesentinelignore");
         return [];
     }
 }
@@ -119,6 +123,7 @@ export function readText(path) {
         return readFileSync(path, "utf8");
     }
     catch {
+        logger.debug(`Cannot read ${path}`);
         return "";
     }
 }

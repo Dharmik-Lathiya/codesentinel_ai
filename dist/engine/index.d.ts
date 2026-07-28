@@ -47,6 +47,8 @@ export interface EngineReport {
         filesAnalyzed: number;
         findingsBySeverity: Record<string, number>;
         durationMs: number;
+        truncatedResponses?: number;
+        repairedResponses?: number;
     };
 }
 /**
@@ -56,6 +58,7 @@ export interface EngineReport {
  * comments/tests. Fix-mode uses a loop bounded by `max_iterations`.
  */
 export declare class Engine {
+    #private;
     private secrets;
     private root;
     /** Optional AI override (used in tests to avoid network calls). */
@@ -73,6 +76,10 @@ export declare class Engine {
     private readonly learning;
     private readonly eventBus;
     private aiAvailable;
+    /** Count of AI responses that were truncated (unterminated JSON). */
+    private truncatedCount;
+    /** Count of truncated responses successfully repaired via extractJson. */
+    private repairedCount;
     constructor(config: CodeSentinelConfig, secrets: RuntimeSecrets, root?: string, 
     /** Optional AI override (used in tests to avoid network calls). */
     aiOverride?: Pick<AIHub, "complete" | "modelForTask"> | undefined);
@@ -104,6 +111,11 @@ export declare class Engine {
     private collectedFiles;
     private analyzeFiles;
     private runReview;
+    /**
+     * Create a deep copy of the file list with secrets redacted from `content`
+     * before sending to the AI provider. Never mutates files on disk.
+     */
+    private redactFilesForAI;
     /** Ask the AI model to review each changed file (cached per file). */
     private aiReview;
     /** Record recurring patterns and auto-create rules. */

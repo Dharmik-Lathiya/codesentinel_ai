@@ -29,7 +29,8 @@ export class OpenCodeProvider {
                     model: req.model.model,
                     messages: req.messages,
                     temperature: req.temperature ?? 0.2,
-                    max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+                    max_tokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_TOKENS,
+                    ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
                 }),
             });
         }

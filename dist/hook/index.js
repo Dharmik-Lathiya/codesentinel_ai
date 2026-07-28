@@ -1,6 +1,6 @@
 import { writeFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
-const DEFAULT_MAX_HIGH = 10;
+const DEFAULT_HIGH_SCORE_LIMIT = 10;
 const DEFAULT_MAX_ITERATIONS = 5;
 const PRE_COMMIT_SCRIPT = `#!/bin/sh
 # CodeSentinel AI — pre-commit hook
@@ -20,7 +20,7 @@ fi
 
 # Run CodeSentinel gate on staged files
 if command -v codesentinel &> /dev/null; then
-  codesentinel gate --min-score 0 --max-critical 0 --max-high ${DEFAULT_MAX_HIGH}
+  codesentinel gate --min-score 0 --max-critical 0 --max-high ${DEFAULT_HIGH_SCORE_LIMIT}
   GATE_EXIT=$?
   if [ $GATE_EXIT -ne 0 ]; then
     echo "❌ CodeSentinel: Gate check failed. Fix issues before committing."

@@ -40,7 +40,7 @@ export class GeminiProvider {
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
                 generationConfig: {
                     temperature: req.temperature ?? 0.2,
-                    maxOutputTokens: req.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+                    maxOutputTokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
                 },
             });
         }
