@@ -53,19 +53,7 @@ Suggestion: {{suggestion}}
 
 ## Output Format
 
-Return a Markdown explanation of the fix followed by a structured JSON block.
-
-### Markdown Section
-
-## Fix Report
-
-**Issue:** {{severity}} — {{comment}}
-
-**Change:** [exactly what you changed and why]
-
-**Verification:** [does the fix resolve the issue? any edge cases?]
-
-### JSON Section
+Output ONLY a single JSON block with no other text:
 
 ```json
 {
@@ -91,4 +79,4 @@ Return a Markdown explanation of the fix followed by a structured JSON block.
 - Do NOT add comments unless they explain the fix itself
 - Preserve all imports — only add new ones if required by the fix
 - If the fix requires changes in other files, set `fixed: false` and note what other files need changes
-- Output BOTH sections — Markdown first, then the JSON code block
+- Output ONLY valid JSON — no markdown, no explanations, no extra text
