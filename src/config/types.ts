@@ -19,6 +19,8 @@ export type TestRunner = "jest" | "vitest";
 export interface ModelConfig {
   provider: Provider;
   model: string;
+  /** Max output tokens. Defaults to 4096 if unset. */
+  maxTokens?: number;
 }
 
 /** A single categorization of a finding produced by the analyzer/AI. */
