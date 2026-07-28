@@ -1,14 +1,9 @@
 import { logger } from "./logger.js";
 
-const MS_PER_SECOND = 1000;
-const ONE_SECOND_MS = MS_PER_SECOND;
-const DEFAULT_BASE_DELAY_MS = ONE_SECOND_MS;
-const HTTP_429 = 429;
-const HTTP_503 = 503;
-const HTTP_502 = 502;
-const HTTP_STATUS_RATE_LIMIT = String(HTTP_429);
-const HTTP_STATUS_SERVICE_UNAVAILABLE = String(HTTP_503);
-const HTTP_STATUS_BAD_GATEWAY = String(HTTP_502);
+const DEFAULT_BASE_DELAY_MS = 1000;
+const HTTP_STATUS_RATE_LIMIT = "429";
+const HTTP_STATUS_SERVICE_UNAVAILABLE = "503";
+const HTTP_STATUS_BAD_GATEWAY = "502";
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
