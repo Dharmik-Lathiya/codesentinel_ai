@@ -2,8 +2,8 @@ import { connectDb, type DbAdapter } from "./db.js";
 import { SCHEMA_SQL, generateId } from "./schema.js";
 import { logger } from "../utils/logger.js";
 
-const DEFAULT_FINDINGS_LIMIT = 100;
-const MAX_RELEVANT_LESSONS = 10;
+export const DEFAULT_FINDINGS_LIMIT = 100;
+export const MAX_RELEVANT_LESSONS = 10;
 
 export interface FindingRecord {
   id: string;
@@ -132,14 +132,18 @@ export class LearningStore {
       if (existing) {
         await this.db!.run("UPDATE patterns SET frequency = frequency + 1, updated_at = datetime('now') WHERE id = ?", [existing.id]);
       } else {
-        await this.db!.run(
-          "INSERT INTO patterns (id, pattern_text, category) VALUES (?, ?, ?)",
-          [generateId(), patternText, category],
-        );
+        await this.insertPatternRecord(patternText, category);
       }
     } catch (err) {
       logger.warn(`recordPattern failed: ${err}`);
     }
+  }
+
+  private async insertPatternRecord(patternText: string, category: string): Promise<void> {
+    await this.db!.run(
+      "INSERT INTO patterns (id, pattern_text, category) VALUES (?, ?, ?)",
+      [generateId(), patternText, category],
+    );
   }
 
   async getPendingRules(): Promise<CustomRuleRecord[]> {
