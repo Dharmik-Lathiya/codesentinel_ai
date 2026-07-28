@@ -8,15 +8,11 @@ interface ScannerTool {
   run(root: string): Finding[];
 }
 
-const BYTES_PER_KB = 1024;
-const ONE_KB = BYTES_PER_KB;
+const ONE_KB = 1024;
 const ONE_MB = ONE_KB * ONE_KB;
-const DEFAULT_MAX_BUFFER_MB_VALUE = 10;
-const MAX_BUFFER_MB = DEFAULT_MAX_BUFFER_MB_VALUE;
+const MAX_BUFFER_MB = 10;
 const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
-const DEFAULT_SNIPPET_LENGTH_VALUE = 80;
-const DEFAULT_SNIPPET_LENGTH = DEFAULT_SNIPPET_LENGTH_VALUE;
-const SNIPPET_LENGTH = DEFAULT_SNIPPET_LENGTH;
+const SNIPPET_LENGTH = 80;
 
 function parseTrufflehogLine(line: string): Finding | null {
   try {
