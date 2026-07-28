@@ -7,9 +7,9 @@ interface SubscriberHealth {
   cooldownUntil: number;
 }
 
-const MAX_CONCURRENCY_LIMIT = 10;
-const MAX_HISTORY_COUNT = 100;
 
+  static readonly MAX_CONCURRENCY_LIMIT = 10;
+  static readonly MAX_HISTORY_COUNT = 100;
 export class EventBus {
   private subscribers = new Map<string, Subscriber>();
   private health = new Map<string, SubscriberHealth>();
@@ -20,7 +20,7 @@ export class EventBus {
   private readonly cooldownMs: number;
 
   constructor(opts?: { maxConcurrency?: number; subscriberTimeoutMs?: number; maxFailures?: number; cooldownMs?: number }) {
-    this.maxConcurrency = opts?.maxConcurrency ?? MAX_CONCURRENCY_LIMIT;
+    this.maxConcurrency = opts?.maxConcurrency ?? EventBus.MAX_CONCURRENCY_LIMIT;
     this.subscriberTimeoutMs = opts?.subscriberTimeoutMs ?? 120_000;
     this.maxFailures = opts?.maxFailures ?? 5;
     this.cooldownMs = opts?.cooldownMs ?? 30_000;
@@ -38,7 +38,7 @@ export class EventBus {
 
   registerAll(subscribers: Subscriber[]): void {
     for (const s of subscribers) this.register(s);
-  }
+    if (this.history.length > EventBus.MAX_HISTORY_COUNT) this.history.shift();
 
   async emit(event: GitHubEvent): Promise<void> {
     this.history.push(event);
