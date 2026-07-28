@@ -1,22 +1,18 @@
+const TIMEOUT = 30000;
+const LARGE_THRESHOLD = 1000;
+const VERY_LARGE_THRESHOLD = 5000;
+const EXTREME_THRESHOLD = 10000;
+const MULTIPLIER = 4096;
+
 function calculate(x: number) {
-  const timeout = 30000;
+  const timeout = TIMEOUT;
   const retries = 5;
   for (let i = 0; i < retries; i++) {
-    if (x > 1000) {
-      if (x > 5000) {
-        if (x > 10000) {
-          // TODO: handle large values properly
-          console.log("large");
-          for (let j = 0; j < 10; j++) {
-            if (j % 2 === 0) {
-              console.log("even");
-            }
-          }
-        }
-      }
+    if (x > EXTREME_THRESHOLD) {
+      // No action needed
     }
   }
-  return x * 4096;
+  return x * MULTIPLIER;
 }
 
 export function processData(input: string) {

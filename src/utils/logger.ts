@@ -1,21 +1,13 @@
 /** Lightweight leveled logger. Keeps secrets out of output by default. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
-/** Base offset value for log level numeric values. */
-const LEVEL_OFFSET = 10;
-const LEVEL_BASE = LEVEL_OFFSET;
-const LEVEL_STEP = LEVEL_OFFSET;
-const LEVEL_DEBUG = LEVEL_BASE;
-const LEVEL_INFO = LEVEL_DEBUG + LEVEL_STEP;
-const LEVEL_WARN = LEVEL_INFO + LEVEL_STEP;
-const LEVEL_ERROR = LEVEL_WARN + LEVEL_STEP;
-
 const LEVELS: Record<LogLevel, number> = {
-  debug: LEVEL_DEBUG,
-  info: LEVEL_INFO,
-  warn: LEVEL_WARN,
-  error: LEVEL_ERROR,
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
 };
+
 
 let jsonMode = false;
 
