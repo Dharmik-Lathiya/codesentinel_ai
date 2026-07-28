@@ -1,3 +1,5 @@
+// Maximum number of findings to include in a single suggestion comment.
+const MAX_FINDINGS = 10;
 /**
  * Format a finding as a GitHub committable suggestion block.
  * GitHub shows "Commit suggestion" button on fenced code blocks with `suggestion` tag.
@@ -13,7 +15,7 @@ export function formatSuggestion(finding, originalCode, suggestedCode) {
  */
 export function buildSuggestionsComment(findings, fileContents) {
     const parts = ["### CodeSentinel — Suggested Fixes\n"];
-    for (const f of findings.slice(0, 10)) {
+    for (const f of findings.slice(0, MAX_FINDINGS)) {
         const content = fileContents.get(f.file) ?? "";
         const lines = content.split("\n");
         if (f.line && f.line > 0 && f.line <= lines.length) {
@@ -22,7 +24,7 @@ export function buildSuggestionsComment(findings, fileContents) {
             const context = ctxBefore ? ctxBefore + "\n" : "";
             const after = ctxAfter ? "\n" + ctxAfter : "";
             const suggested = f.suggestion?.replace(/^```[\s\S]*?\n/gm, "").replace(/```$/gm, "").trim() ?? "";
-            const code = suggested || `${context}  // FIXME: ${f.comment}\n${after}`;
+            const code = suggested || `${context}  // ${f.comment}\n${after}`;
             parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
         }
     }

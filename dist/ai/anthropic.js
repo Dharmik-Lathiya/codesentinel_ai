@@ -1,5 +1,5 @@
 import { ProviderUnavailableError } from "./provider.js";
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_ANTHROPIC_MAX_TOKENS = 4096;
 /**
  * Anthropic (Claude) provider. Maps our role-based messages to Anthropic's
  * `user`/`assistant` roles (system is a top-level field).
@@ -57,7 +57,7 @@ export class AnthropicProvider {
                 system,
                 messages,
                 temperature: req.temperature ?? 0.2,
-                max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+                max_tokens: req.maxTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
             });
         }
         catch (err) {

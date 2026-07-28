@@ -1,4 +1,4 @@
-const MAX_SCORE = 100;
+export const MAX_SCORE = 100;
 export function evaluateGate(findings, score, config) {
     const critical = findings.filter((f) => f.severity === "critical");
     const high = findings.filter((f) => f.severity === "high");

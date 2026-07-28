@@ -15,8 +15,7 @@ export function context7Server(apiKey?: string): MCPServerConfig {
   return {
     name: "context7",
     type: "local",
-    command: "npx",
-    args: ["-y", "--quiet", "@upstash/context7-mcp"],
+    command: ["npx", "-y", "--quiet", "@upstash/context7-mcp"],
     environment: Object.keys(env).length ? env : undefined,
     timeoutMs: CONTEXT7_SERVER_TIMEOUT_MS,
   };
@@ -28,8 +27,7 @@ export function githubMCPServer(token?: string): MCPServerConfig {
   return {
     name: "github",
     type: "local",
-    command: "npx",
-    args: ["-y", "--quiet", "@github/github-mcp-server"],
+    command: ["npx", "-y", "--quiet", "@github/github-mcp-server"],
     environment: Object.keys(env).length ? env : undefined,
     timeoutMs: GITHUB_TIMEOUT_MS,
   };

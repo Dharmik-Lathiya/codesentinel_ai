@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-const MAX_RULE_ID_COMMENT_LENGTH = 40;
+const MAX_RULE_ID_COMMENT_LENGTH = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".length;
 export class DismissalManager {
     filePath;
     dismissals = [];

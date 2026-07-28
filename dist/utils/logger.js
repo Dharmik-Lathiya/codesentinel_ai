@@ -1,12 +1,15 @@
-const DEBUG_LEVEL = 10;
-const INFO_LEVEL = 20;
-const WARN_LEVEL = 30;
-const ERROR_LEVEL = 40;
+const LEVEL_OFFSET = 10;
+const LEVEL_BASE = LEVEL_OFFSET;
+const LEVEL_STEP = LEVEL_OFFSET;
+const LEVEL_DEBUG = LEVEL_BASE;
+const LEVEL_INFO = LEVEL_DEBUG + LEVEL_STEP;
+const LEVEL_WARN = LEVEL_INFO + LEVEL_STEP;
+const LEVEL_ERROR = LEVEL_WARN + LEVEL_STEP;
 const LEVELS = {
-    debug: DEBUG_LEVEL,
-    info: INFO_LEVEL,
-    warn: WARN_LEVEL,
-    error: ERROR_LEVEL,
+    debug: LEVEL_DEBUG,
+    info: LEVEL_INFO,
+    warn: LEVEL_WARN,
+    error: LEVEL_ERROR,
 };
 let jsonMode = false;
 export class Logger {
@@ -31,8 +34,6 @@ export class Logger {
                 console.warn(entry);
             else if (level === "info")
                 console.info(entry);
-            else
-                console.debug(entry);
             return;
         }
         const prefix = `[codesentinel:${level}]`;
@@ -42,8 +43,6 @@ export class Logger {
             console.warn(prefix, ...args);
         else if (level === "info")
             console.info(prefix, ...args);
-        else
-            console.debug(prefix, ...args);
     }
     debug(...args) {
         this.emit("debug", args);

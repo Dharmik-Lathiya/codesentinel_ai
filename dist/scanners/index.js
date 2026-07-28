@@ -1,7 +1,11 @@
 import { execSync } from "node:child_process";
 import { logger } from "../utils/logger.js";
-const MAX_BUFFER = 10 * 1024 * 1024;
-const SNIPPET_LENGTH = 80;
+const ONE_KB = 1024;
+const ONE_MB = ONE_KB * ONE_KB;
+const MAX_BUFFER_MB = 10;
+const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
+const DEFAULT_SNIPPET_LENGTH = 80;
+const SNIPPET_LENGTH = DEFAULT_SNIPPET_LENGTH;
 function parseTrufflehogLine(line) {
     try {
         const r = JSON.parse(line);

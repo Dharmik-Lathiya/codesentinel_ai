@@ -1,6 +1,7 @@
 import { writeFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
-const DEFAULT_MAX_HIGH = 10;
+const MAX_HIGH_DEFAULT = 10;
+const DEFAULT_MAX_HIGH = MAX_HIGH_DEFAULT;
 const DEFAULT_MAX_ITERATIONS = 5;
 const PRE_COMMIT_SCRIPT = `#!/bin/sh
 # CodeSentinel AI — pre-commit hook

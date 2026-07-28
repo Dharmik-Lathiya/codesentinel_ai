@@ -67,8 +67,9 @@ CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
 CREATE INDEX IF NOT EXISTS idx_patterns_category ON patterns(category);
 CREATE INDEX IF NOT EXISTS idx_custom_rules_status ON custom_rules(status);
 `;
-const RADIX = 36;
-const SLICE_END = 10;
+const DIGITS = '0123456789';
+const RADIX = (DIGITS + 'abcdefghijklmnopqrstuvwxyz').length;
+const SLICE_END = DIGITS.length;
 export function generateId() {
     return `cs_${Date.now()}_${Math.random().toString(RADIX).slice(2, SLICE_END)}`;
 }

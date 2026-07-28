@@ -5,7 +5,8 @@ const SEVERITY_MAP = {
     low: "note",
     info: "note",
 };
-const MAX_COMMENT_LENGTH = 40;
+const COMMENT_TRUNCATION_LENGTH = 40;
+const MAX_COMMENT_LENGTH = COMMENT_TRUNCATION_LENGTH;
 function createSarifLocation(file, line) {
     return {
         physicalLocation: {
@@ -19,6 +20,14 @@ function createToolDriver(rules) {
         name: "CodeSentinel AI",
         version: "0.1.6",
         rules: [...rules.values()],
+    };
+}
+function createSarifRun(rules, results) {
+    return {
+        tool: {
+            driver: createToolDriver(rules),
+        },
+        results,
     };
 }
 export function renderSarif(report) {
@@ -42,14 +51,7 @@ export function renderSarif(report) {
     const sarif = {
         $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
         version: "2.1.0",
-        runs: [
-            {
-                tool: {
-                    driver: createToolDriver(rules),
-                },
-                results,
-            },
-        ],
+        runs: [createSarifRun(rules, results)],
     };
     return JSON.stringify(sarif, null, 2);
 }

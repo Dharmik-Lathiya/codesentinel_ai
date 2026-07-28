@@ -1,5 +1,10 @@
 import { z } from "zod";
 export declare const SeveritySchema: z.ZodEnum<["info", "low", "medium", "high", "critical"]>;
+export declare const MAX_SUMMARY_LENGTH = 2000;
+export declare const MAX_TITLE_LENGTH = 200;
+export declare const MAX_DESCRIPTION_LENGTH = 1000;
+export declare const MAX_MESSAGE_LENGTH = 1000;
+export declare const MAX_SUGGESTION_LENGTH = 2000;
 export declare const SummaryEntrySchema: z.ZodObject<{
     type: z.ZodLiteral<"summary">;
     summary: z.ZodString;
@@ -36,7 +41,7 @@ export declare const StrengthEntrySchema: z.ZodObject<{
 export declare const IssueEntrySchema: z.ZodObject<{
     type: z.ZodLiteral<"issue">;
     severity: z.ZodEnum<["info", "low", "medium", "high", "critical"]>;
-    category: z.ZodEnum<["bug", "security", "performance", "smell", "style"]>;
+    category: z.ZodEnum<["bug", "security", "performance", "smell", "style", "reliability", "architecture", "testing", "praise"]>;
     file: z.ZodString;
     line: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
     message: z.ZodString;
@@ -45,7 +50,7 @@ export declare const IssueEntrySchema: z.ZodObject<{
     message: string;
     type: "issue";
     severity: "info" | "low" | "medium" | "high" | "critical";
-    category: "bug" | "security" | "performance" | "smell" | "style";
+    category: "bug" | "security" | "performance" | "smell" | "style" | "praise" | "reliability" | "architecture" | "testing";
     file: string;
     suggestion?: string | undefined;
     line?: number | null | undefined;
@@ -53,7 +58,7 @@ export declare const IssueEntrySchema: z.ZodObject<{
     message: string;
     type: "issue";
     severity: "info" | "low" | "medium" | "high" | "critical";
-    category: "bug" | "security" | "performance" | "smell" | "style";
+    category: "bug" | "security" | "performance" | "smell" | "style" | "praise" | "reliability" | "architecture" | "testing";
     file: string;
     suggestion?: string | undefined;
     line?: number | null | undefined;
@@ -91,7 +96,7 @@ export declare const ReviewEntrySchema: z.ZodDiscriminatedUnion<"type", [z.ZodOb
 }>, z.ZodObject<{
     type: z.ZodLiteral<"issue">;
     severity: z.ZodEnum<["info", "low", "medium", "high", "critical"]>;
-    category: z.ZodEnum<["bug", "security", "performance", "smell", "style"]>;
+    category: z.ZodEnum<["bug", "security", "performance", "smell", "style", "reliability", "architecture", "testing", "praise"]>;
     file: z.ZodString;
     line: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
     message: z.ZodString;
@@ -100,7 +105,7 @@ export declare const ReviewEntrySchema: z.ZodDiscriminatedUnion<"type", [z.ZodOb
     message: string;
     type: "issue";
     severity: "info" | "low" | "medium" | "high" | "critical";
-    category: "bug" | "security" | "performance" | "smell" | "style";
+    category: "bug" | "security" | "performance" | "smell" | "style" | "praise" | "reliability" | "architecture" | "testing";
     file: string;
     suggestion?: string | undefined;
     line?: number | null | undefined;
@@ -108,7 +113,7 @@ export declare const ReviewEntrySchema: z.ZodDiscriminatedUnion<"type", [z.ZodOb
     message: string;
     type: "issue";
     severity: "info" | "low" | "medium" | "high" | "critical";
-    category: "bug" | "security" | "performance" | "smell" | "style";
+    category: "bug" | "security" | "performance" | "smell" | "style" | "praise" | "reliability" | "architecture" | "testing";
     file: string;
     suggestion?: string | undefined;
     line?: number | null | undefined;
