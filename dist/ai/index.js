@@ -56,12 +56,14 @@ export class AIHub {
     async complete(task, messages, opts = {}) {
         const model = this.modelForTask(task);
         const provider = this.providerFor(model);
-        logger.info(`AIHub.complete: task=${task} provider=${provider.name} model=${model.model}`);
+        const maxTokens = opts.maxTokens ?? model.maxTokens;
+        logger.info(`AIHub.complete: task=${task} provider=${provider.name} model=${model.model} maxTokens=${maxTokens}`);
         return retry(() => provider.complete({
             model,
             messages,
             temperature: opts.temperature,
-            maxTokens: opts.maxTokens,
+            maxTokens,
+            responseFormat: opts.responseFormat,
         }));
     }
 }

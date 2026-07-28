@@ -15,6 +15,8 @@ export type TestRunner = "jest" | "vitest";
 export interface ModelConfig {
     provider: Provider;
     model: string;
+    /** Max output tokens. Defaults to 4096 if unset. */
+    maxTokens?: number;
 }
 /** A single categorization of a finding produced by the analyzer/AI. */
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
@@ -215,7 +217,7 @@ export interface LinterConfig {
 }
 /** Quality gate threshold configuration. */
 export interface GateConfig {
-    /** Minimum overall score (0-100) required to pass. */
+    /** Minimum overall score (0-{@link MAX_GATE_SCORE}) required to pass. */
     minScore: number;
     /** Maximum number of critical findings allowed. */
     maxCritical: number;
@@ -226,6 +228,7 @@ export interface GateConfig {
     /** Fail on any bug findings. */
     blockOnBugs: boolean;
 }
+export declare const MAX_GATE_SCORE = 100;
 /** Strategy for blending AI security scores with static baseline. */
 export type SecurityBlendStrategy = "min" | "avg" | "static-only";
 /** Secret scanning pattern configuration. */

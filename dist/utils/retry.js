@@ -1,13 +1,12 @@
 import { logger } from "./logger.js";
-const MS_PER_SECOND = 1000;
-const ONE_SECOND_MS = MS_PER_SECOND;
-const DEFAULT_BASE_DELAY_MS = ONE_SECOND_MS;
-const HTTP_429 = 429;
-const HTTP_503 = 503;
-const HTTP_502 = 502;
-const HTTP_STATUS_RATE_LIMIT = String(HTTP_429);
-const HTTP_STATUS_SERVICE_UNAVAILABLE = String(HTTP_503);
-const HTTP_STATUS_BAD_GATEWAY = String(HTTP_502);
+const MILLISECONDS_PER_SECOND = 1000;
+const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
+const HTTP_STATUS_429 = "429";
+const HTTP_STATUS_RATE_LIMIT = HTTP_STATUS_429;
+const HTTP_STATUS_503 = "503";
+const HTTP_STATUS_SERVICE_UNAVAILABLE = HTTP_STATUS_503;
+const HTTP_STATUS_502 = "502";
+const HTTP_STATUS_BAD_GATEWAY = HTTP_STATUS_502;
 const DEFAULT_SHOULD_RETRY = (err) => {
     if (err instanceof Error) {
         const msg = err.message.toLowerCase();

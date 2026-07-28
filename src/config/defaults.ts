@@ -120,7 +120,7 @@ export const DEFAULT_MCP_CONFIG: MCPConfig = {
 
 export const DEFAULT_BATCH_CONFIG: BatchConfig = {
   enabled: true,
-  batchSize: 5,
+  batchSize: 2,
   maxFilesPerBatch: 5,
   maxLinesPerFile: 500,
 };
@@ -143,7 +143,7 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   default_model: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
   models: {
     review: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },
-    fix: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
+    fix: { provider: "opencode", model: "gpt-4o-mini", maxTokens: 4096 },
     audit: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
     score: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
     testgen: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },

@@ -16,9 +16,12 @@ export declare class MCPManager {
     private configs;
     constructor(configs?: MCPServerConfig[]);
     connectAll(): Promise<void>;
+    private createTransport;
     connect(cfg: MCPServerConfig): Promise<void>;
     disconnectAll(): Promise<void>;
+    private queryClientTools;
     queryContext(prompt: string, maxTokens?: number): Promise<MCPContextEntry[]>;
+    private getClientLibraryDocs;
     getLibraryDocs(libraries: string[], maxTokens?: number): Promise<MCPContextEntry[]>;
     private trimByBudget;
 }

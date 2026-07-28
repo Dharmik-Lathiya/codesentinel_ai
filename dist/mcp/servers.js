@@ -4,44 +4,28 @@ const GITHUB_TIMEOUT_SECONDS = 15;
 const CONTEXT7_SERVER_TIMEOUT_MS = CONTEXT7_TIMEOUT_SECONDS * MILLISECONDS_PER_SECOND;
 const GITHUB_TIMEOUT_MS = GITHUB_TIMEOUT_SECONDS * MILLISECONDS_PER_SECOND;
 export function context7Server(apiKey) {
-    const env = {};
-    if (apiKey)
-        env.CONTEXT7_API_KEY = apiKey;
     return {
         name: "context7",
         type: "local",
         command: ["npx", "-y", "--quiet", "@upstash/context7-mcp"],
-        environment: Object.keys(env).length ? env : undefined,
+        environment: apiKey ? { CONTEXT7_API_KEY: apiKey } : undefined,
         timeoutMs: CONTEXT7_SERVER_TIMEOUT_MS,
     };
 }
 export function githubMCPServer(token) {
-    const env = {};
-    if (token)
-        env.GITHUB_TOKEN = token;
     return {
         name: "github",
         type: "local",
         command: ["npx", "-y", "--quiet", "@github/github-mcp-server"],
-        environment: Object.keys(env).length ? env : undefined,
+        environment: token ? { GITHUB_TOKEN: token } : undefined,
         timeoutMs: GITHUB_TIMEOUT_MS,
     };
 }
 export function getDefaultMCPServers(token, context7Key) {
     const servers = [];
-    try {
-        servers.push(context7Server(context7Key));
-    }
-    catch (e) {
-        console.error("Failed to add context7 server:", e);
-    }
-    if (token !== undefined) {
-        try {
-            servers.push(githubMCPServer(token));
-        }
-        catch (e) {
-            console.error("Failed to add GitHub server:", e);
-        }
+    servers.push(context7Server(context7Key));
+    if (token) {
+        servers.push(githubMCPServer(token));
     }
     return servers;
 }

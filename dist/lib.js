@@ -4,6 +4,7 @@ export { loadConfig, configFromInputs } from "./config/index.js";
 export { DEFAULT_CONFIG, mergeConfig } from "./config/defaults.js";
 export { extractJson, ProviderUnavailableError } from "./ai/provider.js";
 export { AIHub } from "./ai/index.js";
+export { scanSecrets, redactSecrets } from "./secrets/index.js";
 export { renderHtmlReport } from "./utils/html-report.js";
 export { renderSarif } from "./utils/sarif.js";
 export { concurrentMap } from "./utils/concurrency.js";

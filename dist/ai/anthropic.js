@@ -58,7 +58,7 @@ export class AnthropicProvider {
                 system,
                 messages,
                 temperature: req.temperature ?? 0.2,
-                max_tokens: req.maxTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
+                max_tokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
             });
         }
         catch (err) {

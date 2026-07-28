@@ -49,7 +49,15 @@ async function connectSqlite(url) {
     db.pragma("journal_mode = WAL");
     const closeDb = () => { db.close(); };
     return {
-        run: (sql, params) => { db.prepare(sql).run(...(params ?? [])); return Promise.resolve(); },
+        run: (sql, params) => {
+            if (params && params.length > 0) {
+                db.prepare(sql).run(...params);
+            }
+            else {
+                db.exec(sql);
+            }
+            return Promise.resolve();
+        },
         get: (sql, params) => Promise.resolve(db.prepare(sql).get(...(params ?? []))),
         all: (sql, params) => Promise.resolve(db.prepare(sql).all(...(params ?? []))),
         close: () => { closeDb(); return Promise.resolve(); },

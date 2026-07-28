@@ -1,7 +1,9 @@
 import { logger } from "../utils/logger.js";
+const DEFAULT_MAX_CONCURRENCY_LIMIT = 10;
+const DEFAULT_MAX_HISTORY_COUNT = 100;
 export class EventBus {
-    static MAX_CONCURRENCY_LIMIT = 10;
-    static MAX_HISTORY_COUNT = 100;
+    static MAX_CONCURRENCY_LIMIT = DEFAULT_MAX_CONCURRENCY_LIMIT;
+    static MAX_HISTORY_COUNT = DEFAULT_MAX_HISTORY_COUNT;
     subscribers = new Map();
     health = new Map();
     history = [];
