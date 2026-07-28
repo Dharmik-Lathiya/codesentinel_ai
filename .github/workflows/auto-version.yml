@@ -84,51 +84,11 @@ jobs:
             fi
           fi
 
-  fix:
+  fix-and-version:
     needs: [detect]
     if: needs.detect.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Build
-        run: npm ci && npm run build
-      - name: Auto-fix issues
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node dist/index.js fix --auto-fix 2>&1 | tee /tmp/cs-out.txt; true
-      - name: Merge fix branch and commit fixes
-        run: |
-          git checkout main
-          FIX_BRANCH=$(git branch --list 'codesentinel/fix-*' --sort=-committerdate | head -1 | tr -d ' ')
-          if [ -n "$FIX_BRANCH" ] && git merge-base --is-ancestor main "$FIX_BRANCH" 2>/dev/null; then
-            echo "Merging fix branch: $FIX_BRANCH"
-            git merge "$FIX_BRANCH" --no-edit
-          fi
-          if [ -n "$(git status --porcelain)" ]; then
-            git config user.name "CodeSentinel Bot"
-            git config user.email "bot@codesentinel.ai"
-            git add -A
-            git commit -m "chore: auto-fix issues [skip ci]"
-            git pull --rebase origin main 2>/dev/null || true
-            git push origin main
-            echo "Fixes committed"
-          else
-            echo "No fixes to commit"
-          fi
-
-  version:
-    needs: [detect, fix]
-    if: needs.detect.outputs.has_changes == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
     steps:
@@ -144,10 +104,21 @@ jobs:
         run: |
           git config user.name "CodeSentinel Bot"
           git config user.email "bot@codesentinel.ai"
-      - name: Pull latest (from fix phase commits)
+      - name: Build
+        run: npm ci && npm run build
+      - name: Auto-fix issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node dist/index.js fix --auto-fix 2>&1 | tee /tmp/cs-out.txt; true
+      - name: Merge fix branch
         run: |
-          git pull --rebase origin main
-      - name: Bump version
+          git checkout main
+          FIX_BRANCH=$(git branch --list 'codesentinel/fix-*' --sort=-committerdate | head -1 | tr -d ' ')
+          if [ -n "$FIX_BRANCH" ] && git merge-base --is-ancestor main "$FIX_BRANCH" 2>/dev/null; then
+            echo "Merging fix branch: $FIX_BRANCH"
+            git merge "$FIX_BRANCH" --no-edit
+          fi
+      - name: Bump version and commit everything together
         id: bump
         env:
           BUMP: ${{ needs.detect.outputs.bump_type }}
@@ -155,9 +126,10 @@ jobs:
           npm version $BUMP --no-git-tag-version
           VERSION=$(node -p "require('./package.json').version")
           echo "new_version=$VERSION" >> "$GITHUB_OUTPUT"
-          git add package.json package-lock.json 2>/dev/null || true
-          git commit -m "chore: bump to v$VERSION [skip ci]"
-          # Clean up tag if it exists from a previous failed run
+
+          git add -A
+          git commit -m "chore: release v$VERSION [skip ci]" || echo "Nothing new to commit"
+
           git tag -d "v$VERSION" 2>/dev/null || true
           git push origin --delete "v$VERSION" 2>/dev/null || true
           git tag "v$VERSION"
@@ -166,7 +138,7 @@ jobs:
           echo "Released v$VERSION"
 
   release:
-    needs: [version, detect]
+    needs: [fix-and-version, detect]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -181,7 +153,7 @@ jobs:
       - name: Generate release notes
         id: notes
         run: |
-          VERSION="${{ needs.version.outputs.new_version }}"
+          VERSION="${{ needs.fix-and-version.outputs.new_version }}"
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
             LOG=$(git log --oneline "$PREV_TAG..HEAD" 2>/dev/null | grep -v '\[skip ci\]' || echo "No significant changes")
@@ -203,7 +175,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ needs.version.outputs.new_version }}"
+          VERSION="${{ needs.fix-and-version.outputs.new_version }}"
           gh release create "v$VERSION" \
             --repo "${{ github.repository }}" \
             --title "v$VERSION" \
