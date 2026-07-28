@@ -25,6 +25,11 @@ export async function concurrentMap<T, R>(
   }
 
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
-  await Promise.all(workers);
+  try {
+    await Promise.all(workers);
+  } catch (error) {
+    aborted = true;
+    throw error;
+  }
   return results;
 }
