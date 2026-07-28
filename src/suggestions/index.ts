@@ -1,5 +1,5 @@
 import type { Finding } from "../analyzer/index.js";
-const DEFAULT_MAX_FINDINGS = 10 as const;
+const DEFAULT_MAX_FINDINGS = 10;
 const MAX_FINDINGS = DEFAULT_MAX_FINDINGS;
 
 /**
