@@ -30,6 +30,7 @@ function parseTrufflehogLine(line: string): Finding | null {
       source: "scanner" as const,
     } as Finding;
   } catch {
+    logger.warn("Failed to parse trufflehog JSON line");
     return null;
   }
 }
@@ -41,6 +42,7 @@ const gitleaks: ScannerTool = {
       execSync("which gitleaks", { stdio: "ignore" });
       return true;
     } catch {
+      logger.debug("gitleaks not found");
       return false;
     }
   },
@@ -81,6 +83,7 @@ const trufflehog: ScannerTool = {
       execSync("which trufflehog", { stdio: "ignore" });
       return true;
     } catch {
+      logger.debug("trufflehog not found");
       return false;
     }
   },
