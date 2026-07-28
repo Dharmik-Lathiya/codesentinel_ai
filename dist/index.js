@@ -134,21 +134,128 @@ const WORKFLOW_CONTENT = [
     "              body: body",
     "            });",
 ].join("\n");
+const BUILD_WORKFLOW_CONTENT = [
+    "name: CodeSentinel Build Fix",
+    "",
+    "on:",
+    "  push:",
+    "    branches: [main, master, develop]",
+    "  workflow_dispatch:",
+    "",
+    "permissions:",
+    "  contents: write",
+    "  pull-requests: write",
+    "",
+    "jobs:",
+    "  build-fix:",
+    "    if: ${{ github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+    "        with:",
+    "          fetch-depth: 0",
+    "          token: ${{ secrets.GITHUB_TOKEN }}",
+    "",
+    "      - uses: actions/setup-node@v4",
+    "        with:",
+    "          node-version: 20",
+    "",
+    "      - name: Install dependencies",
+    "        run: npm ci 2>/dev/null || npm install",
+    "",
+    "      - name: Build and auto-fix loop",
+    "        env:",
+    '          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}',
+    '          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}',
+    '          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}',
+    '          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}',
+    '          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}',
+    '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
+    "        run: |",
+    "          MAX_ITER=${MAX_ITERATIONS:-5}",
+    '          echo "::group::Build-Fix Loop"',
+    "          for i in $(seq 1 $MAX_ITER); do",
+    '            echo "=== Iteration $i/$MAX_ITER ==="',
+    "",
+    "            FAILED=0",
+    "            npm run build 2>&1 || FAILED=1",
+    "            npm run typecheck 2>&1 || FAILED=1",
+    "",
+    "            if [ $FAILED -eq 0 ]; then",
+    '              echo "✅ Build succeeded on iteration $i"',
+    "              echo \"::endgroup::\"",
+    "              exit 0",
+    "            fi",
+    "",
+    '            echo "❌ Build failed. Running auto-fix..."',
+    "",
+    "            if [ ! -d \"codesentinel\" ]; then",
+    '              echo "Cloning CodeSentinel..."',
+    "              git clone --depth 1 https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git codesentinel",
+    '              cd codesentinel && npm install --ignore-scripts 2>&1 && npm run build 2>&1 && cd ..',
+    "            fi",
+    "",
+    '            node codesentinel/dist/index.js fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
+    "",
+    "            git add -A",
+    "            if git diff --cached --quiet; then",
+    '              echo "⚠️ No changes produced by fix — continuing"',
+    "              continue",
+    "            fi",
+    "",
+    '            git config user.email "bot@codesentinel.ai"',
+    '            git config user.name "CodeSentinel Bot"',
+    '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
+    "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
+    "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+    '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
+    "          done",
+    "",
+    '          echo "❌ Build failed after $MAX_ITER iterations"',
+    "          echo \"::endgroup::\"",
+    "          exit 1",
+    "",
+    "      - name: Notify failure",
+    "        if: failure()",
+    "        uses: actions/github-script@v7",
+    "        with:",
+    "          script: |",
+    "            const { data: prs } = await github.rest.pulls.list({",
+    "              owner: context.repo.owner,",
+    "              repo: context.repo.repo,",
+    '              state: "open",',
+    "              head: context.ref.replace('refs/heads/', ''),",
+    "            });",
+    "            if (prs.length > 0) {",
+    '              await github.rest.issues.createComment({',
+    "                owner: context.repo.owner,",
+    "                repo: context.repo.repo,",
+    "                issue_number: prs[0].number,",
+    '                body: "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."',
+    "              });",
+    "            }",
+].join("\n");
 function runSetup() {
     const cwd = process.cwd();
     const workflowDir = join(cwd, ".github", "workflows");
     const workflowPath = join(workflowDir, "codesentinel.yml");
+    const buildWorkflowPath = join(workflowDir, "codesentinel-build.yml");
     if (existsSync(workflowPath)) {
         process.stdout.write(`Overwriting existing workflow...\n`);
     }
     mkdirSync(workflowDir, { recursive: true });
     writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
-    process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n\n`);
+    process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
+    if (existsSync(buildWorkflowPath)) {
+        process.stdout.write(`Overwriting existing build-fix workflow...\n`);
+    }
+    writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
+    process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
     process.stdout.write("Next steps:\n");
-    process.stdout.write("  git add .github/workflows/codesentinel.yml\n");
-    process.stdout.write('  git commit -m "Add CodeSentinel AI"\n');
+    process.stdout.write("  git add .github/workflows/\n");
+    process.stdout.write('  git commit -m "Add CodeSentinel AI workflows"\n');
     process.stdout.write("  git push\n\n");
-    process.stdout.write("Then comment on any PR or issue:\n");
+    process.stdout.write("Slash commands (on PR/issue comments):\n");
     process.stdout.write("  /review    — AI code review\n");
     process.stdout.write("  /fix       — propose fixes\n");
     process.stdout.write("  /audit     — full repo audit\n");
@@ -157,7 +264,13 @@ function runSetup() {
     process.stdout.write("  /gate      — quality gate check\n");
     process.stdout.write("  /deadcode  — detect unused exports\n");
     process.stdout.write("  /describe  — generate PR description\n");
-    process.stdout.write("  /ask       — ask a question\n");
+    process.stdout.write("  /ask       — ask a question\n\n");
+    process.stdout.write("Build-Fix (auto-fixes on push):\n");
+    process.stdout.write("  The build-fix workflow triggers on push to main/master/develop.\n");
+    process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
+    process.stdout.write("  Set these secrets in your repo for AI provider access:\n");
+    process.stdout.write("    OPENAI_APIKEY / ANTHROPIC_API_KEY / GEMINI_API_KEY\n");
+    process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL\n");
 }
 function showHelp() {
     const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8"));
@@ -170,7 +283,7 @@ Usage:
 
 Commands:
   setup               Create GitHub Actions workflow in current project
-  init-hook           Install pre-commit git hook
+  init-hook           Install git hook (add --type post-commit for build-fix loop)
   dashboard           Start web dashboard
   dismiss <finding>   Dismiss a false positive finding
 
@@ -225,6 +338,7 @@ Examples:
   codesentinel audit --context "Node.js REST API"
   codesentinel gate --min-score 70 --max-critical 0
   codesentinel init-hook
+  codesentinel init-hook --type post-commit
   codesentinel dashboard
   codesentinel deadcode
   codesentinel describe
@@ -249,8 +363,13 @@ async function main() {
     }
     if (args[0] === "init-hook") {
         const root = process.cwd();
-        const hookPath = installHook(root);
-        process.stdout.write(`✅ Pre-commit hook installed at ${hookPath}\n`);
+        const typeIdx = args.indexOf("--type");
+        const hookType = typeIdx >= 0 && args[typeIdx + 1] === "post-commit" ? "post-commit" : "pre-commit";
+        const hookPath = installHook(root, hookType);
+        process.stdout.write(`✅ ${hookType} hook installed at ${hookPath}\n`);
+        if (hookType === "post-commit") {
+            process.stdout.write("This hook will run build + typecheck after every commit and auto-fix failures.\n");
+        }
         return;
     }
     if (args[0] === "dashboard") {
