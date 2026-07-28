@@ -744,6 +744,11 @@ export class Engine {
             const findingsBefore = this.analyzer.analyzeMany([{ path: finding.file, content }]);
             writeFileSync(filePath, fixedContent, "utf8");
             verified = await this.runVerification();
+            if (!verified) {
+                writeFileSync(filePath, content, "utf8");
+                logger.warn(`applyFix[${iteration}]: verification failed — rolled back ${finding.file}`);
+                return { iteration, file: finding.file, fixed: false, explanation: "Fix failed verification (typecheck/tests), rolled back", verified: false, newIssuesIntroduced: [] };
+            }
             // Re-analyze the fixed file to detect new issues introduced
             const contentAfter = readText(filePath);
             const findingsAfter = this.analyzer.analyzeMany([{ path: finding.file, content: contentAfter }]);
@@ -825,6 +830,12 @@ ${issuesMd}
             const findingsBefore = this.analyzer.analyzeMany([{ path: filePath, content }]);
             writeFileSync(absPath, fixedContent, "utf8");
             verified = await this.runVerification();
+            if (!verified) {
+                // Rollback: verification failed (typecheck/tests), restore original content
+                writeFileSync(absPath, content, "utf8");
+                logger.warn(`batchApplyFix[${iteration}]: verification failed — rolled back ${filePath}`);
+                return { iteration, file: filePath, fixed: false, explanation: "Fix failed verification (typecheck/tests), rolled back", verified: false, newIssuesIntroduced: [] };
+            }
             const contentAfter = readText(absPath);
             const findingsAfter = this.analyzer.analyzeMany([{ path: filePath, content: contentAfter }]);
             const beforeIds = new Set(findingsBefore.map((f) => `${f.category}:${f.line}:${f.comment}`));
