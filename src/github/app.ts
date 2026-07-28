@@ -40,17 +40,73 @@ export function codesentinelApp(app: Probot): void {
   });
 }
 
-async function handleComment(ctx: any): Promise<void> {
-  const commentId = ctx.payload.comment.id;
-  if (processedCommentIds.has(commentId)) return;
+/** Check if comment already processed and deduplicate. */
+function isDuplicateOrRegister(commentId: number): boolean {
+  if (processedCommentIds.has(commentId)) return true;
   processedCommentIds.add(commentId);
-
   // Cap dedupe set size to prevent memory leak
   if (processedCommentIds.size > MAX_PROCESSED_COMMENT_IDS) {
     const ids = [...processedCommentIds];
     processedCommentIds.clear();
     ids.slice(-KEEP_LAST_PROCESSED_IDS).forEach((id) => processedCommentIds.add(id));
   }
+  return false;
+}
+
+/** Build secrets from environment. */
+function buildSecrets(): RuntimeSecrets {
+  return {
+    github_token: process.env.GITHUB_TOKEN,
+    openai_api_key: process.env.OPENAI_API_KEY,
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+    gemini_api_key: process.env.GEMINI_API_KEY,
+    opencode_api_key: process.env.OPENCODE_API_KEY,
+  };
+}
+
+/** Run engine and return reply string. */
+async function runEngine(engine: Engine, cmd: { mode: Mode; arg: string }): Promise<string> {
+  if (cmd.mode === "chat") {
+    try {
+      return await engine.ask(cmd.arg);
+    } catch (error) {
+      logger.error(error, "Failed to run engine.ask");
+      return "❌ An error occurred while processing your ask command.";
+    }
+  } else {
+    try {
+      const report: EngineReport = await engine.run();
+      return formatReport(report);
+    } catch (error) {
+      logger.error(error, "Failed to run engine");
+      return "❌ An error occurred while executing the command.";
+    }
+  }
+}
+
+/** Post a comment to the pull request. */
+async function postComment(
+  ctx: any,
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  body: string,
+): Promise<void> {
+  try {
+    await ctx.octokit.issues.createComment({
+      owner,
+      repo,
+      issue_number: issueNumber,
+      body,
+    });
+  } catch (error) {
+    logger.error(error, "Failed to create comment");
+  }
+}
+
+async function handleComment(ctx: any): Promise<void> {
+  // Check duplicate
+  if (isDuplicateOrRegister(ctx.payload.comment.id)) return;
 
   const comment = ctx.payload.comment.body.trim();
   const cmd = parseCommand(comment);
@@ -60,50 +116,16 @@ async function handleComment(ctx: any): Promise<void> {
   const repo = ctx.payload.repository.name;
   const pullNumber = ctx.payload.issue.number;
 
-  // Build secrets from environment for the engine run.
-  const secrets: RuntimeSecrets = {
-    github_token: process.env.GITHUB_TOKEN,
-    openai_api_key: process.env.OPENAI_API_KEY,
-    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-    gemini_api_key: process.env.GEMINI_API_KEY,
-    opencode_api_key: process.env.OPENCODE_API_KEY,
-  };
-
   const engine = Engine.fromInputs({
     overrides: { mode: cmd.mode },
-    secrets,
+    secrets: buildSecrets(),
     root: process.cwd(),
   });
 
-  let reply: string;
-  if (cmd.mode === "chat") {
-    try {
-      reply = await engine.ask(cmd.arg);
-    } catch (error) {
-      logger.error(error, "Failed to run engine.ask");
-      reply = "❌ An error occurred while processing your ask command.";
-    }
-  } else {
-    try {
-      const report: EngineReport = await engine.run();
-      reply = formatReport(report);
-    } catch (error) {
-      logger.error(error, "Failed to run engine");
-      reply = "❌ An error occurred while executing the command.";
-    }
-  }
-
-  try {
-    await ctx.octokit.issues.createComment({
-      owner,
-      repo,
-      issue_number: pullNumber,
-      body: reply,
-    });
-  } catch (error) {
-    logger.error(error, "Failed to create comment");
-  }
+  const reply = await runEngine(engine, cmd);
+  await postComment(ctx, owner, repo, pullNumber, reply);
 }
+
 
 /** Parse a slash command from a comment body. */
 function parseCommand(

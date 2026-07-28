@@ -7,10 +7,12 @@ interface SubscriberHealth {
   cooldownUntil: number;
 }
 
+const DEFAULT_MAX_CONCURRENCY_LIMIT = 10;
+const DEFAULT_MAX_HISTORY_COUNT = 100;
 
 export class EventBus {
-  static readonly MAX_CONCURRENCY_LIMIT = 10;
-  static readonly MAX_HISTORY_COUNT = 100;
+  static readonly MAX_CONCURRENCY_LIMIT = DEFAULT_MAX_CONCURRENCY_LIMIT;
+  static readonly MAX_HISTORY_COUNT = DEFAULT_MAX_HISTORY_COUNT;
   private subscribers = new Map<string, Subscriber>();
   private health = new Map<string, SubscriberHealth>();
   private history: GitHubEvent[] = [];
