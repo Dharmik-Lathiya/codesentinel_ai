@@ -1,7 +1,10 @@
 import { writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { homedir } from "node:os";
 import { Engine, configFromInputs } from "../engine/index.js";
 import { GitHubReporter } from "./reporter.js";
 import { logger } from "../utils/logger.js";
+import { setupOpenCode } from "../opencode/installer.js";
 /**
  * GitHub Action entrypoint. Reads inputs from the environment (set by action.yml
  * as INPUT_<NAME>), runs the engine, posts PR comments and writes the job
@@ -22,8 +25,36 @@ export async function runAction() {
         issue_title: get("issue_title"),
         issue_body: get("issue_body"),
         ask: get("ask"),
+        use_opencode_cli: get("use_opencode_cli"),
     };
-    const configOverrides = configFromInputs(inputs);
+    const useOpencodeCliFlag = inputs.use_opencode_cli === "true";
+    const opencodeVersion = get("opencode_version") || "latest";
+    // When the OpenCode CLI mode is requested, install the binary (or use cached)
+    // and prepend its directory to PATH so runner.ts can locate it.
+    if (useOpencodeCliFlag) {
+        try {
+            const { binaryPath } = await setupOpenCode(opencodeVersion);
+            const binDir = dirname(binaryPath);
+            const existingPath = process.env.PATH ?? "";
+            if (!existingPath.split(":").includes(binDir)) {
+                process.env.PATH = `${binDir}:${existingPath}`;
+            }
+            logger.info(`action: OpenCode CLI installed at ${binaryPath}`);
+        }
+        catch (err) {
+            logger.warn(`action: OpenCode CLI install failed (${err}), continuing without it`);
+        }
+    }
+    else {
+        // Also prepend the default install dir so system-installed opencode is found
+        const defaultBinDir = `${process.env.HOME ?? homedir()}/.codesentinel/bin`;
+        const existingPath = process.env.PATH ?? "";
+        if (!existingPath.split(":").includes(defaultBinDir)) {
+            process.env.PATH = `${defaultBinDir}:${existingPath}`;
+        }
+    }
+    // Build config overrides from all inputs (including use_opencode_cli)
+    const configOverrides = configFromInputs({ ...inputs, use_opencode_cli: useOpencodeCliFlag ? "true" : undefined });
     const secrets = {
         github_token: process.env.GITHUB_TOKEN,
         openai_api_key: process.env.OPENAI_API_KEY || get("openai_api_key"),

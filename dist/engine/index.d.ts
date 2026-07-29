@@ -1,6 +1,6 @@
 import { configFromInputs } from "../config/index.js";
 import type { CodeSentinelConfig, RuntimeSecrets, Mode } from "../config/types.js";
-import { AIHub } from "../ai/index.js";
+import { type EngineAI } from "../ai/providers/opencode-cli.js";
 import { type Finding } from "../analyzer/index.js";
 import { type ScoreBreakdown } from "../scorer/index.js";
 import { type GeneratedTest } from "../testgen/index.js";
@@ -82,7 +82,7 @@ export declare class Engine {
     private repairedCount;
     constructor(config: CodeSentinelConfig, secrets: RuntimeSecrets, root?: string, 
     /** Optional AI override (used in tests to avoid network calls). */
-    aiOverride?: Pick<AIHub, "complete" | "modelForTask"> | undefined);
+    aiOverride?: EngineAI | undefined);
     /** Best-effort health check: log whether the AI provider is reachable. */
     private checkAIProvider;
     /** Convenience factory used by CLI / Action. */

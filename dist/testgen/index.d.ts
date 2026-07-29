@@ -1,5 +1,5 @@
 import type { CodeSentinelConfig } from "../config/types.js";
-import type { AIHub } from "../ai/index.js";
+import type { EngineAI } from "../ai/providers/opencode-cli.js";
 import { PromptRegistry } from "../prompts/index.js";
 /** A function detected in source that may need tests. */
 export interface DetectedFunction {
@@ -32,7 +32,7 @@ export declare class TestGenerator {
     private config;
     private ai;
     private prompts;
-    constructor(config: CodeSentinelConfig, ai: AIHub, prompts: PromptRegistry);
+    constructor(config: CodeSentinelConfig, ai: EngineAI, prompts: PromptRegistry);
     /**
      * Generate and save tests for the given source files. Returns the list of
      * written tests. Skips files that already appear to have tests unless

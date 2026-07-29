@@ -63,6 +63,7 @@ const WORKFLOW_CONTENT = [
     "          mode: plan",
     "          issue_title: ${{ github.event.issue.title }}",
     "          issue_body: ${{ github.event.issue.body }}",
+    "          use_opencode_cli: \"false\"",
     "",
     "      - name: Update comment with plan",
     "        uses: actions/github-script@v7",
@@ -162,6 +163,7 @@ const WORKFLOW_CONTENT = [
     "          issue_title: ${{ steps.issue_info.outputs.title }}",
     "          issue_body: ${{ steps.issue_info.outputs.body }}",
     "          ask: ${{ steps.cmd.outputs.question }}",
+    "          use_opencode_cli: \"false\"",
     "",
     "      - name: Update comment",
     "        uses: actions/github-script@v7",
@@ -489,7 +491,8 @@ async function main() {
             const fileIdx = dismissArgs.indexOf("--file");
             const filePath = dismissArgs[fileIdx + 1];
             const lineIdx = dismissArgs.indexOf("--line");
-            const lineNum = lineIdx >= 0 ? Number(dismissArgs[lineIdx + 1]) : null;
+            const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
+            const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, 10) : null;
             if (!filePath) {
                 process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
                 return;

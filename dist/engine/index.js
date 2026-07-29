@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { loadConfig, configFromInputs } from "../config/index.js";
 import { GitHubReporter } from "../github/reporter.js";
 import { AIHub } from "../ai/index.js";
+import { OpencodeCliAdapter } from "../ai/providers/opencode-cli.js";
 import { PromptRegistry } from "../prompts/index.js";
 import { StaticAnalyzer } from "../analyzer/index.js";
 import { Scorer } from "../scorer/index.js";
@@ -77,9 +78,16 @@ export class Engine {
         this.root = root;
         this.aiOverride = aiOverride;
         this.config = config;
-        this.ai = aiOverride ?? new AIHub(config, secrets);
-        if (aiOverride)
+        if (config.use_opencode_cli) {
+            const hub = new AIHub(config, secrets);
+            this.ai = new OpencodeCliAdapter(config, this.root, hub);
             this.aiAvailable = true;
+        }
+        else {
+            this.ai = aiOverride ?? new AIHub(config, secrets);
+            if (aiOverride)
+                this.aiAvailable = true;
+        }
         this.prompts = new PromptRegistry(config);
         this.cache = new FileCache(resolve(root, config.cache_dir));
         this.plugins = new PluginManager({ config, logger });
@@ -107,7 +115,7 @@ export class Engine {
     }
     /** Best-effort health check: log whether the AI provider is reachable. */
     async checkAIProvider() {
-        if (this.aiOverride)
+        if (this.aiOverride || this.config.use_opencode_cli)
             return;
         const model = this.ai.modelForTask("review");
         const baseUrl = (this.secrets.opencode_base_url || "http://localhost:4096").replace(/\/v1$/, "");

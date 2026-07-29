@@ -144,6 +144,7 @@ const userConfigSchema = z
         maxLinesPerFile: z.number().optional(),
     })
         .optional(),
+    use_opencode_cli: z.boolean().optional(),
 })
     .passthrough();
 /**
@@ -279,6 +280,8 @@ export function configFromInputs(inputs) {
         out.issue_title = inputs.issue_title;
     if (inputs.issue_body)
         out.issue_body = inputs.issue_body;
+    if (inputs.use_opencode_cli !== undefined)
+        out.use_opencode_cli = inputs.use_opencode_cli === "true";
     return out;
 }
 //# sourceMappingURL=index.js.map
