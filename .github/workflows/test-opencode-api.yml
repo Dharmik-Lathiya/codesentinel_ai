@@ -1,13 +1,13 @@
 name: Test OpenCode API Key
 
 on:
-  workflow_dispatch:        # Run manually from the Actions tab
+  workflow_dispatch:
   schedule:
-    - cron: "0 6 * * *"    # Also runs daily at 06:00 UTC
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
-  issues: write             # For creating a failure issue if the key stops working
+  issues: write
 
 jobs:
   test-opencode-api:
@@ -15,70 +15,84 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Resolve and print the base URL (mirrors opencode.ts logic) ───────
+      # ── 1. Resolve URL (mirrors src/ai/opencode.ts normalization) ──────────
       - name: Resolve base URL
         id: url
         env:
           OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
         run: |
           RAW="${OPENCODE_BASE_URL:-http://localhost:4096}"
-
-          # Mirror the exact normalization in src/ai/opencode.ts:
-          #   .replace(/\/v1$/, "").replace(/\/$/, "")
+          # Mirror opencode.ts: .replace(/\/v1$/, "").replace(/\/$/, "")
           BASE=$(echo "$RAW" | sed 's|/v1$||' | sed 's|/$||')
 
-          echo "base_url=$BASE"                      >> "$GITHUB_OUTPUT"
-          echo "api_url=$BASE/v1/chat/completions"   >> "$GITHUB_OUTPUT"
-          echo "models_url=$BASE/v1/models"          >> "$GITHUB_OUTPUT"
+          echo "base_url=$BASE"                    >> "$GITHUB_OUTPUT"
+          echo "api_url=$BASE/v1/chat/completions" >> "$GITHUB_OUTPUT"
 
-          echo "Raw secret   : $RAW"
-          echo "Resolved base: $BASE"
-          echo "API endpoint : $BASE/v1/chat/completions"
+          echo "Raw secret    : $RAW"
+          echo "Resolved base : $BASE"
+          echo "Chat endpoint : $BASE/v1/chat/completions"
 
-      # ── 2. Validate key is present ─────────────────────────────────────────
-      - name: Validate API key is set
+          # Early warning: known bad values
+          if echo "$RAW" | grep -qE "opencode\.ai/(zen|$)" ; then
+            echo ""
+            echo "::error::OPENCODE_BASE_URL appears to be the opencode.ai WEBSITE ('$RAW')."
+            echo "::error::That is a marketing page, not an API server."
+            echo "::error::Set OPENCODE_BASE_URL to your actual OpenAI-compatible API host."
+            echo "::error::Examples:"
+            echo "::error::  https://openrouter.ai/api"
+            echo "::error::  http://your-server:11434   (Ollama)"
+            echo "::error::  http://your-server:4096    (local OpenCode)"
+            exit 1
+          fi
+
+      # ── 2. Key present? ────────────────────────────────────────────────────
+      - name: Check API key is configured
         id: key_check
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           if [ -z "$OPENCODE_API_KEY" ]; then
-            echo "::error::OPENCODE_API_KEY secret is not set!"
+            echo "::error::OPENCODE_API_KEY secret is empty — set it in Settings > Secrets > Actions"
             echo "key_set=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           echo "key_set=true" >> "$GITHUB_OUTPUT"
           echo "OPENCODE_API_KEY is set (length=${#OPENCODE_API_KEY})"
 
-      # ── 3. Probe /v1/models to quickly verify auth ─────────────────────────
-      - name: Probe /v1/models (auth check)
-        id: models
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+      # ── 3. Raw connectivity check ──────────────────────────────────────────
+      - name: Check endpoint is reachable
+        id: ping
         run: |
-          MODELS_URL="${{ steps.url.outputs.models_url }}"
-          echo "GET $MODELS_URL"
+          API_URL="${{ steps.url.outputs.api_url }}"
+          echo "Pinging $API_URL ..."
 
-          RESPONSE=$(curl -s -w "\n__STATUS__:%{http_code}" \
-            --max-time 15 \
-            -H "Authorization: Bearer $OPENCODE_API_KEY" \
-            -H "Accept: application/json" \
-            "$MODELS_URL")
+          HTTP=$(curl -s -o /tmp/ping_body.txt -w "%{http_code}" \
+            --max-time 10 -X POST "$API_URL" \
+            -H "Content-Type: application/json" \
+            -d '{}' 2>/dev/null || echo "000")
 
-          STATUS=$(echo "$RESPONSE" | grep "__STATUS__:" | cut -d: -f2)
-          BODY=$(echo "$RESPONSE"   | sed '/__STATUS__:/d')
+          BODY=$(cat /tmp/ping_body.txt 2>/dev/null | head -c 300)
+          echo "HTTP: $HTTP"
+          echo "Body: $BODY"
+          echo "ping_status=$HTTP" >> "$GITHUB_OUTPUT"
 
-          echo "HTTP $STATUS"
-          echo "Body (first 300 chars): ${BODY:0:300}"
-          echo "models_status=$STATUS" >> "$GITHUB_OUTPUT"
-
-          if [ "$STATUS" = "200" ]; then
-            echo "✅ /v1/models responded 200 — auth looks good"
-          else
-            echo "::warning::/v1/models returned $STATUS (may not be supported by this endpoint)"
+          # If body is HTML it means we hit a web page, not an API
+          if echo "$BODY" | grep -qi "<!doctype\|<html"; then
+            echo ""
+            echo "::error::The endpoint returned HTML (a web page), not JSON."
+            echo "::error::This means OPENCODE_BASE_URL points to a website, not an API server."
+            echo "::error::Current value resolves to: ${{ steps.url.outputs.base_url }}"
+            echo "::error::Fix: update the OPENCODE_BASE_URL secret to your actual API host."
+            exit 1
           fi
 
-      # ── 4. Send a minimal chat completion ─────────────────────────────────
-      - name: Send test AI completion (PING -> PONG)
+          if [ "$HTTP" = "000" ]; then
+            echo "::error::Could not connect to $API_URL (timeout / refused)"
+            exit 1
+          fi
+
+      # ── 4. Real AI completion test ─────────────────────────────────────────
+      - name: Send test AI completion (expect PONG)
         id: ai_test
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
@@ -93,9 +107,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{
               "model": "deepseek-v4-flash-free",
-              "messages": [
-                {"role": "user", "content": "Reply with exactly one word: PONG"}
-              ],
+              "messages": [{"role":"user","content":"Reply with exactly one word: PONG"}],
               "max_tokens": 20,
               "temperature": 0
             }')
@@ -103,12 +115,20 @@ jobs:
           STATUS=$(echo "$RESPONSE" | grep "__STATUS__:" | cut -d: -f2)
           BODY=$(echo "$RESPONSE"   | sed '/__STATUS__:/d')
 
-          echo "HTTP status : $STATUS"
-          echo "Response    : ${BODY:0:500}"
-
+          echo "HTTP: $STATUS"
+          echo "Body: ${BODY:0:600}"
           echo "http_status=$STATUS" >> "$GITHUB_OUTPUT"
 
-          # Parse AI reply
+          # Check for HTML (wrong URL)
+          if echo "$BODY" | grep -qi "<!doctype\|<html\|Not Found"; then
+            echo ""
+            echo "::error::Server returned HTML or 'Not Found' text, not JSON."
+            echo "::error::OPENCODE_BASE_URL is pointing to the wrong server."
+            echo "::error::Resolved endpoint: $API_URL"
+            exit 1
+          fi
+
+          # Parse JSON response
           RESULT=$(echo "$BODY" | python3 -c "
 import sys, json
 try:
@@ -117,61 +137,52 @@ try:
     if choices:
         msg = choices[0].get('message', {})
         content = msg.get('content') or msg.get('reasoning_content') or ''
-        if content.strip():
-            print('ok:' + content.strip()[:200])
-        else:
-            print('empty:no content in message object')
+        print('ok:' + content.strip()[:200]) if content.strip() else print('empty:message has no content')
     else:
         err = d.get('error', {})
-        print('error:' + str(err.get('message', d)))
+        print('error:' + str(err.get('message', json.dumps(d)[:200])))
 except Exception as e:
     print('parse_error:' + str(e))
-" 2>/dev/null || echo "parse_error:python3 unavailable")
+" 2>/dev/null || echo "parse_error:python3 failed")
 
           KIND="${RESULT%%:*}"
           VALUE="${RESULT#*:}"
 
+          echo "result_kind=$KIND" >> "$GITHUB_OUTPUT"
+          echo "ai_reply=$VALUE"   >> "$GITHUB_OUTPUT"
+
           if [ "$KIND" = "ok" ]; then
-            echo "has_content=true"   >> "$GITHUB_OUTPUT"
-            echo "ai_reply=$VALUE"    >> "$GITHUB_OUTPUT"
-            echo "result_kind=ok"     >> "$GITHUB_OUTPUT"
-            echo "✅ AI replied: $VALUE"
-          else
-            echo "has_content=false"  >> "$GITHUB_OUTPUT"
-            echo "ai_reply="          >> "$GITHUB_OUTPUT"
-            echo "result_kind=$KIND"  >> "$GITHUB_OUTPUT"
-            echo "::error::AI did not return content. HTTP=$STATUS kind=$KIND detail=$VALUE"
+            echo "has_content=true" >> "$GITHUB_OUTPUT"
             echo ""
-            echo "=== Troubleshooting ==="
-            echo "OPENCODE_BASE_URL must be the API host — NOT the website."
-            echo "  OK : https://api.opencode.ai  (or your self-hosted address)"
-            echo "  BAD: https://opencode.ai/zen  (that is the marketing website)"
-            echo "Check Settings > Secrets > Actions and correct OPENCODE_BASE_URL."
+            echo "✅ SUCCESS — AI replied: $VALUE"
+          else
+            echo "has_content=false" >> "$GITHUB_OUTPUT"
+            echo ""
+            echo "::error::AI did not return content. kind=$KIND detail=$VALUE"
             exit 1
           fi
 
-      # ── 5. Print summary to console ────────────────────────────────────────
+      # ── 5. Console summary ─────────────────────────────────────────────────
       - name: Print result summary
         if: always()
         run: |
           echo "================================================"
           echo "  OpenCode API Key Health Check"
           echo "================================================"
-          echo "  Resolved API URL  : ${{ steps.url.outputs.api_url }}"
-          echo "  API key set       : ${{ steps.key_check.outputs.key_set }}"
-          echo "  /v1/models status : ${{ steps.models.outputs.models_status }}"
-          echo "  Chat HTTP status  : ${{ steps.ai_test.outputs.http_status }}"
-          echo "  AI replied        : ${{ steps.ai_test.outputs.has_content }}"
-          echo "  AI reply content  : ${{ steps.ai_test.outputs.ai_reply }}"
+          echo "  API endpoint  : ${{ steps.url.outputs.api_url }}"
+          echo "  Key set       : ${{ steps.key_check.outputs.key_set }}"
+          echo "  Ping status   : ${{ steps.ping.outputs.ping_status }}"
+          echo "  Chat status   : ${{ steps.ai_test.outputs.http_status }}"
+          echo "  AI replied    : ${{ steps.ai_test.outputs.has_content }}"
+          echo "  Reply content : ${{ steps.ai_test.outputs.ai_reply }}"
           echo "================================================"
 
-      # ── 6. GitHub Step Summary table ───────────────────────────────────────
+      # ── 6. Step summary table ──────────────────────────────────────────────
       - name: Write step summary
         if: always()
         run: |
           {
             echo "# OpenCode API Key Test"
-            echo ""
             if [ "${{ steps.ai_test.outputs.has_content }}" = "true" ]; then
               echo "## ✅ PASS"
             else
@@ -180,54 +191,59 @@ except Exception as e:
             echo ""
             echo "| Check | Result |"
             echo "|---|---|"
-            echo "| Resolved API URL | \`${{ steps.url.outputs.api_url }}\` |"
-            if [ "${{ steps.key_check.outputs.key_set }}" = "true" ]; then
-              echo "| API key configured | ✅ Yes |"
-            else
-              echo "| API key configured | ❌ Missing |"
-            fi
-            echo "| /v1/models status | \`${{ steps.models.outputs.models_status }}\` |"
+            echo "| API endpoint | \`${{ steps.url.outputs.api_url }}\` |"
+            [ "${{ steps.key_check.outputs.key_set }}" = "true" ] \
+              && echo "| API key set | ✅ Yes |" \
+              || echo "| API key set | ❌ Missing |"
+            echo "| Ping HTTP status | \`${{ steps.ping.outputs.ping_status }}\` |"
             echo "| Chat HTTP status | \`${{ steps.ai_test.outputs.http_status }}\` |"
-            if [ "${{ steps.ai_test.outputs.has_content }}" = "true" ]; then
-              echo "| AI returned content | ✅ Yes |"
-            else
-              echo "| AI returned content | ❌ No |"
-            fi
+            [ "${{ steps.ai_test.outputs.has_content }}" = "true" ] \
+              && echo "| AI returned content | ✅ Yes |" \
+              || echo "| AI returned content | ❌ No |"
             echo "| AI reply | \`${{ steps.ai_test.outputs.ai_reply }}\` |"
             echo ""
-            echo "> Model tested: \`deepseek-v4-flash-free\`"
+            echo "> Model: \`deepseek-v4-flash-free\`"
+            echo ""
+            echo "---"
+            echo "### If this failed: fix OPENCODE_BASE_URL"
+            echo "The secret must be an OpenAI-compatible **API host** — not the opencode.ai website."
+            echo "| Example | Value |"
+            echo "|---|---|"
+            echo "| OpenRouter | \`https://openrouter.ai/api\` |"
+            echo "| Local Ollama | \`http://your-server:11434\` |"
+            echo "| Local OpenCode | \`http://your-server:4096\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # ── 7. Open issue on daily failure ────────────────────────────────────
+      # ── 7. Auto-open issue on scheduled failure ───────────────────────────
       - name: Open issue on failure (scheduled runs only)
         if: failure() && github.event_name == 'schedule'
         uses: actions/github-script@v7
         with:
           script: |
-            const title = `🚨 OpenCode API key health check failed — ${new Date().toISOString().slice(0,10)}`;
+            const title = `🚨 OpenCode API health check failed — ${new Date().toISOString().slice(0,10)}`;
             const body = [
-              '## OpenCode API Key is not working',
+              '## OpenCode API Key is not working in CI',
               '',
               `**Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               '',
-              '**Possible causes:**',
-              '- `OPENCODE_API_KEY` secret has expired or been revoked',
-              '- `OPENCODE_BASE_URL` is wrong — must be the **API host**, not the website',
-              '  - ✅ Correct: `https://api.opencode.ai` (or your self-hosted URL)',
-              '  - ❌ Wrong:   `https://opencode.ai/zen` (marketing site, serves HTML)',
-              '- API quota exhausted',
+              '**Root cause checklist:**',
+              '- [ ] `OPENCODE_BASE_URL` must be an **API server**, not the opencode.ai website',
+              '  - ✅ OK: `https://openrouter.ai/api` or `http://your-server:4096`',
+              '  - ❌ Wrong: `https://opencode.ai/zen` (that is a marketing page)',
+              '- [ ] `OPENCODE_API_KEY` secret has not expired',
+              '- [ ] API quota not exhausted',
               '',
-              'Check **Settings → Secrets and variables → Actions** and verify both secrets.',
+              'Fix: **Settings → Secrets and variables → Actions** → update `OPENCODE_BASE_URL`.',
             ].join('\n');
 
-            const existing = await github.rest.issues.listForRepo({
+            const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
               labels: 'opencode-api-failure',
             });
 
-            if (existing.data.length === 0) {
+            if (existing.length === 0) {
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
