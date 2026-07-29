@@ -21,6 +21,7 @@ export async function runAction() {
         auto_merge: get("auto_merge"),
         issue_title: get("issue_title"),
         issue_body: get("issue_body"),
+        ask: get("ask"),
     };
     const configOverrides = configFromInputs(inputs);
     const secrets = {
@@ -31,13 +32,29 @@ export async function runAction() {
         opencode_api_key: process.env.OPENCODE_API_KEY || get("opencode_api_key"),
         opencode_base_url: process.env.OPENCODE_BASE_URL || get("opencode_base_url"),
     };
+    const runMode = (inputs.mode || "review");
     const engine = Engine.fromInputs({
         configPath: get("config_path") || undefined,
-        overrides: { ...configOverrides, enable_auto_fix: configOverrides.enable_auto_fix ?? false },
+        overrides: { ...configOverrides, mode: runMode, enable_auto_fix: configOverrides.enable_auto_fix ?? false },
         secrets,
     });
-    const report = await engine.run();
+    // Handle chat mode with ask question
+    if (runMode === "chat" && inputs.ask) {
+        const answer = await engine.ask(inputs.ask);
+        process.stdout.write(answer + "\n");
+        return;
+    }
     const autoMerge = configOverrides.autoMerge ?? false;
+    const report = await engine.run();
+    // Write human-readable output to stdout so workflows can capture it via tee
+    const outputMode = report.mode ?? configOverrides.mode ?? "plan";
+    process.stdout.write(`\n=== CodeSentinel [${outputMode}] ===\n`);
+    process.stdout.write(report.summary + "\n");
+    if (report.score) {
+        process.stdout.write(`Score: ${report.score.overall}/100 ` +
+            `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
+            `security ${report.score.security}, coverage ${report.score.test_coverage})\n`);
+    }
     await publishOutputs(report, secrets, autoMerge);
 }
 /** Post comments / issues and write the step summary + metrics outputs. */

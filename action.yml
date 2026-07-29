@@ -68,6 +68,9 @@ inputs:
   issue_body:
     description: "Issue body (for plan mode)"
     required: false
+  ask:
+    description: "Question to ask (chat mode)"
+    required: false
 
 outputs:
   score:
@@ -80,7 +83,7 @@ runs:
   steps:
     - name: Install dependencies
       shell: bash
-      run: npm ci --prefix "${{ github.action_path }}" --ignore-scripts --no-audit --no-fund
+      run: npm ci --prefix "${{ github.action_path }}" --omit=dev --ignore-scripts --no-audit --no-fund
     - name: Run CodeSentinel
       shell: bash
       env:
@@ -101,4 +104,5 @@ runs:
         INPUT_OPENCODE_API_KEY: ${{ inputs.opencode_api_key }}
         INPUT_ISSUE_TITLE: ${{ inputs.issue_title }}
         INPUT_ISSUE_BODY: ${{ inputs.issue_body }}
-      run: node "${{ github.action_path }}/dist/github/action.js"
+        INPUT_ASK: ${{ inputs.ask }}
+      run: node "${{ github.action_path }}/dist/github/action.js" 2>&1 | tee /tmp/cs-out.txt
