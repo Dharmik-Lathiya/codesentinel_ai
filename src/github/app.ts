@@ -13,14 +13,23 @@ const processedCommentIds = new Set<number>();
 
 /**
  * Probot GitHub App. Registers webhook handlers and responds to slash commands
- * posted as PR comments: /review /fix /audit /score /testgen /ask <question>.
+ * posted as PR/issue comments: /review /fix /audit /score /testgen /plan
+ * /gate /deadcode /describe /ask <question>.
  *
- * Models and secrets are read from environment variables. The app runs the
- * engine per command and posts the result back as a PR comment.
+ * Also auto-analyzes newly opened issues and posts an implementation plan.
  */
 export function codesentinelApp(app: Probot): void {
   app.on("pull_request.opened", async (ctx) => {
     logger.info(`PR opened: ${ctx.payload.pull_request.number}`);
+  });
+
+  app.on("issues.opened", async (ctx) => {
+    logger.info(`Issue opened: ${ctx.payload.issue.number}`);
+    try {
+      await handleIssueOpened(ctx);
+    } catch (error) {
+      logger.error(error, "Error handling issues.opened");
+    }
   });
 
   app.on("issue_comment.created", async (ctx) => {
@@ -73,6 +82,14 @@ async function runEngine(engine: Engine, cmd: { mode: Mode; arg: string }): Prom
       logger.error(error, "Failed to run engine.ask");
       return "❌ An error occurred while processing your ask command.";
     }
+  } else if (cmd.mode === "plan") {
+    try {
+      const report: EngineReport = await engine.run();
+      return formatPlanReport(report);
+    } catch (error) {
+      logger.error(error, "Failed to generate plan");
+      return "❌ An error occurred while generating the plan.";
+    }
   } else {
     try {
       const report: EngineReport = await engine.run();
@@ -84,7 +101,7 @@ async function runEngine(engine: Engine, cmd: { mode: Mode; arg: string }): Prom
   }
 }
 
-/** Post a comment to the pull request. */
+/** Post a comment to the pull request / issue. */
 async function postComment(
   ctx: any,
   owner: string,
@@ -104,6 +121,30 @@ async function postComment(
   }
 }
 
+async function handleIssueOpened(ctx: any): Promise<void> {
+  const issue = ctx.payload.issue;
+  const owner = ctx.payload.repository.owner.login;
+  const repo = ctx.payload.repository.name;
+  const issueNumber = issue.number;
+
+  const title = issue.title;
+  const body = (issue.body || "").slice(0, 8000);
+
+  // Generate plan using the engine
+  const engine = Engine.fromInputs({
+    overrides: {
+      mode: "plan",
+      issue_title: title,
+      issue_body: body,
+    },
+    secrets: buildSecrets(),
+    root: process.cwd(),
+  });
+
+  const reply = await runEngine(engine, { mode: "plan", arg: "" });
+  await postComment(ctx, owner, repo, issueNumber, reply);
+}
+
 async function handleComment(ctx: any): Promise<void> {
   // Check duplicate
   if (isDuplicateOrRegister(ctx.payload.comment.id)) return;
@@ -114,16 +155,33 @@ async function handleComment(ctx: any): Promise<void> {
 
   const owner = ctx.payload.repository.owner.login;
   const repo = ctx.payload.repository.name;
-  const pullNumber = ctx.payload.issue.number;
+  const issueNumber = ctx.payload.issue.number;
+
+  const isPR = !!ctx.payload.issue?.pull_request;
+  let overrides: Record<string, unknown> = { mode: cmd.mode };
+
+  // For fix mode on issues (non-PR), also pass issue context
+  if (cmd.mode === "fix" && !isPR) {
+    const issue = ctx.payload.issue;
+    overrides.issue_title = issue.title;
+    overrides.issue_body = (issue.body || "").slice(0, 4000);
+  }
+
+  // For plan mode, pass issue context
+  if (cmd.mode === "plan") {
+    const issue = ctx.payload.issue;
+    overrides.issue_title = issue.title;
+    overrides.issue_body = (issue.body || "").slice(0, 8000);
+  }
 
   const engine = Engine.fromInputs({
-    overrides: { mode: cmd.mode },
+    overrides: overrides as any,
     secrets: buildSecrets(),
     root: process.cwd(),
   });
 
   const reply = await runEngine(engine, cmd);
-  await postComment(ctx, owner, repo, pullNumber, reply);
+  await postComment(ctx, owner, repo, issueNumber, reply);
 }
 
 
@@ -131,7 +189,7 @@ async function handleComment(ctx: any): Promise<void> {
 function parseCommand(
   body: string,
 ): { mode: Mode; arg: string } | null {
-  const m = body.match(/^\/(review|fix|audit|score|testgen|gate|deadcode|ask)\b\s*([\s\S]*)$/i);
+  const m = body.match(/^\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\b\s*([\s\S]*)$/i);
   if (!m) return null;
   const name = m[1].toLowerCase();
   const arg = (m[2] ?? "").trim();
@@ -146,6 +204,10 @@ function formatReport(report: EngineReport): string {
     parts.push(`\n**Gate:** ${report.gatePassed ? "PASSED" : "FAILED"}`);
   }
   return parts.join("\n");
+}
+
+function formatPlanReport(report: EngineReport): string {
+  return `### CodeSentinel — Implementation Plan\n\n${report.summary}`;
 }
 
 /** Factory used when running the app standalone. */

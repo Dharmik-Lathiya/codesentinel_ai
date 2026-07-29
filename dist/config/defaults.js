@@ -125,6 +125,8 @@ export const DEFAULT_CONFIG = {
     dry_run: false,
     custom_prompt_paths: {},
     project_context: "",
+    issue_title: undefined,
+    issue_body: undefined,
     default_model: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
     models: {
         review: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },
@@ -134,6 +136,7 @@ export const DEFAULT_CONFIG = {
         testgen: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },
         chat: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
         describe: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
+        plan: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },
     },
     test_runner: "vitest",
     include: ["**/*.{ts,tsx,js,jsx,py,go,java,rb}"],

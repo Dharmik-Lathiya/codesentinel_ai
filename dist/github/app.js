@@ -8,14 +8,23 @@ const MAX_SCORE = 100;
 const processedCommentIds = new Set();
 /**
  * Probot GitHub App. Registers webhook handlers and responds to slash commands
- * posted as PR comments: /review /fix /audit /score /testgen /ask <question>.
+ * posted as PR/issue comments: /review /fix /audit /score /testgen /plan
+ * /gate /deadcode /describe /ask <question>.
  *
- * Models and secrets are read from environment variables. The app runs the
- * engine per command and posts the result back as a PR comment.
+ * Also auto-analyzes newly opened issues and posts an implementation plan.
  */
 export function codesentinelApp(app) {
     app.on("pull_request.opened", async (ctx) => {
         logger.info(`PR opened: ${ctx.payload.pull_request.number}`);
+    });
+    app.on("issues.opened", async (ctx) => {
+        logger.info(`Issue opened: ${ctx.payload.issue.number}`);
+        try {
+            await handleIssueOpened(ctx);
+        }
+        catch (error) {
+            logger.error(error, "Error handling issues.opened");
+        }
     });
     app.on("issue_comment.created", async (ctx) => {
         try {
@@ -68,6 +77,16 @@ async function runEngine(engine, cmd) {
             return "❌ An error occurred while processing your ask command.";
         }
     }
+    else if (cmd.mode === "plan") {
+        try {
+            const report = await engine.run();
+            return formatPlanReport(report);
+        }
+        catch (error) {
+            logger.error(error, "Failed to generate plan");
+            return "❌ An error occurred while generating the plan.";
+        }
+    }
     else {
         try {
             const report = await engine.run();
@@ -79,7 +98,7 @@ async function runEngine(engine, cmd) {
         }
     }
 }
-/** Post a comment to the pull request. */
+/** Post a comment to the pull request / issue. */
 async function postComment(ctx, owner, repo, issueNumber, body) {
     try {
         await ctx.octokit.issues.createComment({
@@ -93,6 +112,26 @@ async function postComment(ctx, owner, repo, issueNumber, body) {
         logger.error(error, "Failed to create comment");
     }
 }
+async function handleIssueOpened(ctx) {
+    const issue = ctx.payload.issue;
+    const owner = ctx.payload.repository.owner.login;
+    const repo = ctx.payload.repository.name;
+    const issueNumber = issue.number;
+    const title = issue.title;
+    const body = (issue.body || "").slice(0, 8000);
+    // Generate plan using the engine
+    const engine = Engine.fromInputs({
+        overrides: {
+            mode: "plan",
+            issue_title: title,
+            issue_body: body,
+        },
+        secrets: buildSecrets(),
+        root: process.cwd(),
+    });
+    const reply = await runEngine(engine, { mode: "plan", arg: "" });
+    await postComment(ctx, owner, repo, issueNumber, reply);
+}
 async function handleComment(ctx) {
     // Check duplicate
     if (isDuplicateOrRegister(ctx.payload.comment.id))
@@ -103,18 +142,32 @@ async function handleComment(ctx) {
         return;
     const owner = ctx.payload.repository.owner.login;
     const repo = ctx.payload.repository.name;
-    const pullNumber = ctx.payload.issue.number;
+    const issueNumber = ctx.payload.issue.number;
+    const isPR = !!ctx.payload.issue?.pull_request;
+    let overrides = { mode: cmd.mode };
+    // For fix mode on issues (non-PR), also pass issue context
+    if (cmd.mode === "fix" && !isPR) {
+        const issue = ctx.payload.issue;
+        overrides.issue_title = issue.title;
+        overrides.issue_body = (issue.body || "").slice(0, 4000);
+    }
+    // For plan mode, pass issue context
+    if (cmd.mode === "plan") {
+        const issue = ctx.payload.issue;
+        overrides.issue_title = issue.title;
+        overrides.issue_body = (issue.body || "").slice(0, 8000);
+    }
     const engine = Engine.fromInputs({
-        overrides: { mode: cmd.mode },
+        overrides: overrides,
         secrets: buildSecrets(),
         root: process.cwd(),
     });
     const reply = await runEngine(engine, cmd);
-    await postComment(ctx, owner, repo, pullNumber, reply);
+    await postComment(ctx, owner, repo, issueNumber, reply);
 }
 /** Parse a slash command from a comment body. */
 function parseCommand(body) {
-    const m = body.match(/^\/(review|fix|audit|score|testgen|gate|deadcode|ask)\b\s*([\s\S]*)$/i);
+    const m = body.match(/^\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\b\s*([\s\S]*)$/i);
     if (!m)
         return null;
     const name = m[1].toLowerCase();
@@ -131,6 +184,9 @@ function formatReport(report) {
         parts.push(`\n**Gate:** ${report.gatePassed ? "PASSED" : "FAILED"}`);
     }
     return parts.join("\n");
+}
+function formatPlanReport(report) {
+    return `### CodeSentinel — Implementation Plan\n\n${report.summary}`;
 }
 /** Factory used when running the app standalone. */
 export function createApp() {

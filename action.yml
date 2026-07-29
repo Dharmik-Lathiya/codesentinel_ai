@@ -62,6 +62,12 @@ inputs:
   opencode_api_key:
     description: "OpenCode API key"
     required: false
+  issue_title:
+    description: "Issue title (for plan mode)"
+    required: false
+  issue_body:
+    description: "Issue body (for plan mode)"
+    required: false
 
 outputs:
   score:
@@ -93,4 +99,6 @@ runs:
         INPUT_OPENCODE_BASE_URL: ${{ inputs.opencode_base_url }}
         INPUT_AUTO_MERGE: ${{ inputs.auto_merge }}
         INPUT_OPENCODE_API_KEY: ${{ inputs.opencode_api_key }}
+        INPUT_ISSUE_TITLE: ${{ inputs.issue_title }}
+        INPUT_ISSUE_BODY: ${{ inputs.issue_body }}
       run: node "${{ github.action_path }}/dist/github/action.js"

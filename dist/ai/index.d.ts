@@ -1,6 +1,6 @@
 import type { CompletionRequest, CompletionResult } from "./provider.js";
 import type { CodeSentinelConfig, ModelConfig, RuntimeSecrets } from "../config/types.js";
-export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "describe";
+export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "describe" | "plan";
 /**
  * AIHub wires together provider factories and resolves the correct model for a
  * given task. It caches provider instances and exposes a single `complete`

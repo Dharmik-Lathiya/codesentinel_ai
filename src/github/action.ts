@@ -23,6 +23,8 @@ export async function runAction(): Promise<void> {
     test_runner: get("test_runner"),
     provider: get("provider"),
     auto_merge: get("auto_merge"),
+    issue_title: get("issue_title"),
+    issue_body: get("issue_body"),
   };
 
   const configOverrides = configFromInputs(inputs);

@@ -11,7 +11,7 @@ import { parseJsonc } from "../utils/jsonc.js";
 const userConfigSchema = z
     .object({
     mode: z
-        .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve"])
+        .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan"])
         .optional(),
     max_iterations: z.number().int().positive().optional(),
     enable_auto_fix: z.boolean().optional(),
@@ -230,6 +230,7 @@ function validateConfig(config) {
         "gate",
         "describe",
         "improve",
+        "plan",
     ];
     if (!validModes.includes(config.mode)) {
         throw new Error(`Invalid mode: ${config.mode}`);
@@ -274,6 +275,10 @@ export function configFromInputs(inputs) {
             dbPath: inputs.learning_db_path ?? DEFAULT_CONFIG.learning.dbPath,
         };
     }
+    if (inputs.issue_title)
+        out.issue_title = inputs.issue_title;
+    if (inputs.issue_body)
+        out.issue_body = inputs.issue_body;
     return out;
 }
 //# sourceMappingURL=index.js.map

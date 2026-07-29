@@ -257,6 +257,9 @@ export class Engine {
       case "improve":
         report = await this.runImprove();
         break;
+      case "plan":
+        report = await this.runPlan();
+        break;
       default:
         throw new Error(`Unsupported mode: ${this.config.mode}`);
     }
@@ -1405,6 +1408,78 @@ ${issuesMd}
   async ask(question: string): Promise<string> {
     const report = await this.runChat(question);
     return report.summary;
+  }
+
+  /** Generate an implementation plan from an issue title + description. */
+  async generatePlan(title: string, description: string): Promise<string> {
+    if (!this.aiAvailable) return "AI provider not reachable.";
+    const prompt = this.prompts.render("plan", {
+      title,
+      description,
+      project_context: this.config.project_context || "(none)",
+    });
+    const res = await this.ai.complete("plan", [
+      { role: "system", content: "You generate structured implementation plans for GitHub issues." },
+      { role: "user", content: prompt },
+    ]);
+    return res.content;
+  }
+
+  private async runPlan(): Promise<EngineReport> {
+    const title = this.config.issue_title || "Untitled Issue";
+    const description = this.config.issue_body || "No description provided.";
+    const planContent = await this.generatePlan(title, description);
+    const parsed = extractJson<{
+      title: string; priority: string; summary: string; rootCause: string;
+      affectedFiles: { path: string; lines: string; change: string }[];
+      steps: { step: number; file: string; action: string }[];
+      questions: string[];
+    }>(planContent);
+
+    const summaryParts: string[] = [];
+    if (parsed) {
+      summaryParts.push(`## Implementation Plan: ${parsed.title}`);
+      summaryParts.push(`**Priority:** ${parsed.priority}`);
+      summaryParts.push("");
+      summaryParts.push(parsed.summary);
+      summaryParts.push("");
+      summaryParts.push("### Root Cause");
+      summaryParts.push(parsed.rootCause);
+      summaryParts.push("");
+      summaryParts.push("### Affected Files");
+      for (const f of parsed.affectedFiles) {
+        summaryParts.push(`- \`${f.path}\` (${f.lines}) — ${f.change}`);
+      }
+      summaryParts.push("");
+      summaryParts.push("### Steps");
+      for (const s of parsed.steps) {
+        summaryParts.push(`${s.step}. **${s.file}**: ${s.action}`);
+      }
+      if (parsed.questions?.length) {
+        summaryParts.push("");
+        summaryParts.push("### ❓ Clarifying Questions");
+        for (const q of parsed.questions) {
+          summaryParts.push(`- ${q}`);
+        }
+        summaryParts.push("");
+        summaryParts.push("Reply to answer questions, then comment `/fix` to start implementation.");
+      }
+    } else {
+      summaryParts.push("## Implementation Plan");
+      summaryParts.push("");
+      summaryParts.push(planContent);
+    }
+
+    return {
+      mode: "plan",
+      summary: summaryParts.join("\n"),
+      findings: [],
+      score: null,
+      comments: [],
+      generatedTests: [],
+      fixAttempts: [],
+      metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
+    };
   }
 
   // ---------------------------------------------------------------------------

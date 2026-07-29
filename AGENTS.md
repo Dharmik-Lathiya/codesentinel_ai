@@ -9,6 +9,7 @@ AI-powered code quality orchestrator. Review PRs, auto-fix issues, audit repos, 
 - `npm run start` — `node dist/index.js` (requires build first)
 - `node dist/index.js <mode>` — CLI entrypoint. Modes: `review`, `fix`, `audit`, `score`, `testgen`, `chat`, `gate`, `deadcode`, `describe`
 - `codesentinel setup` — generates `.github/workflows/codesentinel.yml` in current project
+- `codesentinel plan` — generates implementation plan from issue (reads `INPUT_ISSUE_TITLE` / `INPUT_ISSUE_BODY` from env)
 - `codesentinel deadcode` — runs in-process, no AI call
 - `--provider openai` — overrides ALL task models at once (sets default_model + all tasks)
 
@@ -29,7 +30,8 @@ AI-powered code quality orchestrator. Review PRs, auto-fix issues, audit repos, 
 
 ## GitHub Action
 - `action.yml` — reusable composite action, `node20` runtime, outputs `score` + `findings`
-- Slash commands on PRs (via `codesentinel-comment.yml`): `/review`, `/fix`, `/audit`, `/score`, `/testgen`, `/gate`, `/deadcode`
+- Slash commands on PRs/issues (via `codesentinel.yml`): `/review`, `/fix`, `/audit`, `/score`, `/testgen`, `/gate`, `/deadcode`, `/describe`, `/plan`, `/ask`
+- Auto-analyzes new issues: posts implementation plan + clarifying questions, then `Reply with /fix to start implementation`
 - Comment workflow checks out this repo separately into `codesentinel/` dir, builds it, then runs `node codesentinel/dist/index.js <mode>`
 - Probot app entrypoint: `node dist/github/app.js`
 

@@ -7,7 +7,7 @@
  */
 
 /** Supported operational modes. */
-export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe" | "improve";
+export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe" | "improve" | "plan";
 
 /** Supported AI providers. */
 export type Provider = "openai" | "anthropic" | "gemini" | "opencode";
@@ -164,6 +164,10 @@ export interface CodeSentinelConfig {
   custom_prompt_paths: Record<string, string>;
   /** Free-form project context injected into prompts. */
   project_context: string;
+  /** Issue title (used by plan mode). */
+  issue_title?: string;
+  /** Issue body (used by plan mode). */
+  issue_body?: string;
 
   /** Default provider + model for every task unless overridden per-task. */
   default_model: ModelConfig;
@@ -176,6 +180,7 @@ export interface CodeSentinelConfig {
     testgen?: ModelConfig;
     chat?: ModelConfig;
     describe?: ModelConfig;
+    plan?: ModelConfig;
   };
 
   /** Test runner to generate tests for. */

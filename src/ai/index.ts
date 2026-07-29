@@ -16,7 +16,7 @@ import type {
 import { retry } from "../utils/retry.js";
 import { logger } from "../utils/logger.js";
 
-export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "describe";
+export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "describe" | "plan";
 
 /**
  * AIHub wires together provider factories and resolves the correct model for a

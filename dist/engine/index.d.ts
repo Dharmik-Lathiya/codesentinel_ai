@@ -144,6 +144,9 @@ export declare class Engine {
     private runDescribe;
     /** Public helper used by the GitHub App / Action to answer `/ask`. */
     ask(question: string): Promise<string>;
+    /** Generate an implementation plan from an issue title + description. */
+    generatePlan(title: string, description: string): Promise<string>;
+    private runPlan;
     private runImprove;
     /** AI-powered utility function generation. */
     private runGenerateUtilities;
