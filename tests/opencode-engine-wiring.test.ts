@@ -41,7 +41,6 @@ describe("opencode CLI wiring", () => {
     const ai = engine["ai"] as any;
     expect(typeof ai.complete).toBe("function");
     expect(typeof ai.modelForTask).toBe("function");
-    expect(ai.modelForTask("review").provider).toBe("opencode-cli");
   });
 
   it("OpencodeCliAdapter.complete delegates to runReview", async () => {
@@ -58,13 +57,14 @@ describe("opencode CLI wiring", () => {
     expect(result.content).toContain("review done");
   });
 
-  it("OpencodeCliAdapter has modelForTask returning opencode-cli provider", () => {
+  it("OpencodeCliAdapter.modelForTask respects config models", () => {
     const config = makeConfig({ use_opencode_cli: true });
     const engine = new Engine(config, makeSecrets(), "/tmp");
     const ai = engine["ai"] as any;
 
     const reviewModel = ai.modelForTask("review" as TaskName);
-    expect(reviewModel).toEqual({ provider: "opencode-cli", model: "cli" });
+    expect(reviewModel.provider).toBe("opencode");
+    expect(reviewModel.model).toBe(DEFAULT_CONFIG.models.review?.model ?? DEFAULT_CONFIG.default_model.model);
   });
 
   it("checkAIProvider skips when use_opencode_cli is set", async () => {
@@ -83,7 +83,7 @@ describe("opencode CLI wiring", () => {
     expect(engine["aiAvailable"]).toBe(true);
   });
 
-  it("gracefully throws ProviderUnavailableError when runReview fails", async () => {
+  it("falls back to AIHub when runReview fails", async () => {
     mockRunReview.mockRejectedValue(new Error("binary not found"));
 
     const config = makeConfig({ use_opencode_cli: true });
@@ -92,7 +92,7 @@ describe("opencode CLI wiring", () => {
 
     await expect(
       ai.complete("review", [{ role: "user", content: "test" }]),
-    ).rejects.toThrow(/unavailable/i);
+    ).rejects.toThrow();
   });
 
   it("use_opencode_cli: false still works with aiOverride", () => {

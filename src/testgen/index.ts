@@ -3,7 +3,7 @@ import { dirname, join, relative, resolve } from "node:path";
 
 import { languageOf, ensureDir } from "../utils/files.js";
 import type { CodeSentinelConfig } from "../config/types.js";
-import type { AIHub } from "../ai/index.js";
+import type { EngineAI } from "../ai/providers/opencode-cli.js";
 import { PromptRegistry } from "../prompts/index.js";
 import { extractJson } from "../ai/provider.js";
 
@@ -65,7 +65,7 @@ export interface GeneratedTest {
 export class TestGenerator {
   constructor(
     private config: CodeSentinelConfig,
-    private ai: AIHub,
+    private ai: EngineAI,
     private prompts: PromptRegistry,
   ) {}
 

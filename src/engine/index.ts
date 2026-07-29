@@ -9,7 +9,7 @@ import type {
 } from "../config/types.js";
 import { GitHubReporter } from "../github/reporter.js";
 import { AIHub } from "../ai/index.js";
-import { OpencodeCliAdapter } from "../ai/providers/opencode-cli.js";
+import { OpencodeCliAdapter, type EngineAI } from "../ai/providers/opencode-cli.js";
 import { PromptRegistry, type PromptName } from "../prompts/index.js";
 import { StaticAnalyzer, type Finding } from "../analyzer/index.js";
 import { Scorer, type ScoreBreakdown } from "../scorer/index.js";
@@ -107,7 +107,7 @@ export interface EngineReport {
  */
 export class Engine {
   readonly config: CodeSentinelConfig;
-  private ai: AIHub;
+  private ai: EngineAI;
   private prompts: PromptRegistry;
   private analyzer: StaticAnalyzer;
   private scorer = new Scorer();
@@ -129,14 +129,15 @@ export class Engine {
     private secrets: RuntimeSecrets,
     private root = process.cwd(),
     /** Optional AI override (used in tests to avoid network calls). */
-    private readonly aiOverride?: Pick<AIHub, "complete" | "modelForTask">,
+    private readonly aiOverride?: EngineAI,
   ) {
     this.config = config;
     if (config.use_opencode_cli) {
-      this.ai = new OpencodeCliAdapter(this.root) as unknown as AIHub;
+      const hub = new AIHub(config, secrets);
+      this.ai = new OpencodeCliAdapter(config, this.root, hub);
       this.aiAvailable = true;
     } else {
-      this.ai = (aiOverride as AIHub) ?? new AIHub(config, secrets);
+      this.ai = aiOverride ?? new AIHub(config, secrets);
       if (aiOverride) this.aiAvailable = true;
     }
     this.prompts = new PromptRegistry(config);
