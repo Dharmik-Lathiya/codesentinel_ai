@@ -1,0 +1,184 @@
+name: Test OpenCode API Key
+
+on:
+  workflow_dispatch:        # Run manually from the Actions tab
+  schedule:
+    - cron: "0 6 * * *"    # Also runs daily at 06:00 UTC
+
+permissions:
+  contents: read
+  issues: write             # For creating a failure issue if the key stops working
+
+jobs:
+  test-opencode-api:
+    name: Ping OpenCode API
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Basic connectivity check ────────────────────────────────────────
+      - name: Check OpenCode base URL is reachable
+        id: ping
+        env:
+          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
+        run: |
+          BASE_URL="${OPENCODE_BASE_URL:-https://opencode.ai/zen}"
+          echo "Checking connectivity to: $BASE_URL"
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 10 \
+            "$BASE_URL" 2>/dev/null || echo "000")
+
+          echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+          echo "base_url=$BASE_URL"   >> "$GITHUB_OUTPUT"
+
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "::warning::Could not reach $BASE_URL (connection refused / timeout)"
+          else
+            echo "✅ Reachable — HTTP $HTTP_CODE"
+          fi
+
+      # ── 2. Send a minimal chat completion request ──────────────────────────
+      - name: Send test AI completion request
+        id: ai_test
+        env:
+          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
+          OPENCODE_API_KEY:  ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          BASE_URL="${OPENCODE_BASE_URL:-https://opencode.ai/zen}"
+          API_KEY="${OPENCODE_API_KEY}"
+
+          if [ -z "$API_KEY" ]; then
+            echo "::error::OPENCODE_API_KEY secret is not set!"
+            echo "key_set=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "key_set=true" >> "$GITHUB_OUTPUT"
+          echo "Sending test completion to $BASE_URL/v1/chat/completions ..."
+
+          RESPONSE=$(curl -s -w "\n__HTTP_CODE__:%{http_code}" \
+            --max-time 30 \
+            -X POST "$BASE_URL/v1/chat/completions" \
+            -H "Authorization: Bearer $API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "model": "deepseek-v4-flash-free",
+              "messages": [
+                {"role": "user", "content": "Reply with the single word: PONG"}
+              ],
+              "max_tokens": 10
+            }')
+
+          HTTP_CODE=$(echo "$RESPONSE" | grep "__HTTP_CODE__:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | sed '/__HTTP_CODE__:/d')
+
+          echo "HTTP status: $HTTP_CODE"
+          echo "Response body: $BODY"
+
+          echo "http_code=$HTTP_CODE" >> "$GITHUB_OUTPUT"
+
+          # Check for a non-empty choices array in the response
+          HAS_CONTENT=$(echo "$BODY" | python3 -c "
+          import sys, json
+          try:
+            d = json.load(sys.stdin)
+            choices = d.get('choices', [])
+            if choices and choices[0].get('message', {}).get('content'):
+              print('yes')
+            else:
+              print('no')
+          except Exception as e:
+            print('no')
+          " 2>/dev/null || echo "no")
+
+          echo "has_content=$HAS_CONTENT" >> "$GITHUB_OUTPUT"
+
+          if [ "$HAS_CONTENT" = "yes" ]; then
+            CONTENT=$(echo "$BODY" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          print(d['choices'][0]['message']['content'].strip())
+          " 2>/dev/null)
+            echo "ai_reply=$CONTENT" >> "$GITHUB_OUTPUT"
+            echo "✅ AI replied: $CONTENT"
+          else
+            echo "::error::API returned HTTP $HTTP_CODE but no valid AI content was found."
+            echo "ai_reply=" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      # ── 3. Print a clear summary ────────────────────────────────────────────
+      - name: Print result summary
+        if: always()
+        run: |
+          echo "========================================="
+          echo "  OpenCode API Key Health Check"
+          echo "========================================="
+          echo "  Base URL reachable : ${{ steps.ping.outputs.http_code != '000' }}"
+          echo "  API key set        : ${{ steps.ai_test.outputs.key_set }}"
+          echo "  HTTP status        : ${{ steps.ai_test.outputs.http_code }}"
+          echo "  AI replied         : ${{ steps.ai_test.outputs.has_content == 'yes' }}"
+          echo "  AI reply content   : ${{ steps.ai_test.outputs.ai_reply }}"
+          echo "========================================="
+
+      # ── 4. Write GitHub Step Summary ───────────────────────────────────────
+      - name: Write step summary
+        if: always()
+        run: |
+          STATUS="${{ steps.ai_test.outputs.has_content == 'yes' && '✅ PASS' || '❌ FAIL' }}"
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          # OpenCode API Key Test — $STATUS
+
+          | Check | Result |
+          |---|---|
+          | Base URL reachable | ${{ steps.ping.outputs.http_code != '000' && '✅ Yes' || '❌ No' }} |
+          | API key configured | ${{ steps.ai_test.outputs.key_set == 'true' && '✅ Yes' || '❌ Missing' }} |
+          | HTTP status | \`${{ steps.ai_test.outputs.http_code }}\` |
+          | AI returned content | ${{ steps.ai_test.outputs.has_content == 'yes' && '✅ Yes' || '❌ No' }} |
+          | AI reply | \`${{ steps.ai_test.outputs.ai_reply }}\` |
+
+          > Model tested: \`deepseek-v4-flash-free\` via OpenCode
+          EOF
+
+      # ── 5. (Optional) Open an issue if daily check fails ───────────────────
+      - name: Open issue on failure (scheduled runs only)
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 OpenCode API key health check failed — ${new Date().toISOString().slice(0,10)}`;
+            const body = [
+              '## OpenCode API Key is not working',
+              '',
+              `**Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              '**Possible causes:**',
+              '- `OPENCODE_API_KEY` secret has expired or been revoked',
+              '- `OPENCODE_BASE_URL` is unreachable',
+              '- API quota exhausted',
+              '',
+              'Please check the [Actions run](' +
+                `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}` +
+                ') for details.',
+            ].join('\n');
+
+            // Check if a duplicate issue is already open
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'opencode-api-failure',
+            });
+
+            if (existing.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['opencode-api-failure', 'bug'],
+              });
+              core.info('Created failure issue.');
+            } else {
+              core.info('Duplicate issue already open, skipping creation.');
+            }
