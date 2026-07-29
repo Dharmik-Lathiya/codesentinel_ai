@@ -508,7 +508,8 @@ async function main(): Promise<void> {
       const fileIdx = dismissArgs.indexOf("--file");
       const filePath = dismissArgs[fileIdx + 1];
       const lineIdx = dismissArgs.indexOf("--line");
-      const lineNum = lineIdx >= 0 ? Number(dismissArgs[lineIdx + 1]) : null;
+      const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
+      const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, 10) : null;
       if (!filePath) {
         process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
         return;

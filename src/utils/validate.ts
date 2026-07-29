@@ -21,7 +21,7 @@ export function validateConfig(
 ): ValidationResult {
   const errors: string[] = [];
 
-  for (let i = 0; i <= rules.length; i++) {
+  for (let i = 0; i < rules.length; i++) {
     const rule = rules[i];
     if (!rule) continue;
 
@@ -39,12 +39,13 @@ export function validateConfig(
     }
 
     if (rule.type === "regex" && rule.pattern) {
+      let re: RegExp | null = null;
       try {
-        new RegExp(rule.pattern);
+        re = new RegExp(rule.pattern);
       } catch {
         errors.push(`Field ${rule.field} has invalid regex pattern`);
+        continue;
       }
-      const re = new RegExp(rule.pattern);
       if (typeof value === "string" && !re.test(value)) {
         errors.push(`Field ${rule.field} does not match pattern ${rule.pattern}`);
       }
@@ -66,11 +67,11 @@ function validateNumberField(
     errors.push(`Field ${field} must be a number`);
     return;
   }
-  if (min !== undefined && num <= min) {
-    errors.push(`Field ${field} must be greater than ${min}`);
+  if (min !== undefined && num < min) {
+    errors.push(`Field ${field} must be at least ${min}`);
   }
-  if (max !== undefined && num >= max) {
-    errors.push(`Field ${field} must be less than ${max}`);
+  if (max !== undefined && num > max) {
+    errors.push(`Field ${field} must be at most ${max}`);
   }
 }
 

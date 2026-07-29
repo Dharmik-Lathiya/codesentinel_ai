@@ -94,11 +94,12 @@ jobs:
         env:
           GITHUB_BASE_REF: ${{ steps.target.outputs.base_ref }}
           GITHUB_HEAD_REF: ${{ steps.target.outputs.head_ref }}
-          OPENCODE_BASE_URL: ${{ vars.OPENCODE_BASE_URL }}
-          OPENCODE_API_KEY: ${{ vars.OPENCODE_API_KEY }}
+          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          FLAGS=""
-          if [ "${{ steps.cmd.outputs.mode }}" = "fix" ]; then FLAGS="--auto-fix"; fi
+          FLAGS="--provider opencode"
+          if [ "${{ steps.cmd.outputs.mode }}" = "fix" ]; then FLAGS="$FLAGS --auto-fix"; fi
           node codesentinel/dist/index.js ${{ steps.cmd.outputs.mode }} $FLAGS 2>&1 | tee /tmp/cs-out.txt; true
 
       - name: Update comment
