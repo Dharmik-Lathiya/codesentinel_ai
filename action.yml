@@ -38,6 +38,14 @@ inputs:
     description: "AI provider: opencode | openai | anthropic | gemini (overrides all task models)"
     required: false
     default: "opencode"
+  opencode_version:
+    description: "OpenCode CLI version to install (e.g. v0.3.0 or latest)"
+    required: false
+    default: "latest"
+  use_opencode_cli:
+    description: "Use the local OpenCode CLI binary instead of the AI provider API (true/false)"
+    required: false
+    default: "false"
   config_path:
     description: "Path to a codesentinel config file"
     required: false
@@ -84,6 +92,9 @@ runs:
     - name: Install dependencies
       shell: bash
       run: npm ci --prefix "${{ github.action_path }}" --omit=dev --ignore-scripts --no-audit --no-fund
+    - name: Add CodeSentinel bin to PATH
+      shell: bash
+      run: echo "$HOME/.codesentinel/bin" >> "$GITHUB_PATH"
     - name: Run CodeSentinel
       shell: bash
       env:
@@ -105,4 +116,6 @@ runs:
         INPUT_ISSUE_TITLE: ${{ inputs.issue_title }}
         INPUT_ISSUE_BODY: ${{ inputs.issue_body }}
         INPUT_ASK: ${{ inputs.ask }}
+        INPUT_OPENCODE_VERSION: ${{ inputs.opencode_version }}
+        INPUT_USE_OPENCODE_CLI: ${{ inputs.use_opencode_cli }}
       run: node "${{ github.action_path }}/dist/github/action.js" 2>&1 | tee /tmp/cs-out.txt

@@ -288,5 +288,7 @@ export function configFromInputs(
   }
   if (inputs.issue_title) out.issue_title = inputs.issue_title;
   if (inputs.issue_body) out.issue_body = inputs.issue_body;
+  if (inputs.use_opencode_cli !== undefined)
+    out.use_opencode_cli = inputs.use_opencode_cli === "true";
   return out as Partial<CodeSentinelConfig>;
 }
