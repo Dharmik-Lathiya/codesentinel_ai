@@ -9,6 +9,7 @@ import type {
 } from "../config/types.js";
 import { GitHubReporter } from "../github/reporter.js";
 import { AIHub } from "../ai/index.js";
+import { OpencodeCliAdapter } from "../ai/providers/opencode-cli.js";
 import { PromptRegistry, type PromptName } from "../prompts/index.js";
 import { StaticAnalyzer, type Finding } from "../analyzer/index.js";
 import { Scorer, type ScoreBreakdown } from "../scorer/index.js";
@@ -131,8 +132,13 @@ export class Engine {
     private readonly aiOverride?: Pick<AIHub, "complete" | "modelForTask">,
   ) {
     this.config = config;
-    this.ai = (aiOverride as AIHub) ?? new AIHub(config, secrets);
-    if (aiOverride) this.aiAvailable = true;
+    if (config.use_opencode_cli) {
+      this.ai = new OpencodeCliAdapter(this.root) as unknown as AIHub;
+      this.aiAvailable = true;
+    } else {
+      this.ai = (aiOverride as AIHub) ?? new AIHub(config, secrets);
+      if (aiOverride) this.aiAvailable = true;
+    }
     this.prompts = new PromptRegistry(config);
     this.cache = new FileCache(resolve(root, config.cache_dir));
     this.plugins = new PluginManager({ config, logger });
@@ -173,7 +179,7 @@ export class Engine {
 
   /** Best-effort health check: log whether the AI provider is reachable. */
   private async checkAIProvider(): Promise<void> {
-    if (this.aiOverride) return;
+    if (this.aiOverride || this.config.use_opencode_cli) return;
     const model = this.ai.modelForTask("review");
     const baseUrl = (this.secrets.opencode_base_url || "http://localhost:4096").replace(/\/v1$/, "");
     if (model.provider === "opencode") {

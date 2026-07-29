@@ -195,6 +195,7 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   mcp: DEFAULT_MCP_CONFIG,
   batch: DEFAULT_BATCH_CONFIG,
   autoMerge: false,
+  use_opencode_cli: false,
 };
 
 /** Deep-merge two configs (shallow per top-level key, special-cased objects/arrays). */

@@ -149,6 +149,7 @@ const userConfigSchema = z
         maxLinesPerFile: z.number().optional(),
       })
       .optional(),
+    use_opencode_cli: z.boolean().optional(),
   })
   .passthrough();
 
