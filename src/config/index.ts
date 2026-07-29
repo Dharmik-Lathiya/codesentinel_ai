@@ -204,30 +204,10 @@ export function loadConfig(opts: {
 
 /** Convert a ZodError into a concise, human-readable list of issues. */
 function formatZodErrors(error: ZodError): string {
-  const LABELS: Record<string, string> = {
-    mode: "mode",
-    max_iterations: "max_iterations",
-    enable_auto_fix: "enable_auto_fix",
-    enable_scoring: "enable_scoring",
-    enable_test_generation: "enable_test_generation",
-    test_runner: "test_runner",
-    include: "include",
-    exclude: "exclude",
-    plugins: "plugins",
-    gate: "gate",
-    analyzer: "analyzer",
-    default_model: "default_model",
-    cache_dir: "cache_dir",
-    enable_cache: "enable_cache",
-    secretPatterns: "secretPatterns",
-    dismissalsFile: "dismissalsFile",
-    dashboard: "dashboard",
-  };
-
   const lines: string[] = [];
   for (const issue of error.issues) {
     const path = issue.path.map((p) => (typeof p === "number" ? `[${p}]` : p)).join(".");
-    const label = path ? (LABELS[path] ?? path) : "(root)";
+    const label = path || "(root)";
 
     if (issue.code === "invalid_type") {
       const expected = issue.received === "undefined" ? "optional" : `type ${issue.expected}`;
@@ -286,16 +266,14 @@ export function configFromInputs(
   if (inputs.project_context) out.project_context = inputs.project_context;
   if (inputs.test_runner) out.test_runner = inputs.test_runner as "jest" | "vitest";
   if (inputs.provider) {
-    const providerModel = { provider: inputs.provider, model: "deepseek-v4-flash-free" };
-    out.default_model = providerModel;
-    out.models = {
-      review: providerModel,
-      fix: providerModel,
-      audit: providerModel,
-      score: providerModel,
-      testgen: providerModel,
-      chat: providerModel,
-    };
+    const taskKeys = Object.keys(DEFAULT_CONFIG.models) as (keyof typeof DEFAULT_CONFIG.models)[];
+    const models: Record<string, { provider: string; model?: string; maxTokens?: number }> = {};
+    for (const key of taskKeys) {
+      const base = DEFAULT_CONFIG.models[key];
+      models[key] = { ...base, provider: inputs.provider };
+    }
+    out.models = models;
+    out.default_model = { ...DEFAULT_CONFIG.default_model, provider: inputs.provider };
   }
   if (inputs.auto_merge) out.autoMerge = inputs.auto_merge === "true";
   if (inputs.jsonl_output) out.jsonl_output = inputs.jsonl_output === "true";

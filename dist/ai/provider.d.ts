@@ -22,6 +22,7 @@ export interface CompletionResult {
     usage?: {
         promptTokens?: number;
         completionTokens?: number;
+        totalTokens?: number;
     };
 }
 /**

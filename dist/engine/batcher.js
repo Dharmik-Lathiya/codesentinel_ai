@@ -5,13 +5,4 @@ export function groupIntoBatches(files, batchSize) {
     }
     return batches;
 }
-export function estimateTokenBudget(files, maxTokens) {
-    let total = 0;
-    for (const f of files) {
-        total += f.content.length / 4;
-        if (f.diff)
-            total += f.diff.length / 4;
-    }
-    return Math.min(maxTokens, Math.ceil(total));
-}
 //# sourceMappingURL=batcher.js.map

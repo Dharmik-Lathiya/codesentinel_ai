@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
+import { resolve } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
@@ -71,7 +73,7 @@ export async function collectDiff(
     let content = "";
     if (status !== "deleted") {
       try {
-        content = await git(["show", `:${path}`], cwd);
+        content = readFileSync(resolve(cwd, path), "utf8");
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }

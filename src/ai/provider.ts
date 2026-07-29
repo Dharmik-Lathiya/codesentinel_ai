@@ -23,7 +23,7 @@ export interface CompletionResult {
   model: string;
   provider: string;
   /** Token usage if reported by the provider. */
-  usage?: { promptTokens?: number; completionTokens?: number };
+  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
 }
 
 /**

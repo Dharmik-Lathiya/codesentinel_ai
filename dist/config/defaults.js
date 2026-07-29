@@ -128,7 +128,7 @@ export const DEFAULT_CONFIG = {
     default_model: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
     models: {
         review: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },
-        fix: { provider: "opencode", model: "gpt-4o-mini", maxTokens: 4096 },
+        fix: { provider: "openai", model: "gpt-4o-mini", maxTokens: 4096 },
         audit: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
         score: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
         testgen: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },

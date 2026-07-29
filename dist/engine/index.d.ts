@@ -133,6 +133,8 @@ export declare class Engine {
     private runFixLoopFor;
     /** Run lint + tests after a fix. Best-effort; returns true if both pass. */
     private runVerification;
+    /** Pre-fix linter baseline for delta comparison. */
+    private _linterBaseline;
     private runAudit;
     private runScoreMode;
     /** Combine the static baseline with an AI refinement of the sub-scores. */

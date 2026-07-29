@@ -10,7 +10,7 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 export class GeminiProvider implements AIProvider {
   readonly name = "gemini";
   private client: any = null;
-  private model: any = null;
+  private models = new Map<string, any>();
   private initializing: Promise<any> | null = null;
 
   constructor(private readonly secrets: RuntimeSecrets) {
@@ -20,16 +20,21 @@ export class GeminiProvider implements AIProvider {
   }
 
   private async getModel(req: CompletionRequest): Promise<any> {
-    if (this.model) return this.model;
+    const modelName = req.model.model;
+    const existing = this.models.get(modelName);
+    if (existing) return existing;
     if (!this.initializing) {
-      this.initializing = import("@google/generative-ai").then((mod: any) => {
+      this.initializing = (async () => {
+        const mod: any = await import("@google/generative-ai");
         const { GoogleGenerativeAI } = mod;
         const genAI = new GoogleGenerativeAI(this.secrets.gemini_api_key!);
-        return genAI.getGenerativeModel({ model: req.model.model });
-      });
+        return genAI.getGenerativeModel({ model: modelName });
+      })();
     }
     try {
-      this.model = await this.initializing;
+      const model = await this.initializing;
+      this.models.set(modelName, model);
+      return model;
     } catch (err) {
       this.initializing = null;
       throw new ProviderUnavailableError(
@@ -37,17 +42,20 @@ export class GeminiProvider implements AIProvider {
         `failed to initialize model: ${(err as Error).message}`
       );
     }
-    return this.model;
   }
 
   async #generateContent(model: any, prompt: string, req: CompletionRequest): Promise<any> {
     try {
+      const generationConfig: Record<string, unknown> = {
+        temperature: req.temperature ?? 0.2,
+        maxOutputTokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      };
+      if (req.responseFormat === "json_object") {
+        generationConfig.responseMimeType = "application/json";
+      }
       return await model.generateContent({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: req.temperature ?? 0.2,
-          maxOutputTokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-        },
+        generationConfig,
       });
     } catch (err) {
       throw new Error(
@@ -72,7 +80,17 @@ export class GeminiProvider implements AIProvider {
       .join("\n\n");
     const res = await this.#generateContent(model, prompt, req);
     const text = res.response?.text?.() ?? "";
-    return { content: text, model: req.model.model, provider: this.name };
+    const usage = res.response?.usageMetadata;
+    return {
+      content: text,
+      model: req.model.model,
+      provider: this.name,
+      usage: usage ? {
+        promptTokens: usage.promptTokenCount,
+        completionTokens: usage.candidatesTokenCount,
+        totalTokens: usage.totalTokenCount,
+      } : undefined,
+    };
   }
 }
 

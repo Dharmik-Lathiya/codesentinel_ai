@@ -1,12 +1,14 @@
 import { logger } from "../utils/logger.js";
 function checkLine(line, lineNumber, path, pattern, re) {
     const trimmed = line.trim();
-    if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*"))
+    if (!trimmed)
         return null;
-    if (trimmed.startsWith("#"))
+    // Strip inline comments before regex matching to avoid false positives
+    const stripped = trimmed.replace(/\/\/.*$/, "").replace(/#.*$/, "").trim();
+    if (!stripped)
         return null;
     re.lastIndex = 0;
-    if (re.test(line)) {
+    if (re.test(stripped)) {
         return {
             severity: pattern.severity,
             category: "security",
