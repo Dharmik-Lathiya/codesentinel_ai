@@ -9,6 +9,9 @@ import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_GATE_MIN_SCORE = 70;
+const PARSE_INT_RADIX = 10;
+const MAX_SCORE = 100;
 const WORKFLOW_CONTENT = [
     "# CodeSentinel AI — Optimized workflow",
     "# Uses pre-built composite action (no TypeScript compilation needed)",
@@ -46,12 +49,16 @@ const WORKFLOW_CONTENT = [
     "        uses: actions/github-script@v7",
     "        with:",
     "          script: |",
-    "            const { data: comment } = await github.rest.issues.createComment({",
-    "              owner: context.repo.owner, repo: context.repo.repo,",
-    "              issue_number: context.issue.number,",
-    "              body: '\u{1F504} **CodeSentinel** is analyzing this issue and generating an implementation plan...'",
-    "            });",
-    "            core.setOutput('comment_id', comment.id);",
+    "            try {",
+    "              const { data: comment } = await github.rest.issues.createComment({",
+    "                owner: context.repo.owner, repo: context.repo.repo,",
+    "                issue_number: context.issue.number,",
+    "                body: '\u{1F504} **CodeSentinel** is analyzing this issue and generating an implementation plan...'",
+    "              });",
+    "              core.setOutput('comment_id', comment.id);",
+    "            } catch (err) {",
+    "              core.setFailed(err.message);",
+    "            }",
     "",
     "      # Uses pre-built composite action — no npm install + tsc build",
     "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
@@ -72,11 +79,15 @@ const WORKFLOW_CONTENT = [
     "            const fs = require('fs');",
     "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
     "            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
-    "            await github.rest.issues.updateComment({",
-    "              owner: context.repo.owner, repo: context.repo.repo,",
-    "              comment_id: ${{ steps.loading.outputs.comment_id }},",
-    "              body: body",
-    "            });",
+    "            try {",
+    "              await github.rest.issues.updateComment({",
+    "                owner: context.repo.owner, repo: context.repo.repo,",
+    "                comment_id: ${{ steps.loading.outputs.comment_id }},",
+    "                body: body",
+    "              });",
+    "            } catch (err) {",
+    "              core.setFailed(err.message);",
+    "            }",
     "",
     "  slash-command:",
     "    if: github.event_name == 'issue_comment' && github.event.action == 'created'",
@@ -400,7 +411,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-  codesentinel gate --min-score 70 --max-critical 0
+   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -492,7 +503,7 @@ async function main() {
             const filePath = dismissArgs[fileIdx + 1];
             const lineIdx = dismissArgs.indexOf("--line");
             const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-            const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, 10) : null;
+            const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
             if (!filePath) {
                 process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
                 return;
@@ -683,7 +694,7 @@ async function main() {
     }
     process.stdout.write(report.summary + "\n");
     if (report.score) {
-        process.stdout.write(`Score: ${report.score.overall}/100 ` +
+        process.stdout.write(`Score: ${report.score.overall}/${MAX_SCORE} ` +
             `(readability ${report.score.readability}, ` +
             `maintainability ${report.score.maintainability}, ` +
             `security ${report.score.security}, ` +

@@ -14,13 +14,32 @@ export class OpenCodeProvider {
     apiKey;
     keyWasSet;
     useCli;
+    cliBinary;
     constructor(secrets) {
         this.keyWasSet = !!secrets.opencode_api_key;
         this.apiKey = secrets.opencode_api_key || "opencode";
         this.useCli = secrets.use_opencode_cli === "true";
         this.baseUrl = (secrets.opencode_base_url || "http://localhost:4096").replace(/\/v1$/, "").replace(/\/$/, "");
+        // Resolve CLI binary path once at startup (avoid race conditions from parallel installs)
+        this.cliBinary = this.useCli ? this.resolveBinary() : "";
         if (this.useCli) {
-            logger.info(`OpenCodeProvider: using CLI binary — no API key or server needed`);
+            if (this.cliBinary) {
+                logger.info(`OpenCodeProvider: using CLI binary at ${this.cliBinary}`);
+            }
+            else {
+                logger.info(`OpenCodeProvider: CLI binary not found — auto-installing via npm...`);
+                try {
+                    execSync("npm install -g opencode-ai", { encoding: "utf8", timeout: 120_000 });
+                    this.cliBinary = this.resolveBinary();
+                }
+                catch { /* ignore install failure, will fall back */ }
+                if (this.cliBinary) {
+                    logger.info(`OpenCodeProvider: installed CLI binary at ${this.cliBinary}`);
+                }
+                else {
+                    logger.info(`OpenCodeProvider: CLI binary not available — will try npx`);
+                }
+            }
         }
         else if (!this.keyWasSet) {
             logger.info(`OpenCodeProvider: no API key set — trying free tier first, CLI fallback if that fails`);
@@ -209,21 +228,8 @@ export class OpenCodeProvider {
             child.stdin.write(input);
             child.stdin.end();
         });
-        // Try resolved binary path first
-        let binaryPath = this.resolveBinary();
-        if (!binaryPath) {
-            // Attempt to install via npm
-            try {
-                logger.info("opencode not found — installing via npm...");
-                execSync("npm install -g opencode-ai", { encoding: "utf8", timeout: 60_000 });
-                binaryPath = this.resolveBinary();
-            }
-            catch {
-                logger.warn("npm install -g opencode-ai failed, trying npx...");
-            }
-        }
-        if (binaryPath) {
-            return runChild(binaryPath, ["run", "--model", cliModel, "--format", "json", "--pure"]);
+        if (this.cliBinary) {
+            return runChild(this.cliBinary, ["run", "--model", cliModel, "--format", "json", "--pure"]);
         }
         // Last resort: npx (auto-installs and runs)
         logger.info("trying npx opencode-ai...");

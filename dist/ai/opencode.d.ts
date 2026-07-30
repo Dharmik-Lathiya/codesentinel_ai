@@ -11,6 +11,7 @@ export declare class OpenCodeProvider implements AIProvider {
     private readonly apiKey;
     private readonly keyWasSet;
     private readonly useCli;
+    private readonly cliBinary;
     constructor(secrets: RuntimeSecrets);
     complete(req: CompletionRequest): Promise<CompletionResult>;
     private parseSuccess;
