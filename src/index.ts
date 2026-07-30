@@ -549,6 +549,7 @@ async function main(): Promise<void> {
       "learning-db": { type: "string" },
       "yaml-config": { type: "boolean", default: false },
       "improve-type": { type: "string" },
+      "use-opencode-cli": { type: "boolean", default: false },
     },
     args: process.argv.slice(2),
     allowPositionals: true,
@@ -625,6 +626,9 @@ async function main(): Promise<void> {
   if (values.mcp) overrides.mcp = { ...(overrides.mcp as any || {}), enabled: true };
   if (values["learning-db"]) {
     overrides.learning = { ...(overrides.learning as any || {}), enabled: true, dbPath: values["learning-db"] };
+  }
+  if (values["use-opencode-cli"]) {
+    overrides.use_opencode_cli = true;
   }
   if (values["yaml-config"]) {
     const searchPaths = [".opencode-reviewer.yml", ".codesentinel.yml", "codesentinel.config.yml"];

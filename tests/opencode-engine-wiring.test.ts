@@ -3,12 +3,6 @@ import { DEFAULT_CONFIG } from "../src/config/defaults.js";
 import type { CodeSentinelConfig, RuntimeSecrets } from "../src/config/types.js";
 import { AIHub, type TaskName } from "../src/ai/index.js";
 
-const mockRunReview = vi.hoisted(() => vi.fn());
-
-vi.mock("../src/opencode/runner.js", () => ({
-  runReview: mockRunReview,
-}));
-
 const { Engine } = await import("../src/engine/index.js");
 
 function makeConfig(overrides: Partial<CodeSentinelConfig> = {}): CodeSentinelConfig {
@@ -22,11 +16,6 @@ function makeSecrets(): RuntimeSecrets {
 describe("opencode CLI wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRunReview.mockResolvedValue({
-      rawOutput: '{"type":"summary","data":{"text":"review done"}}',
-      exitCode: 0,
-      binaryPath: "/mock/opencode",
-    });
   });
 
   it("uses AIHub by default (use_opencode_cli: false)", () => {
@@ -35,32 +24,24 @@ describe("opencode CLI wiring", () => {
     expect(engine["ai"]).toBeInstanceOf(AIHub);
   });
 
-  it("uses OpencodeCliAdapter when use_opencode_cli: true", () => {
+  it("uses AIHub even when use_opencode_cli: true", () => {
     const config = makeConfig({ use_opencode_cli: true });
     const engine = new Engine(config, makeSecrets(), "/tmp");
-    const ai = engine["ai"] as any;
-    expect(typeof ai.complete).toBe("function");
-    expect(typeof ai.modelForTask).toBe("function");
+    expect(engine["ai"]).toBeInstanceOf(AIHub);
   });
 
-  it("OpencodeCliAdapter.complete delegates to runReview", async () => {
+  it("passes use_opencode_cli to secrets for OpenCodeProvider", () => {
     const config = makeConfig({ use_opencode_cli: true });
     const engine = new Engine(config, makeSecrets(), "/tmp");
-    const ai = engine["ai"] as any;
-
-    const result = await ai.complete("review", [
-      { role: "user", content: "review this" },
-    ]);
-
-    expect(mockRunReview).toHaveBeenCalledTimes(1);
-    expect(result.provider).toBe("opencode-cli");
-    expect(result.content).toContain("review done");
+    const hub = engine["ai"] as AIHub;
+    expect(hub).toBeInstanceOf(AIHub);
+    expect(engine["config"].use_opencode_cli).toBe(true);
   });
 
-  it("OpencodeCliAdapter.modelForTask respects config models", () => {
+  it("modelForTask respects config models", () => {
     const config = makeConfig({ use_opencode_cli: true });
     const engine = new Engine(config, makeSecrets(), "/tmp");
-    const ai = engine["ai"] as any;
+    const ai = engine["ai"] as AIHub;
 
     const reviewModel = ai.modelForTask("review" as TaskName);
     expect(reviewModel.provider).toBe("opencode");
@@ -83,18 +64,6 @@ describe("opencode CLI wiring", () => {
     expect(engine["aiAvailable"]).toBe(true);
   });
 
-  it("falls back to AIHub when runReview fails", async () => {
-    mockRunReview.mockRejectedValue(new Error("binary not found"));
-
-    const config = makeConfig({ use_opencode_cli: true });
-    const engine = new Engine(config, makeSecrets(), "/tmp");
-    const ai = engine["ai"] as any;
-
-    await expect(
-      ai.complete("review", [{ role: "user", content: "test" }]),
-    ).rejects.toThrow();
-  });
-
   it("use_opencode_cli: false still works with aiOverride", () => {
     const fake = {
       modelForTask: () => ({ provider: "opencode", model: "x" }),
@@ -102,6 +71,17 @@ describe("opencode CLI wiring", () => {
     };
     const config = makeConfig({ use_opencode_cli: false });
     const engine = new Engine(config, makeSecrets(), "/tmp", fake as any);
+    expect(engine["aiAvailable"]).toBe(true);
+  });
+
+  it("aiOverride takes precedence over use_opencode_cli", () => {
+    const fake = {
+      modelForTask: () => ({ provider: "opencode", model: "x" }),
+      complete: async () => ({ content: "ok", model: "x", provider: "opencode" }),
+    };
+    const config = makeConfig({ use_opencode_cli: true });
+    const engine = new Engine(config, makeSecrets(), "/tmp", fake as any);
+    expect(engine["ai"]).toBe(fake);
     expect(engine["aiAvailable"]).toBe(true);
   });
 });

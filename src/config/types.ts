@@ -334,4 +334,6 @@ export interface RuntimeSecrets {
   opencode_api_key?: string;
   /** Optional base URL for self-hosted OpenCode-compatible endpoints. */
   opencode_base_url?: string;
+  /** When "true", the OpenCode provider uses the CLI binary instead of HTTP. */
+  use_opencode_cli?: string;
 }

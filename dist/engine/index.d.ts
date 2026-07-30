@@ -1,6 +1,6 @@
 import { configFromInputs } from "../config/index.js";
 import type { CodeSentinelConfig, RuntimeSecrets, Mode } from "../config/types.js";
-import { type EngineAI } from "../ai/providers/opencode-cli.js";
+import type { EngineAI } from "../ai/providers/opencode-cli.js";
 import { type Finding } from "../analyzer/index.js";
 import { type ScoreBreakdown } from "../scorer/index.js";
 import { type GeneratedTest } from "../testgen/index.js";

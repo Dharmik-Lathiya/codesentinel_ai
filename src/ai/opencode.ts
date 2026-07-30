@@ -16,19 +16,24 @@ export class OpenCodeProvider implements AIProvider {
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly keyWasSet: boolean;
+  private readonly useCli: boolean;
 
   constructor(secrets: RuntimeSecrets) {
     this.keyWasSet = !!secrets.opencode_api_key;
     this.apiKey = secrets.opencode_api_key || "opencode";
+    this.useCli = secrets.use_opencode_cli === "true";
     this.baseUrl = (
       secrets.opencode_base_url || "http://localhost:4096"
     ).replace(/\/v1$/, "").replace(/\/$/, "");
-    if (!this.keyWasSet) {
+    if (this.useCli) {
+      logger.info(`OpenCodeProvider: using CLI binary — no API key or server needed`);
+    } else if (!this.keyWasSet) {
       logger.info(`OpenCodeProvider: no API key set — trying free tier first, CLI fallback if that fails`);
     }
   }
 
   async complete(req: CompletionRequest): Promise<CompletionResult> {
+    if (this.useCli) return this.completeViaCli(req);
     const url = `${this.baseUrl}/v1/chat/completions`;
     logger.info(`OpenCodeProvider.complete: POST ${url} model=${req.model.model}`);
     const body = JSON.stringify({

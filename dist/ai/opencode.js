@@ -12,67 +12,76 @@ export class OpenCodeProvider {
     baseUrl;
     apiKey;
     keyWasSet;
+    useCli;
     constructor(secrets) {
         this.keyWasSet = !!secrets.opencode_api_key;
         this.apiKey = secrets.opencode_api_key || "opencode";
+        this.useCli = secrets.use_opencode_cli === "true";
         this.baseUrl = (secrets.opencode_base_url || "http://localhost:4096").replace(/\/v1$/, "").replace(/\/$/, "");
-        if (!this.keyWasSet) {
-            logger.info(`OpenCodeProvider: no API key set — free tier will be used for model requests`);
+        if (this.useCli) {
+            logger.info(`OpenCodeProvider: using CLI binary — no API key or server needed`);
+        }
+        else if (!this.keyWasSet) {
+            logger.info(`OpenCodeProvider: no API key set — trying free tier first, CLI fallback if that fails`);
         }
     }
     async complete(req) {
+        if (this.useCli)
+            return this.completeViaCli(req);
         const url = `${this.baseUrl}/v1/chat/completions`;
         logger.info(`OpenCodeProvider.complete: POST ${url} model=${req.model.model}`);
-        let res;
-        const headers = {
-            "Content-Type": "application/json",
+        const body = JSON.stringify({
+            model: req.model.model,
+            messages: req.messages,
+            temperature: req.temperature ?? 0.2,
+            max_tokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_TOKENS,
+            ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
+        });
+        const doFetch = (auth) => {
+            const headers = { "Content-Type": "application/json" };
+            if (auth)
+                headers.Authorization = auth;
+            return fetch(url, { method: "POST", headers, body });
         };
-        if (this.keyWasSet) {
-            headers.Authorization = `Bearer ${this.apiKey}`;
-        }
+        // 1. Try without auth (free tier)
+        let res;
         try {
-            res = await fetch(url, {
-                method: "POST",
-                headers,
-                body: JSON.stringify({
-                    model: req.model.model,
-                    messages: req.messages,
-                    temperature: req.temperature ?? 0.2,
-                    max_tokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_TOKENS,
-                    ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
-                }),
-            });
+            res = await doFetch();
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             logger.error(`OpenCodeProvider.complete: NETWORK ERROR — ${msg}`);
             throw new ProviderUnavailableError("opencode", `cannot reach ${this.baseUrl} — ${msg}. Check OPENCODE_BASE_URL or switch provider via --provider.`);
         }
-        if (!res.ok) {
+        if (res.ok)
+            return this.parseSuccess(res, req);
+        // 2. Handle errors
+        if (res.status === 401 && this.keyWasSet) {
+            logger.warn(`OpenCodeProvider: 401 on free tier, retrying with API key`);
+            try {
+                res = await doFetch(`Bearer ${this.apiKey}`);
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                logger.error(`OpenCodeProvider.complete: NETWORK ERROR (retry) — ${msg}`);
+                throw new ProviderUnavailableError("opencode", `cannot reach ${this.baseUrl} — ${msg}.`);
+            }
+            if (res.ok)
+                return this.parseSuccess(res, req);
             const body = await res.text().catch(() => "");
             const snippet = body.slice(0, 200);
-            logger.error(`OpenCodeProvider.complete: HTTP ${res.status} — ${snippet}`);
-            if (res.status === 401 && !this.keyWasSet) {
-                logger.warn(`OpenCodeProvider: 401 with no API key, falling back to CLI`);
-                return this.completeViaCli(req);
-            }
-            if (res.status === 401) {
-                const isLocal = this.baseUrl === "http://localhost:4096";
-                let hint;
-                if (!this.keyWasSet) {
-                    hint = "OPENCODE_API_KEY is not set. " + (isLocal
-                        ? "For local opencode server no key is needed. Make sure the server is running on localhost:4096, or set OPENCODE_API_KEY for remote API."
-                        : "Export OPENCODE_API_KEY=sk-... in your environment, or switch providers via --provider.");
-                }
-                else {
-                    hint = "OPENCODE_API_KEY was sent but rejected. Check that it is valid, not expired, and has no extra whitespace.";
-                }
-                const hintMsg = `${hint} (baseUrl=${this.baseUrl})`;
-                logger.error(`OpenCodeProvider.complete: 401 — ${hintMsg}`);
-                throw new Error(`OpenCode API error 401: ${snippet} — ${hintMsg}`);
-            }
-            throw new Error(`OpenCode API error ${res.status}: ${snippet}`);
+            logger.error(`OpenCodeProvider.complete: HTTP ${res.status} (with key) — ${snippet}`);
+            throw new Error(`OpenCode API error ${res.status}: ${snippet} — OPENCODE_API_KEY was sent but rejected. Check that it is valid, not expired, and has no extra whitespace. (baseUrl=${this.baseUrl})`);
         }
+        if (res.status === 401) {
+            logger.warn(`OpenCodeProvider: 401 with no API key, falling back to CLI`);
+            return this.completeViaCli(req);
+        }
+        const snippet = await res.text().catch(() => "").then((b) => b.slice(0, 200));
+        logger.error(`OpenCodeProvider.complete: HTTP ${res.status} — ${snippet}`);
+        throw new Error(`OpenCode API error ${res.status}: ${snippet}`);
+    }
+    async parseSuccess(res, req) {
         const data = (await res.json());
         const msg = data?.choices?.[0]?.message;
         let content = msg?.content ?? "";

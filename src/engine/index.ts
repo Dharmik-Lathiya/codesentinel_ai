@@ -9,7 +9,7 @@ import type {
 } from "../config/types.js";
 import { GitHubReporter } from "../github/reporter.js";
 import { AIHub } from "../ai/index.js";
-import { OpencodeCliAdapter, type EngineAI } from "../ai/providers/opencode-cli.js";
+import type { EngineAI } from "../ai/providers/opencode-cli.js";
 import { PromptRegistry, type PromptName } from "../prompts/index.js";
 import { StaticAnalyzer, type Finding } from "../analyzer/index.js";
 import { Scorer, type ScoreBreakdown } from "../scorer/index.js";
@@ -132,14 +132,11 @@ export class Engine {
     private readonly aiOverride?: EngineAI,
   ) {
     this.config = config;
-    if (config.use_opencode_cli) {
-      const hub = new AIHub(config, secrets);
-      this.ai = new OpencodeCliAdapter(config, this.root, hub);
-      this.aiAvailable = true;
-    } else {
-      this.ai = aiOverride ?? new AIHub(config, secrets);
-      if (aiOverride) this.aiAvailable = true;
+    if (config.use_opencode_cli && !aiOverride) {
+      secrets = { ...secrets, use_opencode_cli: "true" };
     }
+    this.ai = aiOverride ?? new AIHub(config, secrets);
+    if (aiOverride) this.aiAvailable = true;
     this.prompts = new PromptRegistry(config);
     this.cache = new FileCache(resolve(root, config.cache_dir));
     this.plugins = new PluginManager({ config, logger });

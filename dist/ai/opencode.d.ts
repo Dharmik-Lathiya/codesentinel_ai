@@ -10,8 +10,10 @@ export declare class OpenCodeProvider implements AIProvider {
     private readonly baseUrl;
     private readonly apiKey;
     private readonly keyWasSet;
+    private readonly useCli;
     constructor(secrets: RuntimeSecrets);
     complete(req: CompletionRequest): Promise<CompletionResult>;
+    private parseSuccess;
     private completeViaCli;
 }
 export declare function opencodeFactory(secrets: RuntimeSecrets): AIProvider | null;

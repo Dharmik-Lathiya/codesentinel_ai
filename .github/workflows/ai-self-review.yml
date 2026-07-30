@@ -21,10 +21,6 @@ concurrency:
   group: self-review-${{ github.event.pull_request.number || github.sha }}-${{ github.actor }}
   cancel-in-progress: false
 
-env:
-  OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL || 'https://opencode.ai/zen' }}
-  OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-
 jobs:
   review:
     if: |
@@ -62,10 +58,12 @@ jobs:
           node-version: 22
       - name: Build
         run: npm ci && npm run build
+      - name: Install OpenCode CLI
+        run: npm install -g @opencode-ai/cli
       - name: Run review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node dist/index.js review 2>&1 | tee /tmp/cs-out.txt; true
+        run: node dist/index.js review --use-opencode-cli 2>&1 | tee /tmp/cs-out.txt; true
 
   autofix:
     concurrency:
