@@ -9,7 +9,7 @@ import type { ScoreBreakdown } from "../scorer/index.js";
  */
 export interface PluginContext {
   config: CodeSentinelConfig;
-  logger: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void };
+  logger: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 }
 
 export interface CodeSentinelPlugin {
@@ -39,11 +39,15 @@ export class PluginManager {
   /** Dynamically import and register plugins listed in config. */
   async load(paths: string[]): Promise<void> {
     for (const p of paths) {
-      const plugin = await this.loadPlugin(p);
-      if (plugin) {
-        this.plugins.push(plugin);
-        await plugin.init?.(this.ctx);
-        this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
+      try {
+        const plugin = await this.loadPlugin(p);
+        if (plugin) {
+          this.plugins.push(plugin);
+          await plugin.init?.(this.ctx);
+          this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
+        }
+      } catch (err) {
+        this.ctx.logger.warn(`Failed to load plugin "${p}":`, err);
       }
     }
   }
@@ -72,27 +76,32 @@ export class PluginManager {
   }
 
   get all(): CodeSentinelPlugin[] {
-    return this.plugins;
+    return [...this.plugins];
   }
 
   /** Run all plugins' analyze hooks and merge their findings. */
   async runAnalyze(
     files: { path: string; content: string }[],
   ): Promise<Finding[]> {
-    const results = await Promise.all(
-      this.plugins.map(async (p) => {
-        try {
-          return (await p.analyze?.(files)) ?? [];
-        } catch (err) {
-          this.ctx.logger.warn(
-            `Analyze hook failed for plugin "${p.name}":`,
-            err,
-          );
-          return [];
-        }
-      }),
-    );
-    return results.flat();
+    try {
+      const results = await Promise.all(
+        this.plugins.map(async (p) => {
+          try {
+            return (await p.analyze?.(files)) ?? [];
+          } catch (err) {
+            this.ctx.logger.warn(
+              `Analyze hook failed for plugin "${p.name}":`,
+              err,
+            );
+            return [];
+          }
+        }),
+      );
+      return results.flat();
+    } catch (err) {
+      this.ctx.logger.warn(`Analyze phase failed:`, err);
+      return [];
+    }
   }
 
   /** Run all plugins' score hooks sequentially. */
