@@ -14,7 +14,7 @@ export declare class OpenCodeProvider implements AIProvider {
     constructor(secrets: RuntimeSecrets);
     complete(req: CompletionRequest): Promise<CompletionResult>;
     private parseSuccess;
-    /** Resolve the opencode binary, checking PATH then npm global prefix. */
+    /** Resolve the opencode binary, checking PATH, npm prefix, and via shell. */
     private resolveBinary;
     private completeViaCli;
 }

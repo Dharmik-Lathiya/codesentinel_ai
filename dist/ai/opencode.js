@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ProviderUnavailableError } from "./provider.js";
@@ -104,12 +104,22 @@ export class OpenCodeProvider {
             },
         };
     }
-    /** Resolve the opencode binary, checking PATH then npm global prefix. */
+    /** Resolve the opencode binary, checking PATH, npm prefix, and via shell. */
     resolveBinary() {
-        // Already in PATH
-        const inPath = process.env.PATH?.split(":").find((dir) => existsSync(join(dir, "opencode")));
-        if (inPath)
-            return "opencode";
+        // Check process PATH directly
+        const dirInPath = process.env.PATH?.split(":").find((d) => existsSync(join(d, "opencode")));
+        if (dirInPath)
+            return join(dirInPath, "opencode");
+        // Resolve via shell (handles GITHUB_PATH updates from earlier workflow steps)
+        try {
+            const resolved = execSync("which opencode 2>/dev/null || command -v opencode 2>/dev/null", {
+                encoding: "utf8",
+                timeout: 5000,
+            }).trim();
+            if (resolved && existsSync(resolved))
+                return resolved;
+        }
+        catch { /* not found via shell */ }
         // Check npm global prefix
         const npmPrefix = process.env.npm_config_prefix;
         if (npmPrefix) {
@@ -117,11 +127,10 @@ export class OpenCodeProvider {
             if (existsSync(candidate))
                 return candidate;
         }
-        // Check common locations
+        // Check common CI install locations
         const home = process.env.HOME || "/home/runner";
         const candidates = [
             join(home, ".npm-global", "bin", "opencode"),
-            join(home, ".local", "share", "fnm", "node-versions", "current", "installation", "lib", "node_modules", "opencode-ai", "bin", "opencode.exe"),
             "/usr/local/share/npm-global/bin/opencode",
             "/usr/local/bin/opencode",
         ];
@@ -200,14 +209,26 @@ export class OpenCodeProvider {
             child.stdin.write(input);
             child.stdin.end();
         });
-        // Try resolved binary path first, then npx fallback
-        const binaryPath = this.resolveBinary();
+        // Try resolved binary path first
+        let binaryPath = this.resolveBinary();
+        if (!binaryPath) {
+            // Attempt to install via npm
+            try {
+                logger.info("opencode not found — installing via npm...");
+                execSync("npm install -g opencode-ai", { encoding: "utf8", timeout: 60_000 });
+                binaryPath = this.resolveBinary();
+            }
+            catch {
+                logger.warn("npm install -g opencode-ai failed, trying npx...");
+            }
+        }
         if (binaryPath) {
             return runChild(binaryPath, ["run", "--model", cliModel, "--format", "json", "--pure"]);
         }
-        logger.info("opencode not in PATH, trying npx opencode-ai...");
+        // Last resort: npx (auto-installs and runs)
+        logger.info("trying npx opencode-ai...");
         return runChild("npx", [
-            "--package", "opencode-ai", "opencode",
+            "--yes", "--package", "opencode-ai", "opencode",
             "run", "--model", cliModel, "--format", "json", "--pure",
         ], 180_000);
     }
