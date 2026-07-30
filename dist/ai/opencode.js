@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { ProviderUnavailableError } from "./provider.js";
 import { logger } from "../utils/logger.js";
 const DEFAULT_MAX_TOKENS = 4096;
@@ -102,6 +104,33 @@ export class OpenCodeProvider {
             },
         };
     }
+    /** Resolve the opencode binary, checking PATH then npm global prefix. */
+    resolveBinary() {
+        // Already in PATH
+        const inPath = process.env.PATH?.split(":").find((dir) => existsSync(join(dir, "opencode")));
+        if (inPath)
+            return "opencode";
+        // Check npm global prefix
+        const npmPrefix = process.env.npm_config_prefix;
+        if (npmPrefix) {
+            const candidate = join(npmPrefix, "bin", "opencode");
+            if (existsSync(candidate))
+                return candidate;
+        }
+        // Check common locations
+        const home = process.env.HOME || "/home/runner";
+        const candidates = [
+            join(home, ".npm-global", "bin", "opencode"),
+            join(home, ".local", "share", "fnm", "node-versions", "current", "installation", "lib", "node_modules", "opencode-ai", "bin", "opencode.exe"),
+            "/usr/local/share/npm-global/bin/opencode",
+            "/usr/local/bin/opencode",
+        ];
+        for (const c of candidates) {
+            if (existsSync(c))
+                return c;
+        }
+        return ""; // not found
+    }
     async completeViaCli(req) {
         const rawModel = req.model.model === "default" ? "deepseek-v4-flash-free" : req.model.model;
         logger.info(`OpenCodeProvider.completeViaCli: model=${rawModel}`);
@@ -171,28 +200,16 @@ export class OpenCodeProvider {
             child.stdin.write(input);
             child.stdin.end();
         });
-        try {
-            return await runChild("opencode", ["run", "--model", cliModel, "--format", "json", "--pure"]);
+        // Try resolved binary path first, then npx fallback
+        const binaryPath = this.resolveBinary();
+        if (binaryPath) {
+            return runChild(binaryPath, ["run", "--model", cliModel, "--format", "json", "--pure"]);
         }
-        catch (err) {
-            if (err instanceof Error && err.message.includes("ENOENT")) {
-                logger.warn("opencode not in PATH, trying npx opencode-ai...");
-                const npxArgs = [
-                    "--package", "opencode-ai", "opencode",
-                    "run", "--model", cliModel, "--format", "json", "--pure",
-                ];
-                try {
-                    return await runChild("npx", npxArgs, 180_000);
-                }
-                catch (npxErr) {
-                    // Strip npm install warnings from the error message
-                    const msg = npxErr?.message ?? String(npxErr);
-                    const clean = msg.split("\n").filter((l) => !l.includes("npm warn") && !l.includes("npm notice")).join("\n").trim();
-                    throw new ProviderUnavailableError("opencode", `opencode CLI failed. Install it via: npm install -g opencode-ai. ${clean || msg}`);
-                }
-            }
-            throw new ProviderUnavailableError("opencode", `opencode CLI not found. Install it via: npm install -g opencode-ai`);
-        }
+        logger.info("opencode not in PATH, trying npx opencode-ai...");
+        return runChild("npx", [
+            "--package", "opencode-ai", "opencode",
+            "run", "--model", cliModel, "--format", "json", "--pure",
+        ], 180_000);
     }
 }
 export function opencodeFactory(secrets) {
