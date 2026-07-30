@@ -130,7 +130,7 @@ jobs:
             -d '{
               "model": "deepseek-v4-flash-free",
               "messages": [{"role":"user","content":"Reply with exactly one word: PONG"}],
-              "max_tokens": 20,
+              "max_tokens": 50,
               "temperature": 0
             }')
 
@@ -141,21 +141,23 @@ jobs:
           echo "Body: ${BODY:0:600}"
           echo "http_status=$STATUS" >> "$GITHUB_OUTPUT"
 
-          RESULT=$(echo "$BODY" | python3 -c "
+          RESULT=$(python3 -c "
 import sys, json
 try:
-    d = json.load(sys.stdin)
+    raw = sys.stdin.read()
+    d = json.loads(raw)
     choices = d.get('choices', [])
     if choices:
         msg = choices[0].get('message', {})
         content = msg.get('content') or msg.get('reasoning_content') or ''
         print(('ok:' + content.strip()[:200]) if content.strip() else 'empty:no content')
+        sys.stderr.write('DEBUG content=%r reasoning_content=%r\\n' % (msg.get('content'), msg.get('reasoning_content')))
     else:
         err = d.get('error', {})
         print('error:' + str(err.get('message', json.dumps(d)[:200])))
 except Exception as e:
     print('parse_error:' + str(e))
-" 2>/dev/null || echo "parse_error:python3 failed")
+" <<< "$BODY" 2>/dev/null || echo "parse_error:python3 failed")
 
           KIND="${RESULT%%:*}"
           VALUE="${RESULT#*:}"
