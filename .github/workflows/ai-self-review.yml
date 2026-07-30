@@ -100,10 +100,12 @@ jobs:
           node-version: 22
       - name: Build
         run: npm ci && npm run build
+      - name: Install OpenCode CLI
+        run: npm install -g @opencode-ai/cli
       - name: Run fix
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node dist/index.js fix --auto-fix 2>&1 | tee /tmp/cs-out.txt; true
+        run: node dist/index.js fix --auto-fix --use-opencode-cli 2>&1 | tee /tmp/cs-out.txt; true
 
   scheduled-review:
     if: github.event_name == 'schedule'
@@ -119,10 +121,12 @@ jobs:
           node-version: 22
       - name: Build
         run: npm ci && npm run build
+      - name: Install OpenCode CLI
+        run: npm install -g @opencode-ai/cli
       - name: Run review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node dist/index.js review 2>&1 | tee /tmp/cs-out.txt; true
+        run: node dist/index.js review --use-opencode-cli 2>&1 | tee /tmp/cs-out.txt; true
 
   audit:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -138,10 +142,12 @@ jobs:
           node-version: 22
       - name: Build
         run: npm ci && npm run build
+      - name: Install OpenCode CLI
+        run: npm install -g @opencode-ai/cli
       - name: Run audit
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node dist/index.js audit 2>&1 | tee /tmp/cs-out.txt; true
+        run: node dist/index.js audit --use-opencode-cli 2>&1 | tee /tmp/cs-out.txt; true
 
   auto-merge:
     if: |
