@@ -59,7 +59,10 @@ jobs:
       - name: Build
         run: npm ci && npm run build
       - name: Install OpenCode CLI
-        run: npm install -g opencode-ai
+        run: |
+          npm install -g opencode-ai
+          echo "$(npm config get prefix)/bin" >> "$GITHUB_PATH"
+          opencode --version
       - name: Run review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -101,7 +104,10 @@ jobs:
       - name: Build
         run: npm ci && npm run build
       - name: Install OpenCode CLI
-        run: npm install -g opencode-ai
+        run: |
+          npm install -g opencode-ai
+          echo "$(npm config get prefix)/bin" >> "$GITHUB_PATH"
+          opencode --version
       - name: Run fix
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -122,7 +128,10 @@ jobs:
       - name: Build
         run: npm ci && npm run build
       - name: Install OpenCode CLI
-        run: npm install -g opencode-ai
+        run: |
+          npm install -g opencode-ai
+          echo "$(npm config get prefix)/bin" >> "$GITHUB_PATH"
+          opencode --version
       - name: Run review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -143,7 +152,10 @@ jobs:
       - name: Build
         run: npm ci && npm run build
       - name: Install OpenCode CLI
-        run: npm install -g opencode-ai
+        run: |
+          npm install -g opencode-ai
+          echo "$(npm config get prefix)/bin" >> "$GITHUB_PATH"
+          opencode --version
       - name: Run audit
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

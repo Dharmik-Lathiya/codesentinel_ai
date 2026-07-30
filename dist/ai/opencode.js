@@ -109,12 +109,10 @@ export class OpenCodeProvider {
             messages: req.messages,
             ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
         });
-        return new Promise((resolve, reject) => {
-            const child = spawn("opencode", [
-                "run", "--model", cliModel, "--format", "json", "--pure",
-            ], {
+        const runChild = (cmd, args, timeout = 120_000) => new Promise((resolve, reject) => {
+            const child = spawn(cmd, args, {
                 stdio: ["pipe", "pipe", "pipe"],
-                timeout: 120_000,
+                timeout,
             });
             let stdout = "";
             let stderr = "";
@@ -122,21 +120,15 @@ export class OpenCodeProvider {
             const timer = setTimeout(() => {
                 timedOut = true;
                 child.kill();
-                reject(new Error(`OpenCode CLI timed out after 120s for model ${cliModel}`));
-            }, 120_000);
+                reject(new Error(`OpenCode CLI timed out after ${timeout}ms for model ${cliModel}`));
+            }, timeout);
             child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
             child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
             child.on("error", (err) => {
                 clearTimeout(timer);
                 if (timedOut)
                     return;
-                const msg = err.message;
-                if (msg.includes("ENOENT")) {
-                    reject(new ProviderUnavailableError("opencode", "opencode CLI not found in PATH. Install it from https://opencode.ai or use --provider openai."));
-                }
-                else {
-                    reject(new ProviderUnavailableError("opencode", `opencode CLI error: ${msg}`));
-                }
+                reject(err);
             });
             child.on("close", (code) => {
                 clearTimeout(timer);
@@ -163,12 +155,10 @@ export class OpenCodeProvider {
                             completionTokens = event.part.tokens.output;
                         }
                     }
-                    catch {
-                        // skip unparseable lines
-                    }
+                    catch { /* skip unparseable lines */ }
                 }
                 if (!content) {
-                    logger.debug(`OpenCodeProvider.completeViaCli: no text found in output — stdout=${stdout.slice(0, 300)} stderr=${stderr.slice(0, 300)}`);
+                    logger.debug(`OpenCodeProvider.completeViaCli: no text found — stdout=${stdout.slice(0, 300)} stderr=${stderr.slice(0, 300)}`);
                 }
                 resolve({
                     content,
@@ -180,6 +170,19 @@ export class OpenCodeProvider {
             child.stdin.write(input);
             child.stdin.end();
         });
+        try {
+            return await runChild("opencode", ["run", "--model", cliModel, "--format", "json", "--pure"]);
+        }
+        catch (err) {
+            if (err instanceof Error && err.message.includes("ENOENT")) {
+                logger.warn("opencode not in PATH, trying npx opencode-ai...");
+                return runChild("npx", [
+                    "--package", "opencode-ai", "opencode",
+                    "run", "--model", cliModel, "--format", "json", "--pure",
+                ], 180_000);
+            }
+            throw new ProviderUnavailableError("opencode", `opencode CLI not found. Install it via: npm install -g opencode-ai`);
+        }
     }
 }
 export function opencodeFactory(secrets) {

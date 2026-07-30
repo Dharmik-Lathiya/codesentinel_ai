@@ -119,81 +119,86 @@ export class OpenCodeProvider implements AIProvider {
       ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
     });
 
-    return new Promise((resolve, reject) => {
-      const child = spawn("opencode", [
-        "run", "--model", cliModel, "--format", "json", "--pure",
-      ], {
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: 120_000,
-      });
-
-      let stdout = "";
-      let stderr = "";
-      let timedOut = false;
-
-      const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill();
-        reject(new Error(`OpenCode CLI timed out after 120s for model ${cliModel}`));
-      }, 120_000);
-
-      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-      child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        if (timedOut) return;
-        const msg = err.message;
-        if (msg.includes("ENOENT")) {
-          reject(new ProviderUnavailableError("opencode", "opencode CLI not found in PATH. Install it from https://opencode.ai or use --provider openai."));
-        } else {
-          reject(new ProviderUnavailableError("opencode", `opencode CLI error: ${msg}`));
-        }
-      });
-
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        if (timedOut) return;
-        if (code !== 0) {
-          const errMsg = stderr.trim() || stdout.slice(0, 200);
-          reject(new Error(`opencode CLI exited with code ${code}: ${errMsg}`));
-          return;
-        }
-
-        let content = "";
-        let promptTokens: number | undefined;
-        let completionTokens: number | undefined;
-
-        for (const line of stdout.split("\n")) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line);
-            if (event.type === "text" && event.part?.text) {
-              content += event.part.text;
-            }
-            if (event.type === "step_finish" && event.part?.tokens) {
-              promptTokens = event.part.tokens.input ?? event.part.tokens.total;
-              completionTokens = event.part.tokens.output;
-            }
-          } catch {
-            // skip unparseable lines
-          }
-        }
-
-        if (!content) {
-          logger.debug(`OpenCodeProvider.completeViaCli: no text found in output — stdout=${stdout.slice(0, 300)} stderr=${stderr.slice(0, 300)}`);
-        }
-        resolve({
-          content,
-          model: req.model.model,
-          provider: `${this.name}-cli`,
-          usage: { promptTokens, completionTokens },
+    const runChild = (cmd: string, args: string[], timeout = 120_000): Promise<CompletionResult> =>
+      new Promise((resolve, reject) => {
+        const child = spawn(cmd, args, {
+          stdio: ["pipe", "pipe", "pipe"],
+          timeout,
         });
+
+        let stdout = "";
+        let stderr = "";
+        let timedOut = false;
+
+        const timer = setTimeout(() => {
+          timedOut = true;
+          child.kill();
+          reject(new Error(`OpenCode CLI timed out after ${timeout}ms for model ${cliModel}`));
+        }, timeout);
+
+        child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+        child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+        child.on("error", (err) => {
+          clearTimeout(timer);
+          if (timedOut) return;
+          reject(err);
+        });
+
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          if (timedOut) return;
+          if (code !== 0) {
+            const errMsg = stderr.trim() || stdout.slice(0, 200);
+            reject(new Error(`opencode CLI exited with code ${code}: ${errMsg}`));
+            return;
+          }
+
+          let content = "";
+          let promptTokens: number | undefined;
+          let completionTokens: number | undefined;
+
+          for (const line of stdout.split("\n")) {
+            if (!line.trim()) continue;
+            try {
+              const event = JSON.parse(line);
+              if (event.type === "text" && event.part?.text) {
+                content += event.part.text;
+              }
+              if (event.type === "step_finish" && event.part?.tokens) {
+                promptTokens = event.part.tokens.input ?? event.part.tokens.total;
+                completionTokens = event.part.tokens.output;
+              }
+            } catch { /* skip unparseable lines */ }
+          }
+
+          if (!content) {
+            logger.debug(`OpenCodeProvider.completeViaCli: no text found — stdout=${stdout.slice(0, 300)} stderr=${stderr.slice(0, 300)}`);
+          }
+          resolve({
+            content,
+            model: req.model.model,
+            provider: `${this.name}-cli`,
+            usage: { promptTokens, completionTokens },
+          });
+        });
+
+        child.stdin.write(input);
+        child.stdin.end();
       });
 
-      child.stdin.write(input);
-      child.stdin.end();
-    });
+    try {
+      return await runChild("opencode", ["run", "--model", cliModel, "--format", "json", "--pure"]);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("ENOENT")) {
+        logger.warn("opencode not in PATH, trying npx opencode-ai...");
+        return runChild("npx", [
+          "--package", "opencode-ai", "opencode",
+          "run", "--model", cliModel, "--format", "json", "--pure",
+        ], 180_000);
+      }
+      throw new ProviderUnavailableError("opencode", `opencode CLI not found. Install it via: npm install -g opencode-ai`);
+    }
   }
 }
 
