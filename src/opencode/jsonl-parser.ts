@@ -1,10 +1,8 @@
+import { readFile } from "node:fs/promises";
+
 export interface OpencodeLine {
   type: "summary" | "verdict" | "strength" | "issue" | "suggestion";
   data: Record<string, unknown>;
-}
-
-export interface ReviewSummary {
-  text: string;
 }
 
 export interface Verdict {
@@ -37,7 +35,7 @@ export interface Suggestion {
 
 export interface OpencodeResult {
   summary: string;
-  verdict: { ready: boolean; reasoning: string };
+  verdict: Verdict;
   strengths: Strength[];
   issues: Issue[];
   suggestions: Suggestion[];
@@ -71,6 +69,68 @@ function tryParseLine(raw: string): OpencodeLine | null {
   return null;
 }
 
+function handleSummary(result: OpencodeResult, data: Record<string, unknown>): void {
+  if (typeof data.text === "string") {
+    result.summary = data.text;
+  }
+}
+
+function handleVerdict(result: OpencodeResult, data: Record<string, unknown>): void {
+  if (typeof data.ready === "boolean" && typeof data.reasoning === "string") {
+    const raw = data.confidence;
+    let confidence: Verdict["confidence"] | undefined;
+    if (raw === "high" || raw === "medium" || raw === "low") {
+      confidence = raw;
+    }
+    result.verdict = {
+      ready: data.ready,
+      reasoning: data.reasoning,
+      autoFixable: typeof data.autoFixable === "boolean" ? data.autoFixable : undefined,
+      confidence,
+    };
+  }
+}
+
+function handleStrength(result: OpencodeResult, data: Record<string, unknown>): void {
+  const msg = data.message;
+  if (typeof msg === "string") {
+    result.strengths.push({
+      file: typeof data.file === "string" ? data.file : undefined,
+      line: typeof data.line === "number" ? data.line : undefined,
+      message: msg,
+    });
+  }
+}
+
+function handleIssue(result: OpencodeResult, data: Record<string, unknown>): void {
+  const severity = data.severity;
+  const file = data.file;
+  const line = data.line;
+  const message = data.message;
+  if (typeof severity === "string" && typeof file === "string" && typeof line === "number" && typeof message === "string") {
+    const valid = ["critical", "important", "minor"];
+    if (valid.includes(severity)) {
+      result.issues.push({
+        severity: severity as Issue["severity"],
+        file,
+        line,
+        message,
+        suggestion: typeof data.suggestion === "string" ? data.suggestion : undefined,
+        suggestionCode: typeof data.suggestionCode === "string" ? data.suggestionCode : undefined,
+      });
+    }
+  }
+}
+
+function handleSuggestion(result: OpencodeResult, data: Record<string, unknown>): void {
+  const file = data.file;
+  const line = data.line;
+  const suggestion = data.suggestion;
+  if (typeof file === "string" && typeof line === "number" && typeof suggestion === "string") {
+    result.suggestions.push({ file, line, suggestion });
+  }
+}
+
 export function parseOpencodeOutput(lines: string[]): OpencodeResult {
   const result = emptyOpencodeResult();
   for (const line of lines) {
@@ -80,67 +140,17 @@ export function parseOpencodeOutput(lines: string[]): OpencodeResult {
     if (!parsed) continue;
 
     switch (parsed.type) {
-      case "summary":
-        if (typeof parsed.data.text === "string") {
-          result.summary = parsed.data.text;
-        }
-        break;
-
-      case "verdict":
-        if (typeof parsed.data.ready === "boolean" && typeof parsed.data.reasoning === "string") {
-          result.verdict = { ready: parsed.data.ready, reasoning: parsed.data.reasoning };
-        }
-        break;
-
-      case "strength": {
-        const msg = parsed.data.message;
-        if (typeof msg === "string") {
-          result.strengths.push({
-            file: typeof parsed.data.file === "string" ? parsed.data.file : undefined,
-            line: typeof parsed.data.line === "number" ? parsed.data.line : undefined,
-            message: msg,
-          });
-        }
-        break;
-      }
-
-      case "issue": {
-        const severity = parsed.data.severity;
-        const file = parsed.data.file;
-        const line = parsed.data.line;
-        const message = parsed.data.message;
-        if (typeof severity === "string" && typeof file === "string" && typeof line === "number" && typeof message === "string") {
-          const valid = ["critical", "important", "minor"];
-          if (valid.includes(severity)) {
-            result.issues.push({
-              severity: severity as Issue["severity"],
-              file,
-              line,
-              message,
-              suggestion: typeof parsed.data.suggestion === "string" ? parsed.data.suggestion : undefined,
-              suggestionCode: typeof parsed.data.suggestionCode === "string" ? parsed.data.suggestionCode : undefined,
-            });
-          }
-        }
-        break;
-      }
-
-      case "suggestion": {
-        const file = parsed.data.file;
-        const line = parsed.data.line;
-        const suggestion = parsed.data.suggestion;
-        if (typeof file === "string" && typeof line === "number" && typeof suggestion === "string") {
-          result.suggestions.push({ file, line, suggestion });
-        }
-        break;
-      }
+      case "summary": handleSummary(result, parsed.data); break;
+      case "verdict": handleVerdict(result, parsed.data); break;
+      case "strength": handleStrength(result, parsed.data); break;
+      case "issue": handleIssue(result, parsed.data); break;
+      case "suggestion": handleSuggestion(result, parsed.data); break;
     }
   }
   return result;
 }
 
 export async function parseOpencodeFile(filePath: string): Promise<OpencodeResult> {
-  const { readFile } = await import("node:fs/promises");
   let content: string;
   try {
     content = await readFile(filePath, "utf8");
