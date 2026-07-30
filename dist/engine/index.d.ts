@@ -129,6 +129,8 @@ export declare class Engine {
     private applyFix;
     /** Apply fixes for ALL findings in a single file in ONE AI call. */
     private batchApplyFix;
+    /** Single-pass fix: one prompt for ALL files, one AI response, then apply every fix. */
+    private batchApplyFixAll;
     /** Apply fixes for a batch of findings without the full re-analysis loop. */
     private runFixLoopFor;
     /** Run lint + tests after a fix. Best-effort; returns true if both pass. */
