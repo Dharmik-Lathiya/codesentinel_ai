@@ -90,9 +90,8 @@ export class MCPManager {
       const tools = await client.listTools();
       for (const tool of tools.tools) {
         if (tool.name.includes("search") || tool.name.includes("query") || tool.name.includes("docs")) {
-          const result = await client.callTool({ name: tool.name, arguments: { query: prompt } });
-          const content = JSON.stringify(result.content ?? "");
-          entries.push({ serverName, content, relevance: 1 });
+          const entry = await this.callToolEntry(serverName, client, tool, { query: prompt }, 1);
+          entries.push(entry);
         }
       }
     } catch (err) {
@@ -116,9 +115,8 @@ export class MCPManager {
       const tools = await client.listTools();
       for (const tool of tools.tools) {
         if (tool.name.toLowerCase().includes("docs") || tool.name.toLowerCase().includes("context")) {
-          const result = await client.callTool({ name: tool.name, arguments: { library } });
-          const content = JSON.stringify(result.content ?? "");
-          entries.push({ serverName, content, relevance: 0.8 });
+          const entry = await this.callToolEntry(serverName, client, tool, { library }, 0.8);
+          entries.push(entry);
         }
       }
     } catch { /* skip */ }
@@ -148,4 +146,16 @@ export class MCPManager {
     }
     return result;
   }
+  private async callToolEntry(
+    serverName: string,
+    client: Client,
+    tool: { name: string },
+    args: Record<string, unknown>,
+    relevance: number,
+  ): Promise<MCPContextEntry> {
+    const result = await client.callTool({ name: tool.name, arguments: args });
+    const content = JSON.stringify(result.content ?? "");
+    return { serverName, content, relevance };
+  }
+
 }

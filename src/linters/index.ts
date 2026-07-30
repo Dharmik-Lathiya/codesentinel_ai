@@ -4,6 +4,12 @@ import { resolve } from "node:path";
 import type { Finding } from "../analyzer/index.js";
 import { logger } from "../utils/logger.js";
 
+const MAX_BUFFER = 10 * 1024 * 1024;
+
+function shq(s: string): string {
+  return '"' + s.replace(/"/g, '\\"') + '"';
+}
+
 export interface LinterTool {
   name: string;
   detect(root: string): boolean;
@@ -18,8 +24,8 @@ const eslint: LinterTool = {
   run(root: string, extraArgs: string[]): Finding[] {
     try {
       const out = execSync(
-        `npx eslint --format json --no-color ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        `npx eslint --format json --no-color ${extraArgs.map(shq).join(" ")} . 2>/dev/null || true`,
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
       const results: { filePath: string; messages: { line: number; severity: number; message: string; ruleId: string | null }[] }[] = JSON.parse(out);
@@ -50,7 +56,7 @@ const biome: LinterTool = {
     try {
       const out = execSync(
         `npx biome lint --diagnostic-level=warn --max-diagnostics=200 ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
       const parsed: { diagnostics: { location: { path: { file: string }; span: { start: { line: number } } | null }; severity: string; message: { text: string }; category: string }[] } = JSON.parse(out);
@@ -84,7 +90,7 @@ const pylint: LinterTool = {
     try {
       const out = execSync(
         `pylint --output-format=json ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
       const results: { path: string; line: number; message: string; symbol: string; type: string }[] = JSON.parse(out);

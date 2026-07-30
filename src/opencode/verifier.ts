@@ -36,7 +36,7 @@ function applyRuleBasedFilter(findings: Issue[]): Issue[] {
   });
 }
 
-function buildAiPrompt(findings: Issue[]): string {
+function buildAIPrompt(findings: Issue[]): string {
   const lines = findings.map(
     (f, i) =>
       `${i}: [${f.severity}] ${f.file}:${f.line} — ${f.message}`,
@@ -49,6 +49,12 @@ function buildAiPrompt(findings: Issue[]): string {
     'Respond with ONLY a JSON array of numbers, e.g. [0, 2, 3].',
   ].join("\n");
 }
+function filterValidIndices(arr: any[], max: number): number[] {
+  return arr.filter(
+    (i): i is number =>
+      typeof i === "number" && Number.isInteger(i) && i >= 0 && i < max,
+  );
+}
 
 function parseAiResponse(
   content: string,
@@ -57,10 +63,7 @@ function parseAiResponse(
   try {
     const parsed = JSON.parse(content);
     if (Array.isArray(parsed)) {
-      const indices = parsed.filter(
-        (i): i is number =>
-          typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-      );
+      const indices = filterValidIndices(parsed, maxIndex);
       return indices.length > 0 ? indices : null;
     }
   } catch {
@@ -72,10 +75,7 @@ function parseAiResponse(
     try {
       const parsed = JSON.parse(extracted[0]);
       if (Array.isArray(parsed)) {
-        const indices = parsed.filter(
-          (i): i is number =>
-            typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-        );
+        const indices = filterValidIndices(parsed, maxIndex);
         return indices.length > 0 ? indices : null;
       }
     } catch {
@@ -90,7 +90,7 @@ async function aiVerify(
   afterRules: Issue[],
   aiHub: AIHub,
 ): Promise<Issue[]> {
-  const prompt = buildAiPrompt(afterRules);
+  const prompt = buildAIPrompt(afterRules);
 
   let result;
   try {
