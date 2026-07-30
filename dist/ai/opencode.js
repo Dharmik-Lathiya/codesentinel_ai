@@ -103,8 +103,9 @@ export class OpenCodeProvider {
         };
     }
     async completeViaCli(req) {
-        logger.info(`OpenCodeProvider.completeViaCli: model=${req.model.model}`);
-        const cliModel = req.model.model.includes("/") ? req.model.model : `opencode/${req.model.model}`;
+        const rawModel = req.model.model === "default" ? "deepseek-v4-flash-free" : req.model.model;
+        logger.info(`OpenCodeProvider.completeViaCli: model=${rawModel}`);
+        const cliModel = rawModel.includes("/") ? rawModel : `opencode/${rawModel}`;
         const input = JSON.stringify({
             messages: req.messages,
             ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
@@ -176,10 +177,19 @@ export class OpenCodeProvider {
         catch (err) {
             if (err instanceof Error && err.message.includes("ENOENT")) {
                 logger.warn("opencode not in PATH, trying npx opencode-ai...");
-                return runChild("npx", [
+                const npxArgs = [
                     "--package", "opencode-ai", "opencode",
                     "run", "--model", cliModel, "--format", "json", "--pure",
-                ], 180_000);
+                ];
+                try {
+                    return await runChild("npx", npxArgs, 180_000);
+                }
+                catch (npxErr) {
+                    // Strip npm install warnings from the error message
+                    const msg = npxErr?.message ?? String(npxErr);
+                    const clean = msg.split("\n").filter((l) => !l.includes("npm warn") && !l.includes("npm notice")).join("\n").trim();
+                    throw new ProviderUnavailableError("opencode", `opencode CLI failed. Install it via: npm install -g opencode-ai. ${clean || msg}`);
+                }
             }
             throw new ProviderUnavailableError("opencode", `opencode CLI not found. Install it via: npm install -g opencode-ai`);
         }
