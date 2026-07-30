@@ -79,64 +79,79 @@ export function parseOpencodeOutput(lines: string[]): OpencodeResult {
     const parsed = tryParseLine(trimmed);
     if (!parsed) continue;
 
-    switch (parsed.type) {
-      case "summary":
-        if (typeof parsed.data.text === "string") {
-          result.summary = parsed.data.text;
-        }
-        break;
-
-      case "verdict":
-        if (typeof parsed.data.ready === "boolean" && typeof parsed.data.reasoning === "string") {
-          result.verdict = { ready: parsed.data.ready, reasoning: parsed.data.reasoning };
-        }
-        break;
-
-      case "strength": {
-        const msg = parsed.data.message;
-        if (typeof msg === "string") {
-          result.strengths.push({
-            file: typeof parsed.data.file === "string" ? parsed.data.file : undefined,
-            line: typeof parsed.data.line === "number" ? parsed.data.line : undefined,
-            message: msg,
-          });
-        }
-        break;
-      }
-
-      case "issue": {
-        const severity = parsed.data.severity;
-        const file = parsed.data.file;
-        const line = parsed.data.line;
-        const message = parsed.data.message;
-        if (typeof severity === "string" && typeof file === "string" && typeof line === "number" && typeof message === "string") {
-          const valid = ["critical", "important", "minor"];
-          if (valid.includes(severity)) {
-            result.issues.push({
-              severity: severity as Issue["severity"],
-              file,
-              line,
-              message,
-              suggestion: typeof parsed.data.suggestion === "string" ? parsed.data.suggestion : undefined,
-              suggestionCode: typeof parsed.data.suggestionCode === "string" ? parsed.data.suggestionCode : undefined,
-            });
-          }
-        }
-        break;
-      }
-
-      case "suggestion": {
-        const file = parsed.data.file;
-        const line = parsed.data.line;
-        const suggestion = parsed.data.suggestion;
-        if (typeof file === "string" && typeof line === "number" && typeof suggestion === "string") {
-          result.suggestions.push({ file, line, suggestion });
-        }
-        break;
-      }
-    }
+    processParsedLine(parsed, result);
   }
   return result;
+}
+function processParsedLine(parsed: OpencodeLine, result: OpencodeResult): void {
+  const handleSummary = (data: Record<string, unknown>) => {
+    if (typeof data.text === "string") {
+      result.summary = data.text;
+    }
+  };
+  const handleVerdict = (data: Record<string, unknown>) => {
+    if (typeof data.ready === "boolean" && typeof data.reasoning === "string") {
+      result.verdict = { ready: data.ready, reasoning: data.reasoning };
+    }
+  };
+  const handleStrength = (data: Record<string, unknown>) => {
+    const msg = data.message;
+    if (typeof msg === "string") {
+      result.strengths.push({
+        file: typeof data.file === "string" ? data.file : undefined,
+        line: typeof data.line === "number" ? data.line : undefined,
+        message: msg,
+      });
+    }
+  };
+  const handleIssue = (data: Record<string, unknown>) => {
+    const sev = data.severity;
+    const file = data.file;
+    const line = data.line;
+    const message = data.message;
+    if (typeof sev === "string" && typeof file === "string" && typeof line === "number" && typeof message === "string") {
+      const valid = ["critical", "important", "minor"];
+      if (valid.includes(sev)) {
+        result.issues.push({
+          severity: sev as Issue["severity"],
+          file,
+          line,
+          message,
+          suggestion: typeof data.suggestion === "string" ? data.suggestion : undefined,
+          suggestionCode: typeof data.suggestionCode === "string" ? data.suggestionCode : undefined,
+        });
+      }
+    }
+  };
+  const handleSuggestion = (data: Record<string, unknown>) => {
+    const file = data.file;
+    const line = data.line;
+    const suggestion = data.suggestion;
+    if (typeof file === "string" && typeof line === "number" && typeof suggestion === "string") {
+      result.suggestions.push({ file, line, suggestion });
+    }
+  };
+  switch (parsed.type) {
+    case "summary":
+      handleSummary(parsed.data);
+      break;
+    case "verdict":
+      handleVerdict(parsed.data);
+      break;
+    case "strength":
+      handleStrength(parsed.data);
+      break;
+    case "issue":
+      handleIssue(parsed.data);
+      break;
+    case "suggestion":
+      try {
+        handleSuggestion(parsed.data);
+      } catch {
+        // silently skip
+      }
+      break;
+  }
 }
 
 export async function parseOpencodeFile(filePath: string): Promise<OpencodeResult> {
