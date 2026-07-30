@@ -1,5 +1,4 @@
 import { ProviderUnavailableError } from "./provider.js";
-const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 /**
  * Google Gemini provider. Uses generateContent with the combined prompt text.
  */
@@ -40,9 +39,10 @@ export class GeminiProvider {
     }
     async #generateContent(model, prompt, req) {
         try {
+            const tokens = req.model.maxTokens ?? req.maxTokens;
             const generationConfig = {
                 temperature: req.temperature ?? 0.2,
-                maxOutputTokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+                ...(tokens ? { maxOutputTokens: tokens } : {}),
             };
             if (req.responseFormat === "json_object") {
                 generationConfig.responseMimeType = "application/json";

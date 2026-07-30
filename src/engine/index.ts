@@ -949,7 +949,7 @@ Suggestion: ${finding.suggestion ?? ""}
       const res = await this.ai.complete("fix", [
         { role: "system", content: "You apply minimal, safe code fixes." },
         { role: "user", content: prompt + (attempt > 0 ? "\n\nIMPORTANT: You MUST output ONLY valid JSON. No explanations, no markdown, no extra text. The JSON must parse correctly." : "") },
-      ], { maxTokens: 16384, responseFormat: "json_object" });
+      ], { responseFormat: "json_object" });
 
       const snippet = res.content.length > 500 ? res.content.slice(0, 500) + "..." : res.content;
       logger.info(`applyFix[${iteration}]: AI response len=${res.content.length} preview=${JSON.stringify(snippet)}`);
@@ -1053,7 +1053,7 @@ ${issuesMd}
       const res = await this.ai.complete("fix", [
         { role: "system", content: "You apply minimal, safe code fixes." },
         { role: "user", content: prompt + (attempt > 0 ? "\n\nIMPORTANT: You MUST output ONLY valid JSON. No explanations, no markdown, no extra text. The JSON must parse correctly." : "") },
-      ], { maxTokens: 16384, responseFormat: "json_object" });
+      ], { responseFormat: "json_object" });
 
       const snippet = res.content.length > 500 ? res.content.slice(0, 500) + "..." : res.content;
       logger.info(`batchApplyFix[${iteration}]: AI response len=${res.content.length} preview=${JSON.stringify(snippet)}`);
@@ -1678,7 +1678,7 @@ ${issuesMd}
     if (parsed.truncated && !parsed.parsed) {
       this.truncatedCount++;
       const modelConfig = this.ai.modelForTask(task);
-      const currentTokens = maxTokensOverride ?? modelConfig.maxTokens ?? 4096;
+      const currentTokens = maxTokensOverride ?? modelConfig.maxTokens ?? 65536;
       const doubledTokens = Math.min(currentTokens * 2, 32768);
       logger.warn(`callAI: truncated response for ${file.path} — retrying with maxTokens=${doubledTokens} (was ${currentTokens})`);
       const res2 = await this.ai.complete(task, [

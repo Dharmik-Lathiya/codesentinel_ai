@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ProviderUnavailableError } from "./provider.js";
 import { logger } from "../utils/logger.js";
-const DEFAULT_MAX_TOKENS = 4096;
 /**
  * OpenCode provider. OpenCode exposes an OpenAI-compatible HTTP API, so we call
  * it directly with `fetch` (no extra SDK dependency). The base URL defaults to
@@ -32,11 +31,12 @@ export class OpenCodeProvider {
             return this.completeViaCli(req);
         const url = `${this.baseUrl}/v1/chat/completions`;
         logger.info(`OpenCodeProvider.complete: POST ${url} model=${req.model.model}`);
+        const tokens = req.model.maxTokens ?? req.maxTokens;
         const body = JSON.stringify({
             model: req.model.model,
             messages: req.messages,
             temperature: req.temperature ?? 0.2,
-            max_tokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_TOKENS,
+            ...(tokens ? { max_tokens: tokens } : {}),
             ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
         });
         const doFetch = (auth) => {

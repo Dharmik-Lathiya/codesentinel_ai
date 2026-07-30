@@ -2,8 +2,6 @@ import type { CompletionRequest, CompletionResult, AIProvider } from "./provider
 import { ProviderUnavailableError } from "./provider.js";
 import type { RuntimeSecrets } from "../config/types.js";
 
-const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
-
 /**
  * Google Gemini provider. Uses generateContent with the combined prompt text.
  */
@@ -46,9 +44,10 @@ export class GeminiProvider implements AIProvider {
 
   async #generateContent(model: any, prompt: string, req: CompletionRequest): Promise<any> {
     try {
+      const tokens = req.model.maxTokens ?? req.maxTokens;
       const generationConfig: Record<string, unknown> = {
         temperature: req.temperature ?? 0.2,
-        maxOutputTokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        ...(tokens ? { maxOutputTokens: tokens } : {}),
       };
       if (req.responseFormat === "json_object") {
         generationConfig.responseMimeType = "application/json";

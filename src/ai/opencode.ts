@@ -6,7 +6,7 @@ import { ProviderUnavailableError } from "./provider.js";
 import type { RuntimeSecrets } from "../config/types.js";
 import { logger } from "../utils/logger.js";
 
-const DEFAULT_MAX_TOKENS = 4096;
+
 
 /**
  * OpenCode provider. OpenCode exposes an OpenAI-compatible HTTP API, so we call
@@ -38,11 +38,12 @@ export class OpenCodeProvider implements AIProvider {
     if (this.useCli) return this.completeViaCli(req);
     const url = `${this.baseUrl}/v1/chat/completions`;
     logger.info(`OpenCodeProvider.complete: POST ${url} model=${req.model.model}`);
+    const tokens = req.model.maxTokens ?? req.maxTokens;
     const body = JSON.stringify({
       model: req.model.model,
       messages: req.messages,
       temperature: req.temperature ?? 0.2,
-      max_tokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_TOKENS,
+      ...(tokens ? { max_tokens: tokens } : {}),
       ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
     });
 
