@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync } from "node:fs";
+import { mkdir, readFile, writeFile, rename, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { logger } from "../utils/logger.js";
 
@@ -35,9 +35,11 @@ export function buildCacheKey(filePath: string, pattern: string): string {
 class FileSystemBackend implements CacheBackend {
   constructor(private cacheDir: string) {}
 
-  private ensureDir(): void {
-    if (!existsSync(this.cacheDir)) {
-      mkdirSync(this.cacheDir, { recursive: true });
+  private async ensureDir(): Promise<void> {
+    try {
+      await mkdir(this.cacheDir, { recursive: true });
+    } catch {
+      // ignore - directory may already exist
     }
   }
 
@@ -47,31 +49,30 @@ class FileSystemBackend implements CacheBackend {
 
   async get(key: string): Promise<CacheEntry | null> {
     const path = this.filePath(key);
-    if (!existsSync(path)) return null;
     try {
-      return JSON.parse(readFileSync(path, "utf8")) as CacheEntry;
+      return JSON.parse(await readFile(path, "utf8")) as CacheEntry;
     } catch {
       return null;
     }
   }
 
   async set(key: string, entry: CacheEntry): Promise<void> {
-    this.ensureDir();
+    await this.ensureDir();
     const target = this.filePath(key);
     const tmp = target + ".tmp." + process.pid;
     try {
-      writeFileSync(tmp, JSON.stringify(entry), "utf8");
-      renameSync(tmp, target);
+      await writeFile(tmp, JSON.stringify(entry), "utf8");
+      await rename(tmp, target);
     } catch (err) {
       logger.warn(`Failed to write cache entry ${key}:`, err);
-      try { unlinkSync(tmp); } catch { /* ignore */ }
+      try { await unlink(tmp); } catch { /* ignore */ }
     }
   }
 
   async list(): Promise<string[]> {
-    this.ensureDir();
+    await this.ensureDir();
     try {
-      return readdirSync(this.cacheDir).filter((f) => f.endsWith(".json"));
+      return (await readdir(this.cacheDir)).filter((f) => f.endsWith(".json"));
     } catch {
       return [];
     }
@@ -79,7 +80,7 @@ class FileSystemBackend implements CacheBackend {
 
   async remove(key: string): Promise<void> {
     try {
-      unlinkSync(this.filePath(key));
+      await unlink(this.filePath(key));
     } catch {
       // best-effort
     }
@@ -109,11 +110,13 @@ export class LearningCache {
   }
 
   async get(key: string): Promise<Lesson[]> {
-    const entry = await this.backend.get(key);
-    if (!entry) return [];
-    entry.lessons.forEach((l) => l.hitCount++);
-    await this.backend.set(key, entry);
-    return entry.lessons.map((l) => ({ ...l }));
+    return this.withLock(key, async () => {
+      const entry = await this.backend.get(key);
+      if (!entry) return [];
+      entry.lessons.forEach((l) => l.hitCount++);
+      await this.backend.set(key, entry);
+      return entry.lessons.map((l) => ({ ...l }));
+    });
   }
 
   async set(key: string, lesson: Lesson): Promise<void> {
@@ -127,44 +130,79 @@ export class LearningCache {
           existing.lessons.push(lesson);
         }
         existing.updatedAt = new Date().toISOString();
-        await this.backend.set(key, existing);
+        try {
+          await this.backend.set(key, existing);
+        } catch (err) {
+          logger.warn(`Failed to persist updated cache entry ${key}:`, err);
+        }
       } else {
         const entry: CacheEntry = {
           key,
           lessons: [lesson],
           updatedAt: new Date().toISOString(),
         };
-        await this.backend.set(key, entry);
+        try {
+          await this.backend.set(key, entry);
+        } catch (err) {
+          logger.warn(`Failed to persist new cache entry ${key}:`, err);
+        }
       }
     });
   }
 
   async getAll(): Promise<Lesson[]> {
-    const files = await this.backend.list();
+    let files: string[];
+    try {
+      files = await this.backend.list();
+    } catch {
+      return [];
+    }
     const lessons: Lesson[] = [];
     for (const file of files) {
       const key = file.replace(/\.json$/, "");
-      const entry = await this.backend.get(key);
-      if (entry) lessons.push(...entry.lessons.map((l) => ({ ...l })));
+      try {
+        const entry = await this.backend.get(key);
+        if (entry) lessons.push(...entry.lessons.map((l) => ({ ...l })));
+      } catch {
+        // skip
+      }
     }
     return lessons;
   }
 
   async clear(): Promise<void> {
-    const files = await this.backend.list();
+    let files: string[];
+    try {
+      files = await this.backend.list();
+    } catch {
+      return;
+    }
     for (const file of files) {
       const key = file.replace(/\.json$/, "");
-      await this.backend.remove(key);
+      try {
+        await this.backend.remove(key);
+      } catch {
+        // best-effort
+      }
     }
   }
 
   async getStats(): Promise<{ totalEntries: number; totalLessons: number }> {
-    const files = await this.backend.list();
+    let files: string[];
+    try {
+      files = await this.backend.list();
+    } catch {
+      return { totalEntries: 0, totalLessons: 0 };
+    }
     let totalLessons = 0;
     for (const file of files) {
       const key = file.replace(/\.json$/, "");
-      const entry = await this.backend.get(key);
-      if (entry) totalLessons += entry.lessons.length;
+      try {
+        const entry = await this.backend.get(key);
+        if (entry) totalLessons += entry.lessons.length;
+      } catch {
+        // skip entry on error
+      }
     }
     return { totalEntries: files.length, totalLessons };
   }
