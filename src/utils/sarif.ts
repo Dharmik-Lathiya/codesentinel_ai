@@ -31,9 +31,9 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
-const COMMENT_TRUNCATION_LENGTH = 40;
+const RULE_ID_MAX_LENGTH = 40;
 
-function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
+function createSarifLocation(file: string, line?: number | null): SarifResult["locations"][number] {
   return {
     physicalLocation: {
       artifactLocation: { uri: file },
@@ -69,7 +69,7 @@ export function renderSarif(report: EngineReport): string {
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
-    const ruleId = `${f.category}:${f.comment.slice(0, COMMENT_TRUNCATION_LENGTH).replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const ruleId = f.category.slice(0, RULE_ID_MAX_LENGTH);
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
@@ -80,7 +80,7 @@ export function renderSarif(report: EngineReport): string {
       ruleId,
       level: SEVERITY_MAP[f.severity] ?? "note",
       message: { text: f.comment },
-      locations: [createSarifLocation(f.file, f.line ?? undefined)],
+      locations: [createSarifLocation(f.file, f.line)],
     });
   }
 
