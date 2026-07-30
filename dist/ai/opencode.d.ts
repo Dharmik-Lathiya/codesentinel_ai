@@ -6,12 +6,15 @@ import type { RuntimeSecrets } from "../config/types.js";
  * the local OpenCode gateway and can be overridden via OPENCODE_BASE_URL.
  */
 export declare class OpenCodeProvider implements AIProvider {
+    #private;
     readonly name = "opencode";
     private readonly baseUrl;
     private readonly apiKey;
     private readonly keyWasSet;
     private readonly useCli;
     private readonly cliBinary;
+    /** Serialise CLI invocations so parallel batch calls don't clobber each other's DB. */
+    private static cliLock;
     constructor(secrets: RuntimeSecrets);
     complete(req: CompletionRequest): Promise<CompletionResult>;
     private parseSuccess;

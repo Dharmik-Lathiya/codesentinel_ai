@@ -15,6 +15,8 @@ export class OpenCodeProvider {
     keyWasSet;
     useCli;
     cliBinary;
+    /** Serialise CLI invocations so parallel batch calls don't clobber each other's DB. */
+    static cliLock = Promise.resolve();
     constructor(secrets) {
         this.keyWasSet = !!secrets.opencode_api_key;
         this.apiKey = secrets.opencode_api_key || "opencode";
@@ -160,6 +162,20 @@ export class OpenCodeProvider {
         return ""; // not found
     }
     async completeViaCli(req) {
+        // Serialise on a static lock so parallel batch calls don't corrupt opencode's DB
+        return new Promise((outerResolve, outerReject) => {
+            OpenCodeProvider.cliLock = OpenCodeProvider.cliLock.then(async () => {
+                try {
+                    const result = await this.#doCompleteViaCli(req);
+                    outerResolve(result);
+                }
+                catch (e) {
+                    outerReject(e);
+                }
+            });
+        });
+    }
+    async #doCompleteViaCli(req) {
         const rawModel = req.model.model === "default" ? "deepseek-v4-flash-free" : req.model.model;
         logger.info(`OpenCodeProvider.completeViaCli: model=${rawModel}`);
         const cliModel = rawModel.includes("/") ? rawModel : `opencode/${rawModel}`;
@@ -229,11 +245,11 @@ export class OpenCodeProvider {
             child.stdin.end();
         });
         if (this.cliBinary) {
-            return runChild(this.cliBinary, ["run", "--model", cliModel, "--format", "json", "--pure"]);
+            return await runChild(this.cliBinary, ["run", "--model", cliModel, "--format", "json", "--pure"]);
         }
         // Last resort: npx (auto-installs and runs)
         logger.info("trying npx opencode-ai...");
-        return runChild("npx", [
+        return await runChild("npx", [
             "--yes", "--package", "opencode-ai", "opencode",
             "run", "--model", cliModel, "--format", "json", "--pure",
         ], 180_000);
