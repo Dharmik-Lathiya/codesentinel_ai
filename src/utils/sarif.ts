@@ -33,11 +33,21 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
 
 const COMMENT_TRUNCATION_LENGTH = 40;
 
+function simpleHash(s: string): string {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    const char = s.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
       artifactLocation: { uri: file },
-      ...(line ? { region: { startLine: line } } : {}),
+      ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
 }
@@ -48,7 +58,7 @@ function createToolDriver(
   return {
     name: "CodeSentinel AI",
     version: "0.1.6",
-    rules: [...rules.values()],
+    rules: Array.from(rules.values()),
   };
 }
 
@@ -69,12 +79,15 @@ export function renderSarif(report: EngineReport): string {
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
-    const ruleId = `${f.category}:${f.comment.slice(0, COMMENT_TRUNCATION_LENGTH).replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const ruleId = `${f.category}:${simpleHash(f.comment)}`;
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
         shortDescription: { text: f.comment },
       });
+    }
+    if (!SEVERITY_MAP[f.severity]) {
+      throw new Error(`Unknown severity: "${f.severity}"`);
     }
     results.push({
       ruleId,
