@@ -1,6 +1,7 @@
 import type { Finding } from "../analyzer/index.js";
-const DEFAULT_MAX_FINDINGS = 10;
-const MAX_FINDINGS = DEFAULT_MAX_FINDINGS;
+const CONTEXT_BEFORE = 3;
+const CONTEXT_AFTER = 2;
+const MAX_FINDINGS = 10;
 
 /**
  * Format a finding as a GitHub committable suggestion block.
@@ -29,13 +30,16 @@ export function buildSuggestionsComment(
     const content = fileContents.get(f.file) ?? "";
     const lines = content.split("\n");
     if (f.line && f.line > 0 && f.line <= lines.length) {
-      const ctxBefore = lines.slice(Math.max(0, f.line - 3), f.line - 1).join("\n");
-      const ctxAfter = lines.slice(f.line, Math.min(lines.length, f.line + 2)).join("\n");
+      const ctxBefore = lines.slice(Math.max(0, f.line - CONTEXT_BEFORE), f.line - 1).join("\n");
+      const ctxAfter = lines.slice(f.line, Math.min(lines.length, f.line + CONTEXT_AFTER)).join("\n");
       const context = ctxBefore ? ctxBefore + "\n" : "";
       const after = ctxAfter ? "\n" + ctxAfter : "";
-      const suggested = f.suggestion?.replace(/^```[\s\S]*?\n/gm, "").replace(/```$/gm, "").trim() ?? "";
+      const suggested = f.suggestion?.replace(/^```\w*\n?|```$/g, "").trim() ?? "";
       const code = suggested || `${context}  // ${f.comment}\n${after}`;
-      parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
+      parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
+    } else {
+      const suggested = f.suggestion?.replace(/^```\w*\n?|```$/g, "").trim() ?? "";
+      parts.push(`**${f.file}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${suggested || "// " + f.comment}\n\`\`\`\n`);
     }
   }
   return parts.join("\n---\n");

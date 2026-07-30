@@ -22,13 +22,17 @@ export const WEIGHTS = {
 
 const clamp = (n: number): number => Math.max(0, Math.min(100, Math.round(n)));
 
+
+const MAX_SCORE = 100;
+const HIGH_SEVERITY_PENALTY = 16;
+const CRITICAL_SEVERITY_PENALTY = 30;
 /** Severity penalty weights applied to the security dimension. */
 const SEVERITY_PENALTY: Record<Severity, number> = {
   info: 2,
   low: 4,
   medium: 8,
-  high: 16,
-  critical: 30,
+  high: HIGH_SEVERITY_PENALTY,
+  critical: CRITICAL_SEVERITY_PENALTY,
 };
 
 /**
@@ -52,8 +56,8 @@ export class Scorer {
       .filter((f) => f.category === "smell" || f.category === "style")
       .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity] / 2, 0);
 
-    const security = clamp(100 - securityPenalty);
-    const maintainability = clamp(100 - smellPenalty);
+    const security = clamp(MAX_SCORE - securityPenalty);
+    const maintainability = clamp(MAX_SCORE - smellPenalty);
 
     // Readability proxy: average function length / comment presence.
     const readability = clamp(this.readabilityMetric(files));
@@ -102,7 +106,7 @@ export class Scorer {
       default:
         // Keep the more conservative (lower) security number: static analysis
         // is more reliable for security, so we take the stricter assessment.
-        security = Math.min(ai.security ?? 100, baseline.security);
+        security = Math.min(ai.security ?? MAX_SCORE, baseline.security);
         break;
     }
     const test_coverage = ai.test_coverage ?? baseline.test_coverage;
