@@ -1,5 +1,18 @@
 import type { EngineReport } from "../engine/index.js";
-import { logger } from "../utils/logger.js";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+let PACKAGE_VERSION = "0.1.6";
+try {
+  const pkg = JSON.parse(
+    readFileSync(join(__dirname, "..", "..", "package.json"), "utf8"),
+  ) as { version?: string };
+  PACKAGE_VERSION = pkg.version ?? "0.1.6";
+} catch {
+}
 
 interface SarifResult {
   ruleId: string;
@@ -38,7 +51,7 @@ function createSarifLocation(file: string, line?: number): SarifResult["location
   return {
     physicalLocation: {
       artifactLocation: { uri: file },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      ...(line != null && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }
@@ -48,7 +61,7 @@ function createToolDriver(
 ): { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } {
   return {
     name: "CodeSentinel AI",
-    version: "0.1.6",
+    version: PACKAGE_VERSION,
     rules: Array.from(rules.values()),
   };
 }
@@ -78,9 +91,6 @@ export function renderSarif(report: EngineReport): string {
       });
     }
     const level = SEVERITY_MAP[f.severity] ?? "note";
-    if (!SEVERITY_MAP[f.severity]) {
-      logger.warn(`Unknown severity: "${f.severity}" for finding in ${f.file}; falling back to "note"`);
-    }
     results.push({
       ruleId,
       level,
