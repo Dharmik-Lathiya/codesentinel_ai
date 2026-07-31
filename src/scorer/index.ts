@@ -22,7 +22,6 @@ export const WEIGHTS = {
 
 const clamp = (n: number): number => Math.max(0, Math.min(100, Math.round(n)));
 
-
 const MAX_SCORE = 100;
 const HIGH_SEVERITY_PENALTY = 16;
 const CRITICAL_SEVERITY_PENALTY = 30;
