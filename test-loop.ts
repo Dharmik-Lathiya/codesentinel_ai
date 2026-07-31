@@ -1,21 +1,12 @@
-const LARGE_THRESHOLD = 1000;
-const VERY_LARGE_THRESHOLD = 5000;
 const EXTREME_THRESHOLD = 10000;
 const MULTIPLIER = 4096;
-const RETRIES = 5;
 
 function calculate(x: number): number {
-  let multiplier = MULTIPLIER;
-  for (let i = 0; i < RETRIES; i++) {
-    if (x > EXTREME_THRESHOLD) {
-      multiplier *= 2;
-      break;
-    }
-  }
+  const multiplier = x > EXTREME_THRESHOLD ? MULTIPLIER * 2 : MULTIPLIER;
   return x * multiplier;
 }
 
-export function processData(input: string): { value: number } {
+export function processData(_input: string): { value: number } {
   return { value: 0 };
 }
 import { describe, expect, test } from "vitest";
@@ -23,9 +14,13 @@ import { describe, expect, test } from "vitest";
 describe("calculate", () => {
   test.each([
     [0, 0],
+    [-5, -5 * MULTIPLIER],
     [100, 100 * MULTIPLIER],
-    [LARGE_THRESHOLD, LARGE_THRESHOLD * MULTIPLIER],
-    [VERY_LARGE_THRESHOLD, VERY_LARGE_THRESHOLD * MULTIPLIER],
+    [1000, 1000 * MULTIPLIER],
+    [4999, 4999 * MULTIPLIER],
+    [5000, 5000 * MULTIPLIER],
+    [6000, 6000 * MULTIPLIER],
+    [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER * 2],
   ])("boundary value %i", (input, expected) => {
