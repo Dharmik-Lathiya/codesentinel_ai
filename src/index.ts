@@ -18,7 +18,7 @@ const MAX_SCORE = 100;
 const MAX_ISSUE_BODY_LENGTH = 8000;
 const NODE_VERSION = 20;
 
-const WORKFLOW_CONTENT = [
+export const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
   "# Uses pre-built composite action (no TypeScript compilation needed)",
   "# Setup time: ~30s vs ~5min for npm install + tsc build",
@@ -61,8 +61,11 @@ const WORKFLOW_CONTENT = [
 "                issue_number: context.issue.number,",
 "                body: '\u{1F504} **CodeSentinel** is analyzing this issue and generating an implementation plan...'",
 "              });",
-"              core.setOutput('comment_id', comment.id);",
-"            } catch (err) {",
+  "              core.setOutput('comment_id', comment.id);",
+  "              // Base64-encode untrusted issue title/body before expression interpolation",
+  "              core.setOutput('issue_title', Buffer.from(context.payload.issue.title || '', 'utf8').toString('base64'));",
+`              core.setOutput('issue_body', Buffer.from((context.payload.issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}), 'utf8').toString('base64'));`,
+  "            } catch (err) {",
 "              core.setFailed(err.message);",
 "            }",
   "",
@@ -74,8 +77,8 @@ const WORKFLOW_CONTENT = [
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
   "        with:",
   "          mode: plan",
-  "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+  "          issue_title: ${{ steps.loading.outputs.issue_title }}",
+  "          issue_body: ${{ steps.loading.outputs.issue_body }}",
   "          use_opencode_cli: \"false\"",
   "",
 "      - name: Update comment with plan",
@@ -166,8 +169,8 @@ const WORKFLOW_CONTENT = [
   "              owner: context.repo.owner, repo: context.repo.repo,",
   "              issue_number: context.issue.number",
   "            });",
-  "            core.setOutput('title', issue.title);",
-`            core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));`,
+  "            core.setOutput('title', Buffer.from(issue.title || '', 'utf8').toString('base64'));",
+`            core.setOutput('body', Buffer.from((issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}), 'utf8').toString('base64'));`,
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
@@ -198,7 +201,7 @@ const WORKFLOW_CONTENT = [
   "            });",
 ].join("\n");
 
-const BUILD_WORKFLOW_CONTENT = [
+export const BUILD_WORKFLOW_CONTENT = [
   "name: CodeSentinel Build Fix",
   "",
   "on:",
@@ -274,8 +277,8 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            # Push with a one-shot credential so the token never persists in .git/config",
+  "            git -c credential.helper= -c http.extraheader=\"AUTHORIZATION: basic $(printf 'x-access-token:%s' \"$GIT_PUSH_TOKEN\" | base64 -w0)\" push origin HEAD:${{ github.ref_name }} 2>&1",
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
@@ -346,22 +349,25 @@ function runSetup(): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
 }
 
-function showHelp(): void {
-  let pkg;
+export function readVersion(): string {
   try {
-    pkg = JSON.parse(
+    const pkg = JSON.parse(
       readFileSync(join(__dirname, "..", "package.json"), "utf8"),
     );
+    return pkg.version ?? "unknown";
   } catch {
-    pkg = { version: "unknown" };
+    return "unknown";
   }
-  process.stdout.write(`CodeSentinel AI v${pkg.version}
+}
+
+function showHelp(): void {
+  process.stdout.write(`CodeSentinel AI v${readVersion()}
 AI-powered code review, fix, audit, scoring, and test generation.
 
 Usage:
@@ -435,15 +441,42 @@ Examples:
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
-  process.stdout.write(`${pkg.version}\n`);
+  process.stdout.write(`${readVersion()}\n`);
+}
+
+export interface DismissArgs {
+  rule?: string;
+  file?: string;
+  line?: string;
+  ruleId?: string;
+  reason: string;
+}
+
+/**
+ * Parse `codesentinel dismiss` arguments. Flags are parsed first; only the
+ * trailing free arguments form the reason, so a rule ID or file path is never
+ * mistaken for a reason.
+ */
+export function parseDismissArgs(args: string[]): DismissArgs {
+  const { values, positionals } = parseArgs({
+    options: {
+      rule: { type: "string" },
+      file: { type: "string" },
+      line: { type: "string" },
+      "rule-id": { type: "string" },
+    },
+    args,
+    allowPositionals: true,
+    strict: false,
+  });
+  return {
+    rule: typeof values.rule === "string" ? values.rule : undefined,
+    file: typeof values.file === "string" ? values.file : undefined,
+    line: typeof values.line === "string" ? values.line : undefined,
+    ruleId:
+      typeof values["rule-id"] === "string" ? values["rule-id"] : undefined,
+    reason: positionals.length > 0 ? positionals.join(" ") : "dismissed by user",
+  };
 }
 
 /**
@@ -505,30 +538,17 @@ async function main(): Promise<void> {
       opencode_base_url: process.env.OPENCODE_BASE_URL,
     };
     const engine = Engine.fromInputs({ secrets });
-    const dismissArgs = args.slice(1);
-    const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
-    const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
+    const parsed = parseDismissArgs(args.slice(1));
+    const reason = parsed.reason;
 
-    if (dismissArgs.includes("--rule")) {
-      const ruleIdx = dismissArgs.indexOf("--rule");
-      const ruleId = dismissArgs[ruleIdx + 1];
-      if (!ruleId) {
-        process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-        return;
-      }
-      await engine.dismissByRule(ruleId, reason);
-      process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
-    } else if (dismissArgs.includes("--file")) {
-      const fileIdx = dismissArgs.indexOf("--file");
-      const filePath = dismissArgs[fileIdx + 1];
-      const lineIdx = dismissArgs.indexOf("--line");
-      const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
+    if (parsed.rule) {
+      await engine.dismissByRule(parsed.rule, reason);
+      process.stdout.write(`✅ Dismissed rule: ${parsed.rule}\n`);
+    } else if (parsed.file) {
+      const filePath = parsed.file;
+      const rawLine = parsed.line;
       const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
-      if (!filePath) {
-        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
-        return;
-      }
-      const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
+      const ruleIdArg = parsed.ruleId ?? `${filePath}:${lineNum ?? "all"}`;
       await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
       process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
@@ -606,9 +626,13 @@ async function main(): Promise<void> {
   if (values.context) overrides.project_context = values.context;
   if (values["improve-type"]) overrides.improve_type = values["improve-type"];
 
-  // Issue plan mode — read from env (set by GitHub Actions workflow)
-  const issueTitle = process.env.INPUT_ISSUE_TITLE;
-  const issueBody = process.env.INPUT_ISSUE_BODY;
+  // Issue plan mode — read from env (set by GitHub Actions workflow). Values are
+  // base64-encoded in the generated workflow to prevent expression injection
+  // from untrusted issue title/body data, so decode them here.
+  const decodeIssueInput = (raw: string | undefined): string | undefined =>
+    raw ? Buffer.from(raw, "base64").toString("utf8") : undefined;
+  const issueTitle = decodeIssueInput(process.env.INPUT_ISSUE_TITLE);
+  const issueBody = decodeIssueInput(process.env.INPUT_ISSUE_BODY);
   if (issueTitle) overrides.issue_title = issueTitle;
   if (issueBody) overrides.issue_body = issueBody;
 
@@ -745,7 +769,14 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  logger.error("Fatal:", err);
-  process.exitCode = 1;
-});
+// Only run the CLI when executed directly — importing this module (e.g. from
+// tests) must not trigger a full run.
+const isMainModule =
+  !!process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
+  main().catch((err) => {
+    logger.error("Fatal:", err);
+    process.exitCode = 1;
+  });
+}
