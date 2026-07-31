@@ -135,7 +135,7 @@ export class Engine {
     if (config.use_opencode_cli && !aiOverride) {
       secrets = { ...secrets, use_opencode_cli: "true" };
     }
-    this.ai = aiOverride ?? new AIHub(config, secrets);
+    this.ai = aiOverride ?? new AIHub(config, secrets, root);
     if (aiOverride) this.aiAvailable = true;
     this.prompts = new PromptRegistry(config);
     this.cache = new FileCache(resolve(root, config.cache_dir));

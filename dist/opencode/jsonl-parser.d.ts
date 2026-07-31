@@ -2,9 +2,6 @@ export interface OpencodeLine {
     type: "summary" | "verdict" | "strength" | "issue" | "suggestion";
     data: Record<string, unknown>;
 }
-export interface ReviewSummary {
-    text: string;
-}
 export interface Verdict {
     ready: boolean;
     reasoning: string;
@@ -31,10 +28,7 @@ export interface Suggestion {
 }
 export interface OpencodeResult {
     summary: string;
-    verdict: {
-        ready: boolean;
-        reasoning: string;
-    };
+    verdict: Verdict;
     strengths: Strength[];
     issues: Issue[];
     suggestions: Suggestion[];

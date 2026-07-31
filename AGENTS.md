@@ -26,7 +26,7 @@ AI-powered code quality orchestrator. Review PRs, auto-fix issues, audit repos, 
 - Name: `@dharmiklathiya/codesentinel_ai` (npm), ESM (`"type": "module"`), Node >=18
 - Dual export: `"."` for library (`dist/lib.js`), `"./cli"` for CLI (`dist/index.js`)
 - Optional deps: `openai`, `@anthropic-ai/sdk`, `@google/generative-ai`, `probot` — only install what you use
-- Runtime env: `OPENCODE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GITHUB_TOKEN`, `OPENCODE_BASE_URL`
+- Runtime env: `OPENCODE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GITHUB_TOKEN`, `OPENCODE_BASE_URL`, `OPENCODE_CLI_TIMEOUT_MINUTES` (opencode run CLI timeout, default 20)
 
 ## GitHub Action
 - `action.yml` — reusable composite action, `node20` runtime, outputs `score` + `findings`

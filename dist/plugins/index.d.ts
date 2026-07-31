@@ -11,6 +11,7 @@ export interface PluginContext {
     logger: {
         info: (...a: unknown[]) => void;
         warn: (...a: unknown[]) => void;
+        error: (...a: unknown[]) => void;
     };
 }
 export interface CodeSentinelPlugin {
