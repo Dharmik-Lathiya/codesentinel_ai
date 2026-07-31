@@ -9,7 +9,6 @@ const MAX_FINDINGS = 10;
  */
 export function formatSuggestion(
   finding: Finding,
-  originalCode: string,
   suggestedCode: string,
 ): string {
   const header = `**${finding.severity.toUpperCase()}** — ${finding.comment}`;
@@ -30,15 +29,15 @@ export function buildSuggestionsComment(
     const content = fileContents.get(f.file) ?? "";
     const lines = content.split("\n");
     if (f.line && f.line > 0 && f.line <= lines.length) {
-      const ctxBefore = lines.slice(Math.max(0, f.line - CONTEXT_BEFORE), f.line - 1).join("\n");
+      const ctxBefore = lines.slice(Math.max(0, f.line - 1 - CONTEXT_BEFORE), f.line - 1).join("\n");
       const ctxAfter = lines.slice(f.line, Math.min(lines.length, f.line + CONTEXT_AFTER)).join("\n");
       const context = ctxBefore ? ctxBefore + "\n" : "";
       const after = ctxAfter ? "\n" + ctxAfter : "";
-      const suggested = f.suggestion?.replace(/^```\w*\n?|```$/g, "").trim() ?? "";
-      const code = suggested || `${context}  // ${f.comment}\n${after}`;
+      const suggested = f.suggestion?.replace(/^```\w*\s*|```\s*$/g, "").trim() ?? "";
+      const code = suggested ? `${context}${suggested}\n${after}` : `${context}  // ${f.comment}\n${after}`;
       parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
     } else {
-      const suggested = f.suggestion?.replace(/^```\w*\n?|```$/g, "").trim() ?? "";
+      const suggested = f.suggestion?.replace(/^```\w*\s*|```\s*$/g, "").trim() ?? "";
       parts.push(`**${f.file}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${suggested || "// " + f.comment}\n\`\`\`\n`);
     }
   }
