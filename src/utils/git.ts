@@ -15,7 +15,7 @@ export async function git(args: string[], cwd = process.cwd()): Promise<string> 
     const { stdout } = await exec("git", args, { cwd, maxBuffer: MAX_BUFFER });
     return stdout;
   } catch (err) {
-    logger.error(`git command failed: git ${args.join(' ')}`, err);
+    logger.error(`git command failed (cwd: ${cwd})`, err);
     throw err;
   }
 }
