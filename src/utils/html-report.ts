@@ -28,7 +28,7 @@ export function renderHtmlReport(report: EngineReport): string {
     .map((f) => {
       const color = severityColors[f.severity] ?? "#6b7280";
       return `<tr>
-        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${f.severity}</span></td>
+        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
         <td>${escapeHtml(f.file)}${f.line ? `:${f.line}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
@@ -94,7 +94,7 @@ export function renderHtmlReport(report: EngineReport): string {
     <div class="card">
       <div class="label">Findings</div>
       <div class="value">${report.findings.length}</div>
-      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${s}`).join(", ") || "none"}</div>
+      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
     </div>
     ${
       report.score
@@ -131,7 +131,7 @@ export function renderHtmlReport(report: EngineReport): string {
         return `<div class="bar">
         <div class="bar-value">${count}</div>
         <div class="bar-fill" style="height:${height}%;background:${severityColors[sev] ?? "#6b7280"}"></div>
-        <div class="bar-label">${sev}</div>
+        <div class="bar-label">${escapeHtml(sev)}</div>
       </div>`;
       })
       .join("\n    ")}
@@ -150,7 +150,7 @@ export function renderHtmlReport(report: EngineReport): string {
         return `<div class="bar">
         <div class="bar-value">${count}</div>
         <div class="bar-fill" style="height:${height}%;background:#6366f1"></div>
-        <div class="bar-label">${cat}</div>
+        <div class="bar-label">${escapeHtml(cat)}</div>
       </div>`;
       })
       .join("\n    ")}
