@@ -2,32 +2,38 @@ const LARGE_THRESHOLD = 1000;
 const VERY_LARGE_THRESHOLD = 5000;
 const EXTREME_THRESHOLD = 10000;
 const MULTIPLIER = 4096;
-const RETRIES = 5;
 
 function calculate(x: number): number {
   let multiplier = MULTIPLIER;
-  for (let i = 0; i < RETRIES; i++) {
-    if (x > EXTREME_THRESHOLD) {
-      multiplier *= 2;
-      break;
-    }
+  if (x > EXTREME_THRESHOLD) {
+    multiplier *= 2;
+  }
+  if (!Number.isFinite(x)) {
+    return x;
+  }
+  if (x > Number.MAX_SAFE_INTEGER / multiplier) {
+    throw new RangeError("input exceeds Number.MAX_SAFE_INTEGER");
   }
   return x * multiplier;
 }
 
-export function processData(input: string): { value: number } {
+export function processData(_input: string): { value: number } {
   return { value: 0 };
 }
 import { describe, expect, test } from "vitest";
 
 describe("calculate", () => {
   test.each([
-    [0, 0],
-    [100, 100 * MULTIPLIER],
-    [LARGE_THRESHOLD, LARGE_THRESHOLD * MULTIPLIER],
-    [VERY_LARGE_THRESHOLD, VERY_LARGE_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER * 2],
+[0, 0],
+[100, 409600],
+[LARGE_THRESHOLD, 4096000],
+[1001, 4100096],
+[VERY_LARGE_THRESHOLD, 20480000],
+[9999, 40955904],
+[EXTREME_THRESHOLD, 40960000],
+[EXTREME_THRESHOLD + 1, 81928192],
+[-5, -20480],
+[Infinity, Infinity],
   ])("boundary value %i", (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
