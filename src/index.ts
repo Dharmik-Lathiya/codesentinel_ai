@@ -703,7 +703,7 @@ async function main(): Promise<void> {
   if (values.sarif) {
     process.stdout.write(renderSarif(report) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
-      process.exit(1);
+      throw new Error("Gate check failed");
     }
     return;
   }
@@ -739,11 +739,11 @@ async function main(): Promise<void> {
 
   // Exit non-zero if gate fails
   if (report.mode === "gate" && report.gatePassed === false) {
-    process.exit(1);
+    throw new Error("Gate check failed");
   }
 }
 
 main().catch((err) => {
   logger.error("Fatal:", err);
-  process.exit(1);
+  process.exitCode = 1;
 });
