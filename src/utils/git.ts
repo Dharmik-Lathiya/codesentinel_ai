@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -25,8 +25,8 @@ export interface DiffFile {
   diff: string;
   /** Full (post-change) content of the file, if it still exists. */
   content: string;
-  /** Status: added | modified | deleted | renamed. */
-  status: "added" | "modified" | "deleted" | "renamed";
+  /** Status: added | modified | deleted. */
+  status: "added" | "modified" | "deleted";
 }
 
 /**
@@ -49,10 +49,19 @@ export async function collectDiff(
       throw err;
     }
   }
+  if (baseRef.startsWith("-")) {
+    throw new Error(`Invalid base ref: ${baseRef}`);
+  }
+  if (!(await refExists(baseRef, cwd))) {
+    throw new Error(`Base ref does not exist: ${baseRef}`);
+  }
+  // The three-dot form collapses to an empty diff when the base is HEAD, so
+  // diff against the working tree directly in that fallback case.
+  const diffBase = baseRef === "HEAD" ? baseRef : baseRef + "...";
   let nameStatus: string;
   try {
     nameStatus = await git(
-      ["diff", "--name-status", "--no-renames", baseRef + "..."],
+      ["diff", "--name-status", "--no-renames", diffBase],
       cwd,
     );
   } catch (err) {
@@ -60,33 +69,34 @@ export async function collectDiff(
     return [];
   }
 
-  const lines = nameStatus
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
+  const lines = nameStatus.split("\n").filter(Boolean);
 
-  const files: DiffFile[] = [];
-  for (const line of lines) {
-    const [statusCode, path] = line.split(/\t/);
-    if (!statusCode || !path) continue;
-    const status = mapStatus(statusCode);
-    let content = "";
-    if (status !== "deleted") {
-      try {
-        content = readFileSync(resolve(cwd, path), "utf8");
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
+  const files = await Promise.all(
+    lines.map(async (line): Promise<DiffFile | null> => {
+      const tab = line.indexOf("\t");
+      if (tab < 0) return null;
+      const statusCode = line.slice(0, tab);
+      const path = line.slice(tab + 1);
+      if (!statusCode || !path) return null;
+      const status = mapStatus(statusCode);
+      let content = "";
+      if (status !== "deleted") {
+        try {
+          content = await readFile(resolve(cwd, path), "utf8");
+        } catch {
+          logger.debug(`Could not read content for ${path}`);
+        }
       }
-    }
-    let diff = "";
-    try {
-      diff = await git(["diff", baseRef + "...", "--", path], cwd);
-    } catch {
-      logger.debug(`Could not collect diff for ${path}`);
-    }
-    files.push({ path, status, content, diff });
-  }
-  return files;
+      let diff = "";
+      try {
+        diff = await git(["diff", diffBase, "--", path], cwd);
+      } catch {
+        logger.debug(`Could not collect diff for ${path}`);
+      }
+      return { path, status, content, diff };
+    }),
+  );
+  return files.filter((f): f is DiffFile => f !== null);
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
@@ -120,6 +130,5 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code.startsWith("R")) return "renamed";
   return "modified";
 }
