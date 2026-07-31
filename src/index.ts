@@ -647,11 +647,16 @@ async function main(): Promise<void> {
   }
   if (values["yaml-config"]) {
     const searchPaths = [".opencode-reviewer.yml", ".codesentinel.yml", "codesentinel.config.yml"];
+    let found = false;
     for (const p of searchPaths) {
       if (existsSync(resolve(process.cwd(), p))) {
         overrides.configFile = p;
+        found = true;
         break;
       }
+    }
+    if (!found) {
+      process.stderr.write(`[codesentinel:warn] No YAML config found. Searched: ${searchPaths.join(", ")}\n`);
     }
   }
 

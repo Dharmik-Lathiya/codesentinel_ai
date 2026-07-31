@@ -8,22 +8,27 @@ export async function concurrentMap<T, R>(
   concurrency: number = 5,
 ): Promise<(R | Error)[]> {
   if (!Array.isArray(items)) throw new TypeError('items must be an array');
-  if (concurrency < 1) throw new Error('concurrency must be >= 1');
-  const results: (R | Error)[] = new Array(items.length);
+  if (!Number.isInteger(concurrency) || concurrency < 1) throw new RangeError('concurrency must be a positive integer');
+  const dense = Array.from(items);
+  const results: (R | Error)[] = new Array(dense.length);
   let nextIndex = 0;
 
   async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
+    while (nextIndex < dense.length) {
       const index = nextIndex++;
       try {
-        results[index] = await fn(items[index], index);
+        results[index] = await fn(dense[index], index);
       } catch (error) {
         results[index] = error instanceof Error ? error : new Error(String(error));
       }
     }
   }
 
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
-  await Promise.all(workers);
+  const workers = Array.from({ length: Math.min(concurrency, dense.length) }, () => worker());
+  try {
+    await Promise.all(workers);
+  } catch (error) {
+    throw error;
+  }
   return results;
 }
