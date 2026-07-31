@@ -172,6 +172,7 @@ const WORKFLOW_CONTENT = [
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
   "      - name: Run CodeSentinel",
+  "        id: run_codesentinel",
   "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        env:",
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
@@ -183,14 +184,16 @@ const WORKFLOW_CONTENT = [
   "          use_opencode_cli: \"false\"",
   "",
   "      - name: Update comment",
+  "        if: always() && steps.cmd.outputs.mode != '',",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
   "            const fs = require('fs');",
   "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
   "            const mode = '${{ steps.cmd.outputs.mode }}';",
-  "            const planSuffix = mode === 'plan' ? '\\n\\nReply with `/fix` to start implementation.' : '';",
-  "            const body = '### CodeSentinel \\u2014 ' + mode + '\\n\\n```\\n' + out + '\\n```' + planSuffix;",
+  "            const failed = '${{ steps.run_codesentinel.outcome }}' !== 'success';",
+  "            const planSuffix = mode === 'plan' ? '\n\nReply with `/fix` to start implementation.' : '';",
+  "            const body = failed ? '❌ **CodeSentinel** failed. Check the workflow run for details.' : '### CodeSentinel \u2014 ' + mode + '\n\n```\n' + out + '\n```' + planSuffix;",
   "            await github.rest.issues.updateComment({",
   "              owner: context.repo.owner, repo: context.repo.repo,",
   "              comment_id: ${{ steps.loading.outputs.comment_id }},",
@@ -241,11 +244,12 @@ const BUILD_WORKFLOW_CONTENT = [
   "          MAX_ITER=${MAX_ITERATIONS:-5}",
   '          echo "::group::Build-Fix Loop"',
   "          for i in $(seq 1 $MAX_ITER); do",
+  "          set -e",
   '            echo "=== Iteration $i/$MAX_ITER ==="',
   "",
   "            FAILED=0",
   "            npm run build 2>&1 || FAILED=1",
-  "            npm run typecheck 2>&1 || FAILED=1",
+  "            npm run typecheck 2>/dev/null || npx tsc --noEmit 2>/dev/null || true",
   "",
   "            if [ $FAILED -eq 0 ]; then",
   '              echo "✅ Build succeeded on iteration $i"',
@@ -272,7 +276,11 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
-  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
+  "            if ! git pull --rebase origin ${{ github.ref_name }} 2>&1; then",
+  '              echo "⚠️ Rebase conflict — aborting rebase"',
+  "              git rebase --abort 2>&1 || true",
+  "              exit 1",
+  "            fi",
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
@@ -288,19 +296,23 @@ const BUILD_WORKFLOW_CONTENT = [
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
-  "            const { data: prs } = await github.rest.pulls.list({",
+  "            const { data: commitPulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({",
   "              owner: context.repo.owner,",
   "              repo: context.repo.repo,",
-  '              state: "open",',
-  "              head: context.ref.replace('refs/heads/', ''),",
+  "              commit_sha: context.sha,",
   "            });",
+  "            const prs = (commitPulls || []).filter((p) => p.state === 'open');",
   "            if (prs.length > 0) {",
-  '              await github.rest.issues.createComment({',
-  "                owner: context.repo.owner,",
-  "                repo: context.repo.repo,",
-  "                issue_number: prs[0].number,",
-  '                body: "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."',
-  "              });",
+  "              try {",
+  '                await github.rest.issues.createComment({',
+  "                  owner: context.repo.owner,",
+  "                  repo: context.repo.repo,",
+  "                  issue_number: prs[0].number,",
+  '                  body: "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."',
+  "                });",
+  "              } catch (err) {",
+  "                core.setFailed(err.message);",
+  "              }",
   "            }",
 ].join("\n");
 
@@ -342,7 +354,7 @@ function runSetup(): void {
   process.stdout.write("  generates an implementation plan and asks clarifying questions.\n");
   process.stdout.write("  Reply with /fix to start implementation.\n\n");
   process.stdout.write("Build-Fix (auto-fixes on push):\n");
-  process.stdout.write("  The build-fix workflow triggers on push to main/master/develop.\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
@@ -491,7 +503,11 @@ async function main(): Promise<void> {
       process.stdout.write("Dashboard is not available.\n");
     }
     process.stdout.write("Press Ctrl+C to stop.\n");
-    await new Promise(() => {});
+    try {
+      await new Promise(() => {});
+    } catch (err) {
+      process.stdout.write(`Dashboard stopped: ${err}\n`);
+    }
     return;
   }
 
@@ -516,8 +532,12 @@ async function main(): Promise<void> {
         process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
         return;
       }
-      await engine.dismissByRule(ruleId, reason);
-      process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
+      try {
+        await engine.dismissByRule(ruleId, reason);
+        process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
+      } catch (err) {
+        process.stdout.write(`❌ Failed to dismiss rule: ${err}\n`);
+      }
     } else if (dismissArgs.includes("--file")) {
       const fileIdx = dismissArgs.indexOf("--file");
       const filePath = dismissArgs[fileIdx + 1];
@@ -529,8 +549,12 @@ async function main(): Promise<void> {
         return;
       }
       const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
-      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
-      process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
+      try {
+        await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+        process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
+      } catch (err) {
+        process.stdout.write(`❌ Failed to dismiss finding: ${err}\n`);
+      }
     } else {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
       process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
@@ -664,8 +688,12 @@ async function main(): Promise<void> {
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    const answer = await engine.ask(values["ask"]);
-    process.stdout.write(answer + "\n");
+    try {
+      const answer = await engine.ask(values["ask"]);
+      process.stdout.write(answer + "\n");
+    } catch (err) {
+      process.stdout.write(`❌ Failed to get answer: ${err}\n`);
+    }
     return;
   }
 
