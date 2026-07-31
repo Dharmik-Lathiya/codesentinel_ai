@@ -352,17 +352,7 @@ function runSetup(): void {
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
 }
 
-function showHelp(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
-  process.stdout.write(`CodeSentinel AI v${pkg.version}
-AI-powered code review, fix, audit, scoring, and test generation.
+const HELP_TEXT = `AI-powered code review, fix, audit, scoring, and test generation.
 
 Usage:
   codesentinel [mode] [options]
@@ -431,7 +421,19 @@ Examples:
   codesentinel dashboard
   codesentinel deadcode
   codesentinel describe
-`);
+`;
+
+function showHelp(): void {
+  let pkg;
+  try {
+    pkg = JSON.parse(
+      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
+    );
+  } catch {
+    pkg = { version: "unknown" };
+  }
+  process.stdout.write(`CodeSentinel AI v${pkg.version}
+${HELP_TEXT}`);
 }
 
 function showVersion(): void {
@@ -516,7 +518,13 @@ async function main(): Promise<void> {
         process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
         return;
       }
-      await engine.dismissByRule(ruleId, reason);
+      try {
+        await engine.dismissByRule(ruleId, reason);
+      } catch (err) {
+        logger.error("Failed to dismiss rule:", err);
+        process.stdout.write(`❌ Failed to dismiss rule: ${ruleId}\n`);
+        return;
+      }
       process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
     } else if (dismissArgs.includes("--file")) {
       const fileIdx = dismissArgs.indexOf("--file");
@@ -529,7 +537,13 @@ async function main(): Promise<void> {
         return;
       }
       const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
-      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+      try {
+        await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+      } catch (err) {
+        logger.error("Failed to dismiss finding:", err);
+        process.stdout.write(`❌ Failed to dismiss finding: ${filePath}\n`);
+        return;
+      }
       process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
@@ -664,8 +678,13 @@ async function main(): Promise<void> {
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    const answer = await engine.ask(values["ask"]);
-    process.stdout.write(answer + "\n");
+    try {
+      const answer = await engine.ask(values["ask"]);
+      process.stdout.write(answer + "\n");
+    } catch (err) {
+      logger.error("Failed to get answer:", err);
+      process.exitCode = 1;
+    }
     return;
   }
 
@@ -677,7 +696,14 @@ async function main(): Promise<void> {
       path,
       content: readText(resolve(root, path)),
     }));
-    const findings = await engine.runDeadCode(files);
+    let findings;
+    try {
+      findings = await engine.runDeadCode(files);
+    } catch (err) {
+      logger.error("Failed to run deadcode analysis:", err);
+      process.exitCode = 1;
+      return;
+    }
     if (findings.length === 0) {
       process.stdout.write("✅ No unused exports detected.\n");
     } else {
@@ -690,7 +716,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const report = await engine.run();
+  let report;
+  try {
+    report = await engine.run();
+  } catch (err) {
+    logger.error("Failed to run CodeSentinel:", err);
+    process.exitCode = 1;
+    return;
+  }
 
   // JSON output mode
   if (values.json) {
