@@ -1,7 +1,5 @@
-const LARGE_THRESHOLD = 1000;
-const VERY_LARGE_THRESHOLD = 5000;
-const EXTREME_THRESHOLD = 10000;
-const MULTIPLIER = 4096;
+export const EXTREME_THRESHOLD = 10000;
+export const MULTIPLIER = 4096;
 const RETRIES = 5;
 
 function calculate(x: number): number {
@@ -22,13 +20,11 @@ import { describe, expect, test } from "vitest";
 
 describe("calculate", () => {
   test.each([
-    [0, 0],
-    [100, 100 * MULTIPLIER],
-    [LARGE_THRESHOLD, LARGE_THRESHOLD * MULTIPLIER],
-    [VERY_LARGE_THRESHOLD, VERY_LARGE_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER * 2],
-  ])("boundary value %i", (input, expected) => {
+    ["zero input", 0, 0],
+    ["below EXTREME_THRESHOLD uses base multiplier", 100, 100 * MULTIPLIER],
+    ["at EXTREME_THRESHOLD is not escalated (strict >)", EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
+    ["EXTREME_THRESHOLD + 1 escalates multiplier", EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER * 2],
+  ])("%s", (_name, input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
 });
