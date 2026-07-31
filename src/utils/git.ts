@@ -10,12 +10,20 @@ const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER = 64 * MEGABYTE;
 
 /** Run a git command in the given cwd, returning stdout. */
-export async function git(args: string[], cwd = process.cwd()): Promise<string> {
+export async function git(
+  args: string[],
+  cwd = process.cwd(),
+  options: { quiet?: boolean } = {},
+): Promise<string> {
   try {
     const { stdout } = await exec("git", args, { cwd, maxBuffer: MAX_BUFFER });
     return stdout;
   } catch (err) {
-    logger.error(`git command failed: git ${args.join(' ')}`, err);
+    if (options.quiet) {
+      logger.debug(`git command failed: git ${args.join(' ')}`, err);
+    } else {
+      logger.error(`git command failed: git ${args.join(' ')}`, err);
+    }
     throw err;
   }
 }
@@ -58,8 +66,8 @@ export async function collectDiff(
       cwd,
     );
   } catch (err) {
-    logger.warn(`Failed to collect diff against "${baseRef}":`, err);
-    return [];
+    logger.error(`Failed to collect diff against "${baseRef}":`, err);
+    throw err;
   }
 
   const lines = nameStatus
@@ -73,18 +81,26 @@ export async function collectDiff(
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     let content = "";
+    let diff = "";
     if (status !== "deleted") {
       try {
-        content = readFileSync(resolve(cwd, path), "utf8");
+        const raw = readFileSync(resolve(cwd, path));
+        if (raw.includes(0)) {
+          diff = "Binary file (diff not shown)";
+        } else {
+          content = raw.toString("utf8");
+        }
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
     }
-    let diff = "";
-    try {
-      diff = await git(["diff", baseRef + "...", "--", path], cwd);
-    } catch {
-      logger.debug(`Could not collect diff for ${path}`);
+    if (!diff) {
+      try {
+        diff = await git(["diff", baseRef + "...", "--", path], cwd);
+      } catch {
+        logger.debug(`Could not collect diff for ${path}`);
+        continue;
+      }
     }
     files.push({ path, status, content, diff });
   }
@@ -105,7 +121,7 @@ async function defaultBaseRef(cwd: string): Promise<string> {
     }
   }
 
-  const candidates = ["origin/main", "origin/master", "main", "master"];
+  const candidates = ["origin/main", "origin/master", "origin/develop", "main", "master"];
   for (const ref of candidates) {
     if (await refExists(ref, cwd)) return ref;
   }
@@ -115,7 +131,7 @@ async function defaultBaseRef(cwd: string): Promise<string> {
 
 async function refExists(ref: string, cwd: string): Promise<boolean> {
   try {
-    await git(["rev-parse", "--verify", ref], cwd);
+    await git(["rev-parse", "--verify", ref], cwd, { quiet: true });
     return true;
   } catch {
     logger.debug(`Ref ${ref} does not exist`);
@@ -126,6 +142,5 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code.startsWith("R")) return "renamed";
   return "modified";
 }
