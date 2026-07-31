@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -238,6 +238,7 @@ const BUILD_WORKFLOW_CONTENT = [
 '          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}',
 '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
 '          CODESENTINEL_GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN }}',
+'          MAX_ITERATIONS: 5',
   "        run: |",
   "          MAX_ITER=${MAX_ITERATIONS:-5}",
   '          echo "::group::Build-Fix Loop"',
@@ -256,17 +257,22 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   '            echo "❌ Build failed. Running auto-fix..."',
   "",
-  "            if [ ! -d \"codesentinel\" ]; then",
-  '              echo "Cloning CodeSentinel..."',
   "            if [ ! -d \"$RUNNER_TEMP/codesentinel\" ]; then",
   '              echo "Cloning CodeSentinel..."',
   "              git clone --depth 1 https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git \"$RUNNER_TEMP/codesentinel\"",
   '              cd "$RUNNER_TEMP/codesentinel" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>&1 && cd ..',
   "            fi",
   "",
-  '            node "$RUNNER_TEMP/codesentinel/dist/index.js" fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
+  '            node "$RUNNER_TEMP/codesentinel/dist/index.js" fix --auto-fix 2>&1',
+  "            FIX_EXIT=$?",
+  "            if [ $FIX_EXIT -ne 0 ]; then",
+  '              echo "❌ CodeSentinel fix command failed (exit $FIX_EXIT) — not committing"',
+  "              continue",
+  "            fi",
   "",
   "            git add -u",
+  "            if [ -z \"$(git diff --cached --name-only)\" ]; then",
+  '              echo "Fix produced no changes — skipping commit"',
   "              continue",
   "            fi",
   "",
@@ -316,19 +322,25 @@ function runSetup(): void {
   const workflowDir = join(cwd, ".github", "workflows");
   const workflowPath = join(workflowDir, "codesentinel.yml");
   const buildWorkflowPath = join(workflowDir, "codesentinel-build.yml");
+  const force = process.argv.includes("--force");
 
-  if (existsSync(workflowPath)) {
-    process.stdout.write(`Overwriting existing workflow...\n`);
-  }
   mkdirSync(workflowDir, { recursive: true });
-  writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
-  process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
 
-  if (existsSync(buildWorkflowPath)) {
-    process.stdout.write(`Overwriting existing build-fix workflow...\n`);
-  }
-  writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
-  process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
+  const writeWorkflow = (path: string, content: string, label: string): void => {
+    const existed = existsSync(path);
+    if (existed && !force) {
+      const backupPath = `${path}.bak`;
+      copyFileSync(path, backupPath);
+      process.stdout.write(`⚠️  ${label} exists — backed up to ${backupPath}. Use --force to overwrite.\n`);
+      return;
+    }
+    writeFileSync(path, content, "utf8");
+    process.stdout.write(`✅ ${existed ? "Overwrote" : "Created"} ${label}\n`);
+  };
+
+  writeWorkflow(workflowPath, WORKFLOW_CONTENT, ".github/workflows/codesentinel.yml");
+  writeWorkflow(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, ".github/workflows/codesentinel-build.yml");
+  process.stdout.write("\n");
 
   process.stdout.write("Next steps:\n");
   process.stdout.write("  git add .github/workflows/\n");
@@ -353,7 +365,7 @@ function runSetup(): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
@@ -376,7 +388,7 @@ Usage:
   codesentinel setup
 
 Commands:
-  setup               Create GitHub Actions workflow in current project
+  setup               Create GitHub Actions workflow in current project (--force to overwrite)
   init-hook           Install git hook (add --type post-commit for build-fix loop)
   dashboard           Start web dashboard
   dismiss <finding>   Dismiss a false positive finding
@@ -513,7 +525,17 @@ async function main(): Promise<void> {
     };
     const engine = Engine.fromInputs({ secrets });
     const dismissArgs = args.slice(1);
-    const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
+    const flagValueArgs = new Set(["--rule", "--file", "--line", "--rule-id"]);
+    let reasonIdx = -1;
+    for (let i = 0; i < dismissArgs.length; i++) {
+      const a = dismissArgs[i];
+      if (a.startsWith("--")) {
+        if (flagValueArgs.has(a)) i++;
+        continue;
+      }
+      reasonIdx = i;
+      break;
+    }
     const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
 
     if (dismissArgs.includes("--rule")) {
