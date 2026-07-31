@@ -16,7 +16,7 @@ export async function git(args: string[], cwd = process.cwd()): Promise<string> 
     const { stdout } = await exec("git", args, { cwd, maxBuffer: MAX_BUFFER });
     return stdout;
   } catch (err) {
-    logger.error(`git command failed: git ${args.join(' ')}`, err);
+    logger.error(`git command failed: git ${JSON.stringify(args)}`, err);
     throw err;
   }
 }
@@ -45,17 +45,12 @@ export async function collectDiff(
   if (base) {
     baseRef = base;
   } else {
-    try {
-      baseRef = await defaultBaseRef(cwd);
-    } catch (err) {
-      logger.error("Failed to determine default base ref", err);
-      throw err;
-    }
+    baseRef = await defaultBaseRef(cwd);
   }
   let nameStatus: string;
   try {
     nameStatus = await git(
-      ["diff", "--name-status", "--no-renames", baseRef + "..."],
+      ["diff", "--name-status", "-z", "--no-renames", baseRef + "..."],
       cwd,
     );
   } catch (err) {
@@ -63,14 +58,12 @@ export async function collectDiff(
     return [];
   }
 
-  const lines = nameStatus
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
+  const tokens = nameStatus.split("\0").filter(Boolean);
 
   const files: DiffFile[] = [];
-  for (const line of lines) {
-    const [statusCode, path] = line.split(/\t/);
+  for (let i = 0; i + 1 < tokens.length; i += 2) {
+    const statusCode = tokens[i];
+    const path = tokens[i + 1];
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     let content = "";
@@ -81,14 +74,17 @@ export async function collectDiff(
         logger.debug(`Could not read content for ${path}`);
       }
     }
-    let diff = "";
-    try {
-      diff = await git(["diff", baseRef + "...", "--", path], cwd);
-    } catch {
-      logger.debug(`Could not collect diff for ${path}`);
-    }
-    files.push({ path, status, content, diff });
+    files.push({ path, status, content, diff: "" });
   }
+  await Promise.all(
+    files.map(async (file) => {
+      try {
+        file.diff = await git(["diff", baseRef + "...", "--", file.path], cwd);
+      } catch {
+        logger.debug(`Could not collect diff for ${file.path}`);
+      }
+    }),
+  );
   return files;
 }
 
@@ -131,6 +127,5 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code.startsWith("R")) return "renamed";
   return "modified";
 }
