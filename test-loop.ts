@@ -1,28 +1,22 @@
-const TIMEOUT = 30000;
 const LARGE_THRESHOLD = 1000;
 const VERY_LARGE_THRESHOLD = 5000;
 const EXTREME_THRESHOLD = 10000;
 const MULTIPLIER = 4096;
+const RETRIES = 5;
 
-function calculate(x: number) {
-  const timeout = TIMEOUT;
-  const retries = 5;
-  for (let i = 0; i < retries; i++) {
+function calculate(x: number): number {
+  let multiplier = MULTIPLIER;
+  for (let i = 0; i < RETRIES; i++) {
     if (x > EXTREME_THRESHOLD) {
-      // No action needed
+      multiplier *= 2;
+      break;
     }
   }
-  return x * MULTIPLIER;
+  return x * multiplier;
 }
 
-export function processData(input: string) {
-  const result = { value: 0 };
-  try {
-    JSON.parse(input);
-  } catch {
-    // empty catch
-  }
-  return result;
+export function processData(input: string): { value: number } {
+  return { value: 0 };
 }
 import { describe, expect, test } from "vitest";
 
@@ -33,7 +27,7 @@ describe("calculate", () => {
     [LARGE_THRESHOLD, LARGE_THRESHOLD * MULTIPLIER],
     [VERY_LARGE_THRESHOLD, VERY_LARGE_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER],
+    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER * 2],
   ])("boundary value %i", (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
