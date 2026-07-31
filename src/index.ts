@@ -16,6 +16,8 @@ const DEFAULT_GATE_MIN_SCORE = 70;
 const PARSE_INT_RADIX = 10;
 const MAX_SCORE = 100;
 
+const MAX_ISSUE_BODY_LENGTH = 8000;
+const NODE_VERSION = "20";
 const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
   "# Uses pre-built composite action (no TypeScript compilation needed)",
@@ -165,7 +167,7 @@ const WORKFLOW_CONTENT = [
   "              issue_number: context.issue.number",
   "            });",
   "            core.setOutput('title', issue.title);",
-  "            core.setOutput('body', (issue.body || '').slice(0, 8000));",
+`            core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));`,
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
@@ -221,7 +223,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   "      - uses: actions/setup-node@v4",
   "        with:",
-  "          node-version: 20",
+`          node-version: ${NODE_VERSION}`,
   "",
   "      - name: Install dependencies (fast — no devDeps, no scripts)",
   "        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --omit=dev --ignore-scripts --no-audit --no-fund",
@@ -376,7 +378,7 @@ Modes:
   review      Analyze code for bugs, security, performance, smells (default)
   fix         Auto-fix issues with verification loop
   audit       Full repo security/performance/architecture audit
-  score       Compute 0-100 quality score across 4 dimensions
+  score       Compute 0-${MAX_SCORE} quality score across 4 dimensions
   testgen     Generate unit tests for untested functions
   chat        Ask questions about the codebase (--ask required)
   gate        Run quality gate (exit non-zero on threshold breach)
@@ -399,7 +401,7 @@ Options:
   --learning-db <path>        Enable self-learning store at path
   --yaml-config               Enable YAML config file discovery (.opencode-reviewer.yml)
   --log-level <level>         Log level: debug | info | warn | error
-  --min-score <n>             Minimum score to pass gate (0-100)
+  --min-score <n>             Minimum score to pass gate (0-${MAX_SCORE})
   --max-critical <n>          Max critical findings allowed in gate
   --max-high <n>              Max high findings allowed in gate
   --version                   Show version number
