@@ -8,12 +8,20 @@ const exec = promisify(execFile);
 const MAX_BUFFER = 64 * 1024 * 1024;
 
 /** Run a git command in the given cwd, returning stdout. */
-export async function git(args: string[], cwd = process.cwd()): Promise<string> {
+export async function git(
+  args: string[],
+  cwd = process.cwd(),
+  options: { quiet?: boolean } = {},
+): Promise<string> {
   try {
     const { stdout } = await exec("git", args, { cwd, maxBuffer: MAX_BUFFER });
     return stdout;
   } catch (err) {
-    logger.error(`git command failed: git ${args.join(' ')}`, err);
+    if (options.quiet) {
+      logger.debug(`git command failed: git ${args.join(' ')}`, err);
+    } else {
+      logger.error(`git command failed: git ${args.join(' ')}`, err);
+    }
     throw err;
   }
 }
@@ -49,10 +57,12 @@ export async function collectDiff(
       throw err;
     }
   }
+  const rangeArgs = baseRef === "HEAD" ? [] : [baseRef + "..."];
+
   let nameStatus: string;
   try {
     nameStatus = await git(
-      ["diff", "--name-status", "--no-renames", baseRef + "..."],
+      ["diff", "--name-status", "--no-renames", ...rangeArgs],
       cwd,
     );
   } catch (err) {
@@ -64,6 +74,14 @@ export async function collectDiff(
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
+
+  let treeDiff = "";
+  try {
+    treeDiff = await git(["diff", "--no-renames", ...rangeArgs], cwd);
+  } catch {
+    logger.debug("Could not collect tree diff");
+  }
+  const diffByPath = splitDiffByPath(treeDiff);
 
   const files: DiffFile[] = [];
   for (const line of lines) {
@@ -78,13 +96,7 @@ export async function collectDiff(
         logger.debug(`Could not read content for ${path}`);
       }
     }
-    let diff = "";
-    try {
-      diff = await git(["diff", baseRef + "...", "--", path], cwd);
-    } catch {
-      logger.debug(`Could not collect diff for ${path}`);
-    }
-    files.push({ path, status, content, diff });
+    files.push({ path, status, content, diff: diffByPath.get(path) ?? "" });
   }
   return files;
 }
@@ -101,15 +113,31 @@ async function defaultBaseRef(cwd: string): Promise<string> {
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch {
+      logger.debug(`Could not check ref ${ref}`);
+    }
   }
-  // Fall back to merge-base with the default remote branch.
+  // Fall back to the configured upstream branch.
+  try {
+    const upstream = await git(
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+      cwd,
+      { quiet: true },
+    );
+    const branch = upstream.trim();
+    if (branch) return branch;
+  } catch {
+    // no upstream configured
+  }
+  // Fall back to the working tree diff (collectDiff treats "HEAD" as unstaged).
   return "HEAD";
 }
 
 async function refExists(ref: string, cwd: string): Promise<boolean> {
   try {
-    await git(["rev-parse", "--verify", ref], cwd);
+    await git(["rev-parse", "--verify", ref], cwd, { quiet: true });
     return true;
   } catch {
     logger.debug(`Ref ${ref} does not exist`);
@@ -117,9 +145,28 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
   }
 }
 
+/** Split a combined git diff into per-file diffs keyed by path. */
+function splitDiffByPath(diffText: string): Map<string, string> {
+  const byPath = new Map<string, string>();
+  const chunks = diffText.split(/(?=^diff --git )/m);
+  for (const chunk of chunks) {
+    const trimmed = chunk.trim();
+    if (!trimmed) continue;
+    const header = trimmed.split("\n")[0];
+    const path = headerPath(header);
+    if (path) byPath.set(path, chunk);
+  }
+  return byPath;
+}
+
+/** Extract the post-change path from a `diff --git` header line. */
+function headerPath(header: string): string | undefined {
+  const match = header.match(/^diff --git a\/.*? b\/(.*)$/);
+  return match?.[1];
+}
+
 function mapStatus(code: string): DiffFile["status"] {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code.startsWith("R")) return "renamed";
   return "modified";
 }
