@@ -20,7 +20,7 @@ export const WEIGHTS = {
   test_coverage: 0.2,
 } as const;
 
-const clamp = (n: number): number => Math.max(0, Math.min(100, Math.round(n)));
+const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
 
 
 const MAX_SCORE = 100;
@@ -48,22 +48,34 @@ export class Scorer {
     files: { path: string; content: string }[],
     findings: Finding[],
   ): ScoreBreakdown {
+    if (files.length === 0) {
+      return this.finalize({
+        readability: 0,
+        maintainability: 0,
+        security: 0,
+        test_coverage: 0,
+        rationale:
+          "No files were scanned; the score is an explicit neutral default," +
+          " not a perfect score.",
+      });
+    }
+
     const securityPenalty = findings
       .filter((f) => f.category === "security")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity], 0);
+      .reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0), 0);
 
     const smellPenalty = findings
       .filter((f) => f.category === "smell" || f.category === "style")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity] / 2, 0);
+      .reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0) / 2, 0);
 
-    const security = clamp(MAX_SCORE - securityPenalty);
-    const maintainability = clamp(MAX_SCORE - smellPenalty);
+    const security = MAX_SCORE - securityPenalty;
+    const maintainability = MAX_SCORE - smellPenalty;
 
     // Readability proxy: average function length / comment presence.
-    const readability = clamp(this.readabilityMetric(files));
+    const readability = this.readabilityMetric(files);
 
     // Test coverage proxy: ratio of source files that have a sibling test.
-    const testCoverage = clamp(this.coverageMetric(files));
+    const testCoverage = this.coverageMetric(files);
 
     return this.finalize({
       readability,
@@ -151,7 +163,7 @@ export class Scorer {
       const score = 100 - longLines * 2 + commentRatio * 20;
       total += Math.max(20, score);
     }
-    return fileCount ? total / fileCount : 100;
+    return fileCount ? total / fileCount : 0;
   }
 
   /** Coverage heuristic: fraction of source files that have a related test. */
@@ -164,7 +176,7 @@ export class Scorer {
         .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
     );
     const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
-    if (sourceFiles.length === 0) return 100;
+    if (sourceFiles.length === 0) return 0;
     let covered = 0;
     for (const f of sourceFiles) {
       const base = f.path.replace(/\.[^.]+$/, "");
