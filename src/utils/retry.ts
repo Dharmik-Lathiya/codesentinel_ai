@@ -22,6 +22,17 @@ export interface RetryOptions {
 }
 
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
+  const status =
+    typeof err === "object" && err !== null && "status" in err
+      ? String((err as { status: unknown }).status)
+      : "";
+  if (
+    status === HTTP_STATUS_RATE_LIMIT ||
+    status === HTTP_STATUS_SERVICE_UNAVAILABLE ||
+    status === HTTP_STATUS_BAD_GATEWAY
+  ) {
+    return true;
+  }
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
     return (
