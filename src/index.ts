@@ -85,6 +85,7 @@ const WORKFLOW_CONTENT = [
 "            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
 "            try {",
 "              await github.rest.issues.updateComment({",
+"        if: success()",
 "                owner: context.repo.owner, repo: context.repo.repo,",
 "                comment_id: ${{ steps.loading.outputs.comment_id }},",
 "                body: body",
@@ -198,6 +199,7 @@ const WORKFLOW_CONTENT = [
 
 const BUILD_WORKFLOW_CONTENT = [
   "name: CodeSentinel Build Fix",
+"        if: success()",
   "",
   "on:",
   "  push:",
@@ -227,7 +229,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --omit=dev --ignore-scripts --no-audit --no-fund",
   "",
   "      - name: Build and auto-fix loop",
-  "        env:",
+"    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}",
   '          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}',
   '          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}',
   '          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}',
@@ -240,8 +242,8 @@ const BUILD_WORKFLOW_CONTENT = [
   '          echo "::group::Build-Fix Loop"',
   "          for i in $(seq 1 $MAX_ITER); do",
   '            echo "=== Iteration $i/$MAX_ITER ==="',
-  "",
-  "            FAILED=0",
+"      - name: Install dependencies",
+"        run: npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund",
   "            npm run build 2>&1 || FAILED=1",
   "            npm run typecheck 2>&1 || FAILED=1",
   "",
@@ -289,8 +291,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "            const { data: prs } = await github.rest.pulls.list({",
   "              owner: context.repo.owner,",
   "              repo: context.repo.repo,",
-  '              state: "open",',
-  "              head: context.ref.replace('refs/heads/', ''),",
+"            git push \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" HEAD:${{ github.ref_name }} 2>&1",
   "            });",
   "            if (prs.length > 0) {",
   '              await github.rest.issues.createComment({',
@@ -523,8 +524,15 @@ async function main(): Promise<void> {
       const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
       const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
       if (!filePath) {
-        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
-        return;
+    let lastConsumedIdx = -1;
+    for (let i = 0; i < dismissArgs.length; i++) {
+      if (dismissArgs[i] === "--rule" || dismissArgs[i] === "--file" || dismissArgs[i] === "--line" || dismissArgs[i] === "--rule-id") {
+        lastConsumedIdx = i + 1;
+      }
+    }
+    const reason = lastConsumedIdx >= 0 && dismissArgs.length > lastConsumedIdx + 1
+      ? dismissArgs.slice(lastConsumedIdx + 1).join(" ")
+      : "dismissed by user";
       }
       const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
       await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
