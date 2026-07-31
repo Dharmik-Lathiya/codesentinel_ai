@@ -15,7 +15,7 @@ function calculate(x: number): number {
   return x * multiplier;
 }
 
-export function processData(input: string): { value: number } {
+export function processData(_input: string): { value: number } {
   return { value: 0 };
 }
 import { describe, expect, test } from "vitest";
