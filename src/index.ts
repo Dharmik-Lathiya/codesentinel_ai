@@ -5,8 +5,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Engine } from "./engine/index.js";
-import type { Mode, RuntimeSecrets } from "./config/types.js";
+import type { Mode, Provider, ModelConfig, GateConfig, CodeSentinelConfig, RuntimeSecrets } from "./config/types.js";
 import { logger } from "./utils/logger.js";
+import type { LogLevel } from "./utils/logger.js";
+import { DEFAULT_LEARNING_CONFIG, DEFAULT_MCP_CONFIG } from "./config/defaults.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
@@ -15,6 +17,27 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GATE_MIN_SCORE = 70;
 const PARSE_INT_RADIX = 10;
 const MAX_SCORE = 100;
+const LOG_LEVELS: Record<string, LogLevel> = { debug: "debug", info: "info", warn: "warn", error: "error" };
+
+function buildSecrets(): RuntimeSecrets {
+  return {
+    github_token: process.env.GITHUB_TOKEN,
+    openai_api_key: process.env.OPENAI_API_KEY,
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+    gemini_api_key: process.env.GEMINI_API_KEY,
+    opencode_api_key: process.env.OPENCODE_API_KEY,
+    opencode_base_url: process.env.OPENCODE_BASE_URL,
+  };
+}
+
+function parseIntFlag(value: string, flag: string, min: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < min) {
+    process.stderr.write(`Invalid value for --${flag}: "${value}" (expected an integer >= ${min}).\n`);
+    process.exit(1);
+  }
+  return n;
+}
 
 const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
@@ -85,6 +108,7 @@ const WORKFLOW_CONTENT = [
 "            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
 "            try {",
 "              await github.rest.issues.updateComment({",
+"        if: success()",
 "                owner: context.repo.owner, repo: context.repo.repo,",
 "                comment_id: ${{ steps.loading.outputs.comment_id }},",
 "                body: body",
@@ -198,6 +222,7 @@ const WORKFLOW_CONTENT = [
 
 const BUILD_WORKFLOW_CONTENT = [
   "name: CodeSentinel Build Fix",
+"        if: success()",
   "",
   "on:",
   "  push:",
@@ -227,7 +252,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --omit=dev --ignore-scripts --no-audit --no-fund",
   "",
   "      - name: Build and auto-fix loop",
-  "        env:",
+"    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}",
   '          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}',
   '          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}',
   '          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}',
@@ -240,8 +265,8 @@ const BUILD_WORKFLOW_CONTENT = [
   '          echo "::group::Build-Fix Loop"',
   "          for i in $(seq 1 $MAX_ITER); do",
   '            echo "=== Iteration $i/$MAX_ITER ==="',
-  "",
-  "            FAILED=0",
+"      - name: Install dependencies",
+"        run: npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund",
   "            npm run build 2>&1 || FAILED=1",
   "            npm run typecheck 2>&1 || FAILED=1",
   "",
@@ -289,8 +314,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "            const { data: prs } = await github.rest.pulls.list({",
   "              owner: context.repo.owner,",
   "              repo: context.repo.repo,",
-  '              state: "open",',
-  "              head: context.ref.replace('refs/heads/', ''),",
+"            git push \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" HEAD:${{ github.ref_name }} 2>&1",
   "            });",
   "            if (prs.length > 0) {",
   '              await github.rest.issues.createComment({',
@@ -472,14 +496,7 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dashboard") {
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-      opencode_base_url: process.env.OPENCODE_BASE_URL,
-    };
+    const secrets = buildSecrets();
     const engine = Engine.fromInputs({ secrets });
     const dash = engine.getDashboard();
     if (dash) {
@@ -494,14 +511,7 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dismiss") {
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-      opencode_base_url: process.env.OPENCODE_BASE_URL,
-    };
+    const secrets = buildSecrets();
     const engine = Engine.fromInputs({ secrets });
     const dismissArgs = args.slice(1);
     const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
@@ -523,8 +533,15 @@ async function main(): Promise<void> {
       const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
       const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
       if (!filePath) {
-        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
-        return;
+    let lastConsumedIdx = -1;
+    for (let i = 0; i < dismissArgs.length; i++) {
+      if (dismissArgs[i] === "--rule" || dismissArgs[i] === "--file" || dismissArgs[i] === "--line" || dismissArgs[i] === "--rule-id") {
+        lastConsumedIdx = i + 1;
+      }
+    }
+    const reason = lastConsumedIdx >= 0 && dismissArgs.length > lastConsumedIdx + 1
+      ? dismissArgs.slice(lastConsumedIdx + 1).join(" ")
+      : "dismissed by user";
       }
       const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
       await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
@@ -580,29 +597,22 @@ async function main(): Promise<void> {
   }
 
   if (values["log-level"]) {
-    logger.level = values["log-level"] as any;
+    logger.level = LOG_LEVELS[values["log-level"]] ?? "info";
   }
   if (values.json) {
     logger.setJsonMode(true);
   }
 
-  const secrets: RuntimeSecrets = {
-    github_token: process.env.GITHUB_TOKEN,
-    openai_api_key: process.env.OPENAI_API_KEY,
-    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-    gemini_api_key: process.env.GEMINI_API_KEY,
-    opencode_api_key: process.env.OPENCODE_API_KEY,
-    opencode_base_url: process.env.OPENCODE_BASE_URL,
-  };
+  const secrets = buildSecrets();
 
-  const overrides: Record<string, unknown> = {};
+  const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
-  if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
+  if (values["max-iterations"]) overrides.max_iterations = parseIntFlag(values["max-iterations"], "max-iterations", 1);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
-  if (values["improve-type"]) overrides.improve_type = values["improve-type"];
+  if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
   const issueTitle = process.env.INPUT_ISSUE_TITLE;
@@ -610,18 +620,16 @@ async function main(): Promise<void> {
   if (issueTitle) overrides.issue_title = issueTitle;
   if (issueBody) overrides.issue_body = issueBody;
 
-  if (values["min-score"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), minScore: Number(values["min-score"]) };
-  }
-  if (values["max-critical"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), maxCritical: Number(values["max-critical"]) };
-  }
-  if (values["max-high"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), maxHigh: Number(values["max-high"]) };
+  if (values["min-score"] || values["max-critical"] || values["max-high"]) {
+    const gate: Partial<GateConfig> = {};
+    if (values["min-score"]) gate.minScore = parseIntFlag(values["min-score"], "min-score", 0);
+    if (values["max-critical"]) gate.maxCritical = parseIntFlag(values["max-critical"], "max-critical", 0);
+    if (values["max-high"]) gate.maxHigh = parseIntFlag(values["max-high"], "max-high", 0);
+    overrides.gate = gate as GateConfig;
   }
 
   if (values.provider) {
-    const providerModel = { provider: values.provider as any, model: "default" };
+    const providerModel: ModelConfig = { provider: values.provider as Provider, model: "default" };
     overrides.default_model = providerModel;
     overrides.models = {
       review: providerModel,
@@ -633,11 +641,12 @@ async function main(): Promise<void> {
       describe: providerModel,
     };
   }
+  // --dry-run wins over --auto-fix: never write files in dry-run mode.
   if (values["dry-run"]) overrides.enable_auto_fix = false;
   if (values.jsonl) overrides.jsonl_output = true;
-  if (values.mcp) overrides.mcp = { ...(overrides.mcp as any || {}), enabled: true };
+  if (values.mcp) overrides.mcp = { ...(overrides.mcp ?? DEFAULT_MCP_CONFIG), enabled: true };
   if (values["learning-db"]) {
-    overrides.learning = { ...(overrides.learning as any || {}), enabled: true, dbPath: values["learning-db"] };
+    overrides.learning = { ...(overrides.learning ?? DEFAULT_LEARNING_CONFIG), enabled: true, dbPath: values["learning-db"] };
   }
   if (values["use-opencode-cli"]) {
     overrides.use_opencode_cli = true;
@@ -654,7 +663,7 @@ async function main(): Promise<void> {
 
   const engine = Engine.fromInputs({
     configPath: values.config,
-    overrides: overrides as any,
+    overrides,
     secrets,
   });
 
@@ -694,7 +703,7 @@ async function main(): Promise<void> {
   if (values.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
-    throw new Error("Gate check failed");
+      process.exit(1);
     }
     return;
   }
