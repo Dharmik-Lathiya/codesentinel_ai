@@ -17,6 +17,7 @@ const PARSE_INT_RADIX = 10;
 const MAX_SCORE = 100;
 const MAX_ISSUE_BODY_LENGTH = 8000;
 const NODE_VERSION = 20;
+const DEFAULT_OPENCODE_CLI_TIMEOUT_MINUTES = 20;
 
 const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
@@ -415,7 +416,7 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_OPENCODE_CLI_TIMEOUT_MINUTES} minutes)
   CODESENTINEL_LOG_LEVEL      Default log level
 
 Examples:
