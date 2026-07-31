@@ -18,12 +18,16 @@ function calculate(x: number): number {
 export function processData(input: string): { value: number } {
   return { value: 0 };
 }
+    [-100, -100 * MULTIPLIER],
+    [100.5, 100.5 * MULTIPLIER],
+    [NaN, NaN],
+    [Infinity, Infinity],
 import { describe, expect, test } from "vitest";
 
 describe("calculate", () => {
   test.each([
     [0, 0],
-    [100, 100 * MULTIPLIER],
+  ])("boundary value %s", (input, expected) => {
     [LARGE_THRESHOLD, LARGE_THRESHOLD * MULTIPLIER],
     [VERY_LARGE_THRESHOLD, VERY_LARGE_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
