@@ -1,6 +1,7 @@
 /**
  * Execute async operations with bounded concurrency. Returns results in input order.
  * Errors are collected per-item; the caller is responsible for filtering.
+ * Note: an Error value that `fn` resolves to (rather than throws) is treated as a successful result.
  */
 export async function concurrentMap<T, R>(
   items: T[],
@@ -8,22 +9,27 @@ export async function concurrentMap<T, R>(
   concurrency: number = 5,
 ): Promise<(R | Error)[]> {
   if (!Array.isArray(items)) throw new TypeError('items must be an array');
-  if (concurrency < 1) throw new Error('concurrency must be >= 1');
+  if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error('concurrency must be a positive integer');
   const results: (R | Error)[] = new Array(items.length);
+  const total = items.length;
   let nextIndex = 0;
 
   async function worker(): Promise<void> {
-    while (nextIndex < items.length) {
+    while (nextIndex < total) {
       const index = nextIndex++;
       try {
         results[index] = await fn(items[index], index);
       } catch (error) {
-        results[index] = error instanceof Error ? error : new Error(String(error));
+        results[index] = error instanceof Error ? error : new Error(JSON.stringify(error) ?? String(error), { cause: error });
       }
     }
   }
 
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
-  await Promise.all(workers);
+  const workers = Array.from({ length: Math.min(concurrency, total) }, () => worker());
+  try {
+    await Promise.all(workers);
+  } catch {
+    // Unreachable: worker() already captures per-item errors, so Promise.all never rejects.
+  }
   return results;
 }
