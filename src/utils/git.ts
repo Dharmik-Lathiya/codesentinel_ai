@@ -5,7 +5,10 @@ import { resolve } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
-const MAX_BUFFER = 64 * 1024 * 1024;
+const BYTES_PER_KIB = 1024;
+const BYTES_PER_MIB = 1024 * BYTES_PER_KIB;
+const MAX_BUFFER_MIB = 64;
+const MAX_BUFFER = MAX_BUFFER_MIB * BYTES_PER_MIB;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(args: string[], cwd = process.cwd()): Promise<string> {
@@ -95,8 +98,16 @@ async function defaultBaseRef(cwd: string): Promise<string> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-    if (await refExists(remoteBase, cwd)) return remoteBase;
-    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    try {
+      if (await refExists(remoteBase, cwd)) return remoteBase;
+    } catch {
+      logger.debug(`Could not verify ref ${remoteBase}`);
+    }
+    try {
+      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    } catch {
+      logger.debug(`Could not verify ref ${githubBaseRef}`);
+    }
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
