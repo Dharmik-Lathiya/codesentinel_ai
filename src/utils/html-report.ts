@@ -8,6 +8,12 @@ const SEVERITY_COLORS: Record<string, string> = {
   info: "#6b7280",
 };
 
+const STATUS_COLORS = {
+  verified: "#16a34a",
+  applied: "#d97706",
+  skipped: "#6b7280",
+};
+
 const BOLD_FONT_WEIGHT = "700";
 const H2_COLOR = "#334155";
 const SHADOW_ALPHA = "0.08";
@@ -32,9 +38,9 @@ export function renderHtmlReport(report: EngineReport): string {
     .map((f) => {
       const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
       return `<tr>
-        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${f.severity}</span></td>
+        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
-        <td>${escapeHtml(f.file)}${f.line ? `:${f.line}` : ""}</td>
+        <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
         <td>${f.suggestion ? escapeHtml(f.suggestion) : "—"}</td>
       </tr>`;
@@ -44,7 +50,7 @@ export function renderHtmlReport(report: EngineReport): string {
   const fixRows = report.fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
+      const statusColor = a.fixed ? (a.verified ? STATUS_COLORS.verified : STATUS_COLORS.applied) : STATUS_COLORS.skipped;
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
@@ -63,7 +69,7 @@ export function renderHtmlReport(report: EngineReport): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CodeSentinel — ${report.mode} Report</title>
+  <title>CodeSentinel — ${escapeHtml(report.mode)} Report</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
@@ -91,14 +97,14 @@ export function renderHtmlReport(report: EngineReport): string {
 </head>
 <body>
 <div class="container">
-  <h1>CodeSentinel — ${report.mode} Report</h1>
+  <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
   <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
 
   <div class="cards">
     <div class="card">
       <div class="label">Findings</div>
       <div class="value">${report.findings.length}</div>
-      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${s}`).join(", ") || "none"}</div>
+      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
     </div>
     ${renderScoreCard(report.score)}
     <div class="card">
@@ -154,7 +160,7 @@ function renderSeverityChart(report: EngineReport): string {
         return `<div class="bar">
         <div class="bar-value">${count}</div>
         <div class="bar-fill" style="height:${height}%;background:${SEVERITY_COLORS[sev] ?? "#6b7280"}"></div>
-        <div class="bar-label">${sev}</div>
+        <div class="bar-label">${escapeHtml(sev)}</div>
       </div>`;
       })
       .join("\n    ")}
@@ -214,8 +220,8 @@ function escapeHtml(s: string): string {
 }
 
 function scoreColor(score: number): string {
-  if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
-  if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
+  if (score >= SCORE_GREEN_THRESHOLD) return STATUS_COLORS.verified;
+  if (score >= SCORE_ORANGE_THRESHOLD) return STATUS_COLORS.applied;
   if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
   return "#dc2626";
 }
