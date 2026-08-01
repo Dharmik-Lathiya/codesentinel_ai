@@ -16,7 +16,12 @@ function calculate(x: number): number {
 }
 
 export function processData(input: string): { value: number } {
-  return { value: 0 };
+  try {
+    const parsed = JSON.parse(input);
+    return { value: parsed.value };
+  } catch {
+    return { value: 0 };
+  }
 }
 import { describe, expect, test } from "vitest";
 
@@ -34,8 +39,8 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test("valid JSON returns the default result", () => {
-    expect(processData('{"value":42}')).toEqual({ value: 0 });
+  test("valid JSON returns the parsed value", () => {
+    expect(processData('{"value":42}')).toEqual({ value: 42 });
   });
 
   test("invalid JSON does not throw and returns the default result", () => {

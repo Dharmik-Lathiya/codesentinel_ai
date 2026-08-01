@@ -10,6 +10,7 @@ import { logger } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
+import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GATE_MIN_SCORE = 70;
@@ -416,7 +417,7 @@ Environment Variables:
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
   OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
-  CODESENTINEL_LOG_LEVEL      Default log level
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
 
 Examples:
   codesentinel setup
