@@ -1,4 +1,18 @@
+import { readFileSync } from "node:fs";
 import type { EngineReport } from "../engine/index.js";
+
+function readToolDriverVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+    ) as { version?: string };
+    return pkg.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+const TOOL_DRIVER_VERSION = readToolDriverVersion();
 
 interface SarifResult {
   ruleId: string;
@@ -46,8 +60,8 @@ function simpleHash(s: string): string {
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: file },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      artifactLocation: { uri: encodeURI(file).replace(/#/g, "%23") },
+      ...(line != null && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }
@@ -57,7 +71,7 @@ function createToolDriver(
 ): { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } {
   return {
     name: "CodeSentinel AI",
-    version: "0.1.6",
+    version: TOOL_DRIVER_VERSION,
     rules: Array.from(rules.values()),
   };
 }
