@@ -1,4 +1,5 @@
 import type { EngineReport } from "../engine/index.js";
+import pkg from "../../package.json";
 
 interface SarifResult {
   ruleId: string;
@@ -12,8 +13,13 @@ interface SarifResult {
   }>;
 }
 
+interface SarifRule {
+  id: string;
+  shortDescription: { text: string };
+}
+
 interface SarifRun {
-  tool: { driver: { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } };
+  tool: { driver: { name: string; version: string; rules: SarifRule[] } };
   results: SarifResult[];
 }
 
@@ -43,17 +49,17 @@ function createSarifLocation(file: string, line?: number): SarifResult["location
 }
 
 function createToolDriver(
-  rules: Map<string, { id: string; shortDescription: { text: string } }>
-): { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } {
+  rules: Map<string, SarifRule>
+): { name: string; version: string; rules: SarifRule[] } {
   return {
     name: "CodeSentinel AI",
-    version: "0.1.6",
+    version: pkg.version,
     rules: Array.from(rules.values()),
   };
 }
 
 function createSarifRun(
-  rules: Map<string, { id: string; shortDescription: { text: string } }>,
+  rules: Map<string, SarifRule>,
   results: SarifResult[]
 ): SarifRun {
   return {
@@ -65,7 +71,7 @@ function createSarifRun(
 }
 
 export function renderSarif(report: EngineReport): string {
-  const rules = new Map<string, { id: string; shortDescription: { text: string } }>();
+  const rules = new Map<string, SarifRule>();
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
