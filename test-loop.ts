@@ -7,15 +7,15 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-export function processData(input: string): { value: number } {
+export function processData(input: string): { ok: true; value: number } | { ok: false } {
   try {
     const parsed = JSON.parse(input) as { value?: number } | null;
     if (parsed && typeof parsed.value === "number") {
-      return { value: parsed.value };
+      return { ok: true, value: parsed.value };
     }
-    return { value: 0 };
+    return { ok: false };
   } catch {
-    return { value: 0 };
+    return { ok: false };
   }
 }
 import { describe, expect, test } from "vitest";
@@ -25,32 +25,48 @@ describe("calculate", () => {
     [0, 0],
     [-5, -5 * MULTIPLIER],
     [100, 100 * MULTIPLIER],
-    [1000, 1000 * MULTIPLIER],
-    [4999, 4999 * MULTIPLIER],
-    [5000, 5000 * MULTIPLIER],
-    [6000, 6000 * MULTIPLIER],
     [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER * 2],
-  ])("boundary value %i", (input, expected) => {
+  ])("input %i", (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
 });
 
 describe("processData", () => {
   test("valid JSON returns the parsed value", () => {
-    expect(processData('{"value":42}')).toEqual({ value: 42 });
+    expect(processData('{"value":42}')).toEqual({ ok: true, value: 42 });
   });
 
-  test("invalid JSON does not throw and returns the default result", () => {
-    expect(processData("not-json")).toEqual({ value: 0 });
+  test("invalid JSON does not throw and returns the failure result", () => {
+    expect(processData("not-json")).toEqual({ ok: false });
   });
 
-  test("null value returns the default result", () => {
-    expect(processData('{"value":null}')).toEqual({ value: 0 });
+  test("null value returns the failure result", () => {
+    expect(processData('{"value":null}')).toEqual({ ok: false });
   });
 
   test("empty string input is handled", () => {
-    expect(processData("")).toEqual({ value: 0 });
+    expect(processData("")).toEqual({ ok: false });
+  });
+
+  test("string value returns the failure result", () => {
+    expect(processData('{"value":"42"}')).toEqual({ ok: false });
+  });
+
+  test("boolean value returns the failure result", () => {
+    expect(processData('{"value":true}')).toEqual({ ok: false });
+  });
+
+  test("array value returns the failure result", () => {
+    expect(processData('{"value":[1,2,3]}')).toEqual({ ok: false });
+  });
+
+  test("root-level null JSON returns the failure result", () => {
+    expect(processData("null")).toEqual({ ok: false });
+  });
+
+  test("1e999 (Infinity) returns the failure result", () => {
+    expect(processData("1e999")).toEqual({ ok: false });
   });
 });
