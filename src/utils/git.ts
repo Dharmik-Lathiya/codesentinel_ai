@@ -65,7 +65,7 @@ export async function collectDiff(
     );
   } catch (err) {
     logger.warn(`Failed to collect diff against "${baseRef}":`, err);
-    return [];
+    throw err;
   }
 
   const lines = nameStatus
@@ -87,6 +87,8 @@ export async function collectDiff(
         continue;
       }
       try {
+        // Assumes a clean checkout: the working-tree content matches the
+        // baseRef...HEAD diff only if the checkout is clean and up to date.
         content = readFileSync(full, "utf8");
       } catch {
         logger.debug(`Could not read content for ${path}`);
