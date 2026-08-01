@@ -1,36 +1,43 @@
-const EXTREME_THRESHOLD = 10000;
-const MULTIPLIER = 4096;
+export const EXTREME_THRESHOLD = 10000;
+export const MULTIPLIER = 4096;
+const TEST_VALUE_100 = 100;
+const TEST_VALUE_1000 = 1000;
 
 function calculate(x: number): number {
-  const multiplier = x > EXTREME_THRESHOLD ? MULTIPLIER * 2 : MULTIPLIER;
-  return x * multiplier;
+export function calculate(x: number): number {
+  const multiplier = x >= EXTREME_THRESHOLD ? MULTIPLIER * 2 : MULTIPLIER;
 }
 
 export function processData(_input: string): { value: number } {
-  return { value: 0 };
+export function processData(input: string): { value: number } {
+  try {
+    return { value: JSON.parse(input)?.value ?? 0 };
+  } catch {
+    return { value: 0 };
+  }
 }
-import { describe, expect, test } from "vitest";
 
 describe("calculate", () => {
   test.each([
     [0, 0],
     [-5, -5 * MULTIPLIER],
-    [100, 100 * MULTIPLIER],
-    [1000, 1000 * MULTIPLIER],
-    [4999, 4999 * MULTIPLIER],
-    [5000, 5000 * MULTIPLIER],
-    [6000, 6000 * MULTIPLIER],
-    [9999, 9999 * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER * 2],
-  ])("boundary value %i", (input, expected) => {
+    [-5, -20480],
+    [100, 409600],
+    [1000, 4096000],
+    [4999, 20475904],
+    [5000, 20480000],
+    [6000, 24576000],
+    [9999, 40955904],
+    [10000, 81920000],
+    [10001, 81928192],
     expect(calculate(input)).toBe(expected);
   });
 });
 
 describe("processData", () => {
   test("valid JSON returns the default result", () => {
-    expect(processData('{"value":42}')).toEqual({ value: 0 });
+  test("valid JSON returns the parsed value", () => {
+    expect(processData(`{"value":${SAMPLE_VALUE}}`)).toEqual({ value: SAMPLE_VALUE });
   });
 
   test("invalid JSON does not throw and returns the default result", () => {
