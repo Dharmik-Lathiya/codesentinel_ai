@@ -19,7 +19,7 @@ function snippet(text: string | undefined): string {
 
 function buildSuggestionHunk(lines: string[], finding: Finding): string {
   const start = Math.max(1, Math.min(finding.line ?? 1, lines.length));
-  const before = lines.slice(Math.max(0, start - 1 - CONTEXT_BEFORE), start - 1);
+  const before = lines.slice(Math.max(0, (finding.line ?? start) - CONTEXT_BEFORE - 1), (finding.line ?? start) - 1);
   const after = lines.slice(start, Math.min(lines.length, start + CONTEXT_AFTER));
   const original = lines[start - 1] ?? "";
   const comment = sanitize(finding.comment);
@@ -43,27 +43,8 @@ function buildSuggestionHunk(lines: string[], finding: Finding): string {
 }
 
 /**
- * Format a finding as a GitHub committable suggestion block.
- * GitHub shows "Commit suggestion" button on fenced code blocks with `suggestion` tag.
+ * Wrap multiple findings into a single comment with suggestion blocks.
  */
-export function formatSuggestion(
-  finding: Finding,
-  originalCode: string,
-  suggestedCode: string,
-): string {
-  const header = `**${finding.severity.toUpperCase()}** — ${sanitize(finding.comment)}`;
-  const suggestion = finding.suggestion ? `> ${sanitize(finding.suggestion)}` : "";
-  const originalLines = originalCode.split("\n");
-  const suggestedLines = snippet(suggestedCode).split("\n");
-  const hunk = [
-    `@@ -1,${originalLines.length} +1,${suggestedLines.length} @@`,
-    ...originalLines.map((l) => `-${l}`),
-    ...suggestedLines.map((l) => `+${l}`),
-  ];
-  const codeBlock = `\`\`\`suggestion\n${hunk.join("\n")}\n\`\`\``;
-  return `${header}\n${suggestion}\n\n${codeBlock}`;
-}
-
 /**
  * Wrap multiple findings into a single comment with suggestion blocks.
  */
@@ -88,6 +69,9 @@ export function buildSuggestionsComment(
         .join("\n");
       parts.push(`**${file}** — ${severity} — ${comment}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
     }
+  }
+  if (findings.length > MAX_FINDINGS) {
+    parts.push(`... and ${findings.length - MAX_FINDINGS} more findings omitted`);
   }
   return parts.join("\n---\n");
 }
