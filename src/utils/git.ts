@@ -70,7 +70,6 @@ export async function collectDiff(
 
   const lines = nameStatus
     .split("\n")
-    .map((l) => l.trim())
     .filter(Boolean);
 
   const files: DiffFile[] = [];
@@ -104,7 +103,7 @@ export async function collectDiff(
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
-async function defaultBaseRef(cwd: string): Promise<string> {
+export async function defaultBaseRef(cwd: string): Promise<string> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
@@ -135,7 +134,7 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
   }
 }
 
-function mapStatus(code: string): DiffFile["status"] | null {
+export function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
   if (code.startsWith("R")) return "renamed";
