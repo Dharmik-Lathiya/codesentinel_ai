@@ -2,7 +2,7 @@
 import { parseArgs } from "node:util";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { Engine } from "./engine/index.js";
 import type { Mode, RuntimeSecrets } from "./config/types.js";
@@ -21,6 +21,77 @@ const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
+}
+
+function runtimeSecrets(): RuntimeSecrets {
+  return {
+    github_token: process.env.GITHUB_TOKEN,
+    openai_api_key: process.env.OPENAI_API_KEY,
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+    gemini_api_key: process.env.GEMINI_API_KEY,
+    opencode_api_key: process.env.OPENCODE_API_KEY,
+    opencode_base_url: process.env.OPENCODE_BASE_URL,
+  };
+}
+
+export type DismissTarget =
+  | { kind: "rule"; ruleId: string }
+  | { kind: "finding"; filePath: string; lineNum: number | null; ruleIdArg: string };
+
+export type DismissParseResult =
+  | { ok: true; target: DismissTarget; reason: string }
+  | { ok: false; message: string };
+
+const DISMISS_FLAG_VALUES = new Set(["--rule", "--file", "--line", "--rule-id"]);
+
+export function parseDismissArgs(args: string[]): DismissParseResult {
+  const reason =
+    args
+      .filter((a, i) => !a.startsWith("--") && !DISMISS_FLAG_VALUES.has(args[i - 1]))
+      .join(" ") || "dismissed by user";
+
+  if (args.includes("--rule")) {
+    const ruleIdx = args.indexOf("--rule");
+    const ruleId = args[ruleIdx + 1];
+    if (!ruleId || ruleId.startsWith("--")) {
+      return { ok: false, message: "Usage: codesentinel dismiss --rule <ruleId> [reason]" };
+    }
+    return { ok: true, target: { kind: "rule", ruleId }, reason };
+  }
+
+  if (args.includes("--file")) {
+    const fileIdx = args.indexOf("--file");
+    const filePath = args[fileIdx + 1];
+    if (!filePath || filePath.startsWith("--")) {
+      return { ok: false, message: "Usage: codesentinel dismiss --file <path> --line <n> [reason]" };
+    }
+    const lineIdx = args.indexOf("--line");
+    const rawLine = lineIdx >= 0 ? args[lineIdx + 1] : undefined;
+    if (lineIdx >= 0 && (rawLine === undefined || !/^\d+$/.test(rawLine.trim()))) {
+      return { ok: false, message: "Usage: codesentinel dismiss --file <path> --line <n> [reason]" };
+    }
+    const lineNum = rawLine !== undefined ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+    let ruleIdArg = `${filePath}:${lineNum ?? "all"}`;
+    const ruleIdIdx = args.indexOf("--rule-id");
+    if (ruleIdIdx >= 0) {
+      const ruleId = args[ruleIdIdx + 1];
+      if (!ruleId || ruleId.startsWith("--")) {
+        return {
+          ok: false,
+          message: "Usage: codesentinel dismiss --file <path> --line <n> [--rule-id <ruleId>] [reason]",
+        };
+      }
+      ruleIdArg = ruleId;
+    }
+    return { ok: true, target: { kind: "finding", filePath, lineNum, ruleIdArg }, reason };
+  }
+
+  return {
+    ok: false,
+    message:
+      "Usage: codesentinel dismiss --rule <ruleId> [reason]\n" +
+      "       codesentinel dismiss --file <path> --line <n> [reason]",
+  };
 }
 
 const WORKFLOW_CONTENT = [
@@ -403,7 +474,7 @@ Commands:
   setup               Create GitHub Actions workflow in current project
   init-hook           Install git hook (add --type post-commit for build-fix loop)
   dashboard           Start web dashboard
-  dismiss <finding>   Dismiss a false positive finding
+  dismiss             Dismiss a finding (--rule <id> | --file <path> --line <n>)
 
 Modes:
   review      Analyze code for bugs, security, performance, smells (default)
@@ -422,7 +493,7 @@ Options:
                               Overrides all task models at once
   --max-iterations <n>        Max fix iterations (default: 5)
   --auto-fix                  Apply fixes automatically
-  --scoring / --no-scoring    Enable/disable scoring (default: enabled)
+  --scoring                  Enable scoring (default: enabled)
   --test-gen                  Enable test generation
   --ask <question>            Ask a question (activates chat mode)
   --context <text>            Free-form project context for prompts
@@ -505,14 +576,7 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dashboard") {
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-      opencode_base_url: process.env.OPENCODE_BASE_URL,
-    };
+    const secrets = runtimeSecrets();
     const engine = Engine.fromInputs({ secrets });
     const dash = engine.getDashboard();
     if (dash) {
@@ -535,44 +599,25 @@ async function main(): Promise<void> {
       showVersion();
       return;
     }
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-      opencode_base_url: process.env.OPENCODE_BASE_URL,
-    };
-    const engine = Engine.fromInputs({ secrets });
-    const dismissArgs = args.slice(1);
-    const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
-    const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
-
-    if (dismissArgs.includes("--rule")) {
-      const ruleIdx = dismissArgs.indexOf("--rule");
-      const ruleId = dismissArgs[ruleIdx + 1];
-      if (!ruleId || ruleId.startsWith("--")) {
-        process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-        return;
-      }
-      await engine.dismissByRule(ruleId, reason);
-      process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
-    } else if (dismissArgs.includes("--file")) {
-      const fileIdx = dismissArgs.indexOf("--file");
-      const filePath = dismissArgs[fileIdx + 1];
-      const lineIdx = dismissArgs.indexOf("--line");
-      const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-      const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
-      if (!filePath) {
-        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
-        return;
-      }
-      const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
-      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
-      process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
+    const parsed = parseDismissArgs(args.slice(1));
+    if (!parsed.ok) {
+      process.stdout.write(parsed.message + "\n");
+      return;
+    }
+    const engine = Engine.fromInputs({ secrets: runtimeSecrets() });
+    if (parsed.target.kind === "rule") {
+      await engine.dismissByRule(parsed.target.ruleId, parsed.reason);
+      process.stdout.write(`✅ Dismissed rule: ${parsed.target.ruleId}\n`);
     } else {
-      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+      await engine.dismissByFinding(
+        parsed.target.filePath,
+        parsed.target.lineNum,
+        parsed.target.ruleIdArg,
+        parsed.reason,
+      );
+      process.stdout.write(
+        `✅ Dismissed finding: ${parsed.target.filePath}${parsed.target.lineNum ? `:${parsed.target.lineNum}` : ""}\n`,
+      );
     }
     return;
   }
@@ -620,6 +665,19 @@ async function main(): Promise<void> {
     return;
   }
 
+  for (const [flag, raw] of [
+    ["max-iterations", values["max-iterations"]],
+    ["min-score", values["min-score"]],
+    ["max-critical", values["max-critical"]],
+    ["max-high", values["max-high"]],
+  ] as const) {
+    if (raw !== undefined && !Number.isFinite(Number(raw))) {
+      process.stdout.write(`Invalid value for --${flag}: "${raw}". Expected a number.\n`);
+      showHelp();
+      return;
+    }
+  }
+
   if (values["log-level"]) {
     logger.level = values["log-level"] as any;
   }
@@ -627,14 +685,7 @@ async function main(): Promise<void> {
     logger.setJsonMode(true);
   }
 
-  const secrets: RuntimeSecrets = {
-    github_token: process.env.GITHUB_TOKEN,
-    openai_api_key: process.env.OPENAI_API_KEY,
-    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-    gemini_api_key: process.env.GEMINI_API_KEY,
-    opencode_api_key: process.env.OPENCODE_API_KEY,
-    opencode_base_url: process.env.OPENCODE_BASE_URL,
-  };
+  const secrets = runtimeSecrets();
 
   const overrides: Record<string, unknown> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
@@ -706,6 +757,9 @@ async function main(): Promise<void> {
     const answer = await engine.ask(values["ask"]);
     process.stdout.write(answer + "\n");
     return;
+  }
+  if (values["ask"] && modeArg && modeArg !== "chat") {
+    logger.warn(`--ask was ignored because mode is '${modeArg}'. Use '--mode chat --ask "<question>"' to ask a question.`);
   }
 
   // Special handling for deadcode mode — run in-process without AI
@@ -784,7 +838,10 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  logger.error("Fatal:", err);
-  process.exitCode = 1;
-});
+const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  main().catch((err) => {
+    logger.error("Fatal:", err);
+    process.exitCode = 1;
+  });
+}
