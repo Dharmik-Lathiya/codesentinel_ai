@@ -10,6 +10,7 @@ import { logger, type LogLevel } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
+import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GATE_MIN_SCORE = 70;
@@ -47,6 +48,7 @@ const WORKFLOW_CONTENT = [
   "env:",
   "  # Pin to latest published version for fast composite action setup",
   "  CODESENTINEL_VERSION: v0.8.0",
+  "  CODESENTINEL_OUTPUT_FILE: /tmp/cs-out.txt",
   "",
   "jobs:",
   "  plan-on-issue:",
@@ -74,16 +76,34 @@ const WORKFLOW_CONTENT = [
 "              core.setFailed(err.message);",
 "            }",
   "",
+  "      - name: Get issue info (for plan mode)",
+  "        id: issue_info",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            try {",
+  "              const { data: issue } = await github.rest.issues.get({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                issue_number: context.issue.number",
+  "              });",
+  "              core.setOutput('title', issue.title);",
+  `              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));`,
+  "            } catch (err) { core.setFailed(err.message); }",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
   "      - name: Run CodeSentinel plan",
   "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        env:",
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
+  '          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}',
+  '          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}',
+  '          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}',
+  '          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}',
+  '          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}',
   "        with:",
   "          mode: plan",
-  "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+  "          issue_title: ${{ steps.issue_info.outputs.title }}",
+  "          issue_body: '${{ steps.issue_info.outputs.body }}'",
   "          use_opencode_cli: \"false\"",
   "",
 "      - name: Update comment with plan",
@@ -91,7 +111,7 @@ const WORKFLOW_CONTENT = [
 "        with:",
 "          script: |",
 "            const fs = require('fs');",
-"            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
+  "            let out = ''; try { out = fs.readFileSync('${{ env.CODESENTINEL_OUTPUT_FILE }}','utf8'); } catch {}",
 "            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
 "            try {",
 "              await github.rest.issues.updateComment({",
@@ -180,7 +200,7 @@ const WORKFLOW_CONTENT = [
   "                issue_number: context.issue.number",
   "              });",
   "              core.setOutput('title', issue.title);",
-  "              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));",
+  `              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));`,
   "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
@@ -189,10 +209,15 @@ const WORKFLOW_CONTENT = [
   "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        env:",
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
+  '          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}',
+  '          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}',
+  '          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}',
+  '          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}',
+  '          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}',
   "        with:",
   "          mode: ${{ steps.cmd.outputs.mode }}",
   "          issue_title: ${{ steps.issue_info.outputs.title }}",
-  "          issue_body: ${{ steps.issue_info.outputs.body }}",
+  "          issue_body: '${{ steps.issue_info.outputs.body }}'",
   "          ask: ${{ steps.cmd.outputs.question }}",
   "          use_opencode_cli: \"false\"",
   "",
@@ -201,7 +226,7 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          script: |",
   "            const fs = require('fs');",
-  "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
+  "            let out = ''; try { out = fs.readFileSync('${{ env.CODESENTINEL_OUTPUT_FILE }}','utf8'); } catch {}",
   "            const mode = '${{ steps.cmd.outputs.mode }}';",
   "            const planSuffix = mode === 'plan' ? '\\n\\nReply with `/fix` to start implementation.' : '';",
   "            const body = '### CodeSentinel \\u2014 ' + mode + '\\n\\n```\\n' + out + '\\n```' + planSuffix;",
@@ -288,7 +313,12 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
-  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
+  "            if ! git pull --rebase origin ${{ github.ref_name }} 2>&1; then",
+  "              git rebase --abort 2>&1 || true",
+  '              echo "❌ Rebase failed — aborting to avoid committing conflicted code"',
+  '              echo "::endgroup::"',
+  "              exit 1",
+  "            fi",
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
@@ -433,7 +463,7 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
   CODESENTINEL_LOG_LEVEL      Default log level
 
 Examples:
@@ -532,8 +562,17 @@ async function main(): Promise<void> {
     };
     const engine = Engine.fromInputs({ secrets });
     const dismissArgs = args.slice(1);
-    const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
-    const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
+    const KNOWN_DISMISS_FLAGS = new Set(["--rule", "--file", "--line", "--rule-id"]);
+    const skipIndices = new Set<number>();
+    dismissArgs.forEach((arg, i) => {
+      if (KNOWN_DISMISS_FLAGS.has(arg)) {
+        skipIndices.add(i);
+        if (i + 1 < dismissArgs.length) skipIndices.add(i + 1);
+      }
+    });
+    const reason =
+      dismissArgs.filter((a, i) => !skipIndices.has(i) && !a.startsWith("--")).join(" ").trim() ||
+      "dismissed by user";
 
     if (dismissArgs.includes("--rule") && dismissArgs.includes("--file")) {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
