@@ -32,9 +32,9 @@ export function renderHtmlReport(report: EngineReport): string {
     .map((f) => {
       const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
       return `<tr>
-        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${f.severity}</span></td>
+        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
-        <td>${escapeHtml(f.file)}${f.line ? `:${f.line}` : ""}</td>
+        <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
         <td>${f.suggestion ? escapeHtml(f.suggestion) : "—"}</td>
       </tr>`;
@@ -76,8 +76,8 @@ export function renderHtmlReport(report: EngineReport): string {
     .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
-    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: ${BOLD_FONT_WEIGHT}; color: #fff; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
@@ -98,7 +98,7 @@ export function renderHtmlReport(report: EngineReport): string {
     <div class="card">
       <div class="label">Findings</div>
       <div class="value">${report.findings.length}</div>
-      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${s}`).join(", ") || "none"}</div>
+      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
     </div>
     ${renderScoreCard(report.score)}
     <div class="card">
@@ -154,7 +154,7 @@ function renderSeverityChart(report: EngineReport): string {
         return `<div class="bar">
         <div class="bar-value">${count}</div>
         <div class="bar-fill" style="height:${height}%;background:${SEVERITY_COLORS[sev] ?? "#6b7280"}"></div>
-        <div class="bar-label">${sev}</div>
+        <div class="bar-label">${escapeHtml(sev)}</div>
       </div>`;
       })
       .join("\n    ")}
@@ -172,7 +172,7 @@ function renderCategoryChart(categoryCounts: Record<string, number>): string {
         return `<div class="bar">
         <div class="bar-value">${count}</div>
         <div class="bar-fill" style="height:${height}%;background:#6366f1"></div>
-        <div class="bar-label">${cat}</div>
+        <div class="bar-label">${escapeHtml(cat)}</div>
       </div>`;
       })
       .join("\n    ")}
