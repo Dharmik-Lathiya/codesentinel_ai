@@ -22,7 +22,7 @@ export async function git(
     return stdout;
   } catch (err) {
     if (!options.quiet) {
-      logger.error(`git command failed: git ${args.join(' ')}`, err);
+      logger.error(`git command failed: git ${args.map((a) => JSON.stringify(a)).join(' ')}`, err);
     }
     throw err;
   }

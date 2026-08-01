@@ -34,7 +34,7 @@ export function renderHtmlReport(report: EngineReport): string {
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${f.severity}</span></td>
         <td>${escapeHtml(f.category)}</td>
-        <td>${escapeHtml(f.file)}${f.line ? `:${f.line}` : ""}</td>
+        <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
         <td>${f.suggestion ? escapeHtml(f.suggestion) : "—"}</td>
       </tr>`;
@@ -83,7 +83,7 @@ export function renderHtmlReport(report: EngineReport): string {
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
-    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; height: 100%; justify-content: flex-end; }
     .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
@@ -142,41 +142,32 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
     </div>`;
 }
 
-function renderSeverityChart(report: EngineReport): string {
-  if (report.findings.length === 0) return "";
-  const counts = report.metrics.findingsBySeverity;
-  const maxCount = Math.max(...Object.values(counts));
-  return `<h2>Severity Distribution</h2>
+function renderBarChart(title: string, entries: [string, number][], colorFor: (key: string) => string): string {
+  if (entries.length === 0) return "";
+  const maxCount = Math.max(0, ...entries.map(([, count]) => count));
+  return `<h2>${title}</h2>
   <div class="bar-chart">
-    ${Object.entries(counts)
-      .map(([sev, count]) => {
+    ${entries
+      .map(([key, count]) => {
         const height = maxCount > 0 ? Math.round((count / maxCount) * BAR_HEIGHT_PERCENT) : 0;
         return `<div class="bar">
         <div class="bar-value">${count}</div>
-        <div class="bar-fill" style="height:${height}%;background:${SEVERITY_COLORS[sev] ?? "#6b7280"}"></div>
-        <div class="bar-label">${sev}</div>
+        <div class="bar-fill" style="height:${height}%;background:${colorFor(key)}"></div>
+        <div class="bar-label">${key}</div>
       </div>`;
       })
       .join("\n    ")}
   </div>`;
 }
 
+function renderSeverityChart(report: EngineReport): string {
+  if (report.findings.length === 0) return "";
+  return renderBarChart("Severity Distribution", Object.entries(report.metrics.findingsBySeverity), (sev) => SEVERITY_COLORS[sev] ?? "#6b7280");
+}
+
 function renderCategoryChart(categoryCounts: Record<string, number>): string {
   if (Object.keys(categoryCounts).length === 0) return "";
-  const maxCount = Math.max(...Object.values(categoryCounts));
-  return `<h2>Category Breakdown</h2>
-  <div class="bar-chart">
-    ${Object.entries(categoryCounts)
-      .map(([cat, count]) => {
-        const height = maxCount > 0 ? Math.round((count / maxCount) * BAR_HEIGHT_PERCENT) : 0;
-        return `<div class="bar">
-        <div class="bar-value">${count}</div>
-        <div class="bar-fill" style="height:${height}%;background:#6366f1"></div>
-        <div class="bar-label">${cat}</div>
-      </div>`;
-      })
-      .join("\n    ")}
-  </div>`;
+  return renderBarChart("Category Breakdown", Object.entries(categoryCounts), () => "#6366f1");
 }
 
 function renderFindingsTable(count: number, rows: string): string {
