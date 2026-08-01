@@ -17,7 +17,11 @@ export interface RetryOptions {
    * Default: 1000ms (`DEFAULT_BASE_DELAY_MS`).
    */
   baseDelayMs?: number;
-  /** Optional predicate: return true to retry on this error. */
+  /**
+   * Optional predicate: return true to retry on this error.
+   * Note: the default predicate only matches `Error` instances; non-Error
+   * throws (strings, plain objects) are never retried.
+   */
   shouldRetry?: (err: unknown) => boolean;
 }
 
@@ -62,7 +66,7 @@ export async function retry<T>(
       }
       const delay = baseDelayMs * Math.pow(2, attempt - 1) * Math.random();
       logger.warn(
-        `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms...`,
+        `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
       await new Promise((r) => setTimeout(r, delay));
     }

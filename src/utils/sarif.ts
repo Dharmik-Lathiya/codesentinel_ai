@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import type { EngineReport } from "../engine/index.js";
 
 interface SarifResult {
@@ -13,7 +14,7 @@ interface SarifResult {
 }
 
 interface SarifRun {
-  tool: { driver: { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } };
+  tool: { driver: { name: string; version: string; rules: ReportingDescriptor[] } };
   results: SarifResult[];
 }
 
@@ -22,6 +23,12 @@ interface SarifLog {
   version: string;
   runs: SarifRun[];
 }
+interface ReportingDescriptor {
+  id: string;
+  shortDescription: { text: string };
+}
+
+const PKG_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
 
 const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   critical: "error",
@@ -46,24 +53,24 @@ function simpleHash(s: string): string {
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: file },
+      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
       ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
 }
 
 function createToolDriver(
-  rules: Map<string, { id: string; shortDescription: { text: string } }>
-): { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } {
+  rules: Map<string, ReportingDescriptor>
+): { name: string; version: string; rules: ReportingDescriptor[] } {
   return {
     name: "CodeSentinel AI",
-    version: "0.1.6",
+    version: PKG_VERSION,
     rules: Array.from(rules.values()),
   };
 }
 
 function createSarifRun(
-  rules: Map<string, { id: string; shortDescription: { text: string } }>,
+  rules: Map<string, ReportingDescriptor>,
   results: SarifResult[]
 ): SarifRun {
   return {
@@ -75,7 +82,7 @@ function createSarifRun(
 }
 
 export function renderSarif(report: EngineReport): string {
-  const rules = new Map<string, { id: string; shortDescription: { text: string } }>();
+  const rules = new Map<string, ReportingDescriptor>();
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
@@ -85,9 +92,6 @@ export function renderSarif(report: EngineReport): string {
         id: ruleId,
         shortDescription: { text: f.comment },
       });
-    }
-    if (!SEVERITY_MAP[f.severity]) {
-      throw new Error(`Unknown severity: "${f.severity}"`);
     }
     results.push({
       ruleId,
