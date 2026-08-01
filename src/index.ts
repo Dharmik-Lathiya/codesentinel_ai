@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { Engine } from "./engine/index.js";
 import type { Mode, RuntimeSecrets } from "./config/types.js";
-import { logger } from "./utils/logger.js";
+import { logger, type LogLevel } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
@@ -377,6 +377,26 @@ function runSetup(): void {
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
 }
 
+
+function showDismissHelp(): void {
+  process.stdout.write(`Usage: codesentinel dismiss <options> [reason]
+
+Dismiss a false-positive finding or rule so CodeSentinel ignores it.
+
+Options:
+  --rule <ruleId>       Dismiss all findings for a rule (e.g. --rule no-console)
+  --file <path>         Dismiss a finding in a file (requires --line)
+  --line <n>            Line number of the finding (with --file)
+  --rule-id <id>        Override the finding identifier (with --file)
+  --version             Show version number
+  -h, --help            Show this help message
+
+Examples:
+  codesentinel dismiss --rule no-console "Intentional"
+  codesentinel dismiss --file src/app.ts --line 42
+  codesentinel dismiss --file src/app.ts --line 42 --rule-id no-console
+`);
+}
 function showHelp(): void {
   let pkg;
   try {
@@ -522,7 +542,7 @@ async function main(): Promise<void> {
 
   if (args[0] === "dismiss") {
     if (args.includes("--help") || args.includes("-h")) {
-      showHelp();
+      showDismissHelp();
       return;
     }
     if (args.includes("--version")) {
@@ -615,7 +635,14 @@ async function main(): Promise<void> {
   }
 
   if (values["log-level"]) {
-    logger.level = values["log-level"] as any;
+    const logLevel = values["log-level"] as LogLevel;
+    if (["debug", "info", "warn", "error"].includes(logLevel)) {
+      logger.level = logLevel;
+    } else {
+      process.stdout.write(`Error: invalid --log-level \"${values["log-level"]}\" (expected debug | info | warn | error)\n`);
+      process.exitCode = 1;
+      return;
+    }
   }
   if (values.json) {
     logger.setJsonMode(true);
@@ -632,7 +659,15 @@ async function main(): Promise<void> {
 
   const overrides: Record<string, unknown> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
-  if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
+  if (values["max-iterations"]) {
+    const maxIterations = Number(values["max-iterations"]);
+    if (!Number.isFinite(maxIterations)) {
+      process.stdout.write(`Error: --max-iterations must be a number, got \"${values["max-iterations"]}\"\n`);
+      process.exitCode = 1;
+      return;
+    }
+    overrides.max_iterations = maxIterations;
+  }
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
@@ -646,13 +681,31 @@ async function main(): Promise<void> {
   if (issueBody) overrides.issue_body = issueBody;
 
   if (values["min-score"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), minScore: Number(values["min-score"]) };
+    const minScore = Number(values["min-score"]);
+    if (!Number.isFinite(minScore)) {
+      process.stdout.write(`Error: --min-score must be a number, got \"${values["min-score"]}\"\n`);
+      process.exitCode = 1;
+      return;
+    }
+    overrides.gate = { ...(overrides.gate as any || {}), minScore };
   }
   if (values["max-critical"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), maxCritical: Number(values["max-critical"]) };
+    const maxCritical = Number(values["max-critical"]);
+    if (!Number.isFinite(maxCritical)) {
+      process.stdout.write(`Error: --max-critical must be a number, got \"${values["max-critical"]}\"\n`);
+      process.exitCode = 1;
+      return;
+    }
+    overrides.gate = { ...(overrides.gate as any || {}), maxCritical };
   }
   if (values["max-high"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), maxHigh: Number(values["max-high"]) };
+    const maxHigh = Number(values["max-high"]);
+    if (!Number.isFinite(maxHigh)) {
+      process.stdout.write(`Error: --max-high must be a number, got \"${values["max-high"]}\"\n`);
+      process.exitCode = 1;
+      return;
+    }
+    overrides.gate = { ...(overrides.gate as any || {}), maxHigh };
   }
 
   if (values.provider) {
@@ -696,6 +749,9 @@ async function main(): Promise<void> {
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
+  if (values["ask"] && modeArg && modeArg !== "chat") {
+    logger.warn(`--ask is only used with chat mode; ignoring it for mode \"${modeArg}\"`);
+  }
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     const answer = await engine.ask(values["ask"]);
     process.stdout.write(answer + "\n");
