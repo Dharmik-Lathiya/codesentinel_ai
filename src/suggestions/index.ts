@@ -18,7 +18,7 @@ export function buildSuggestionsComment(
       const ctxBefore = lines.slice(Math.max(0, f.line - 1 - CONTEXT_BEFORE), f.line - 1).join("\n");
       const ctxAfter = lines.slice(f.line, Math.min(lines.length, f.line + CONTEXT_AFTER)).join("\n");
       const context = ctxBefore ? ctxBefore + "\n" : "";
-      const after = ctxAfter ? "\n" + ctxAfter : "";
+      const after = ctxAfter ? ctxAfter : "";
       const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
       const original = lines[f.line - 1];
       const code = suggested || `${context}  // ${f.comment}\n${original}\n${after}`;
