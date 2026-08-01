@@ -22,19 +22,19 @@ const SCORE_RED_THRESHOLD = 40;
  */
 export function renderHtmlReport(report: EngineReport): string {
   const categoryCounts: Record<string, number> = {};
+  const severityCounts: Record<string, number> = {};
   for (const f of report.findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
+    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
   }
-
-  const severityCounts = report.metrics.findingsBySeverity;
 
   const findingsRows = report.findings
     .map((f) => {
       const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
       return `<tr>
-        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${f.severity}</span></td>
+        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
-        <td>${escapeHtml(f.file)}${f.line ? `:${f.line}` : ""}</td>
+        <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
         <td>${f.suggestion ? escapeHtml(f.suggestion) : "—"}</td>
       </tr>`;
@@ -58,12 +58,21 @@ export function renderHtmlReport(report: EngineReport): string {
     .map((t) => `<tr><td>${escapeHtml(t.file)}</td><td>${escapeHtml(t.testFilePath)}</td></tr>`)
     .join("\n");
 
+  const severityChart = renderBarChart(
+    "Severity Distribution",
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+  );
+  const categoryChart = renderBarChart(
+    "Category Breakdown",
+    Object.entries(categoryCounts).map(([c, n]) => ({ key: c, value: n, color: "#6366f1" })),
+  );
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CodeSentinel — ${report.mode} Report</title>
+  <title>CodeSentinel — ${escapeHtml(report.mode)} Report</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
@@ -91,14 +100,14 @@ export function renderHtmlReport(report: EngineReport): string {
 </head>
 <body>
 <div class="container">
-  <h1>CodeSentinel — ${report.mode} Report</h1>
+  <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
   <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
 
   <div class="cards">
     <div class="card">
       <div class="label">Findings</div>
       <div class="value">${report.findings.length}</div>
-      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${s}`).join(", ") || "none"}</div>
+      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
     </div>
     ${renderScoreCard(report.score)}
     <div class="card">
@@ -112,9 +121,9 @@ export function renderHtmlReport(report: EngineReport): string {
     </div>
   </div>
 
-  ${renderSeverityChart(report)}
+  ${severityChart}
 
-  ${renderCategoryChart(categoryCounts)}
+  ${categoryChart}
 
   <h2>Findings</h2>
   ${renderFindingsTable(report.findings.length, findingsRows)}
@@ -137,42 +146,98 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div>
         <div class="label">Quality Score</div>
         <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
-        <div class="sub">Security ${score.security} &middot; Coverage ${score.test_coverage}</div>
+
+  it("renders severity bar heights proportional to the max count", () => {
+    const report = {
+      ...baseReport,
+      findings: [
+        { severity: "high", category: "security", file: "a.ts", line: 1, comment: "c", source: "static" },
+        { severity: "high", category: "security", file: "b.ts", line: 2, comment: "c", source: "static" },
+        { severity: "low", category: "smell", file: "c.ts", line: null, comment: "c", source: "static" },
+      ],
+      metrics: { ...baseReport.metrics, findingsBySeverity: { high: 2, low: 1 } },
+    };
+    const html = renderHtmlReport(report);
+    expect(html).toContain('class="bar-fill" style="height:100%;background:#ea580c"');
+    expect(html).toContain('class="bar-fill" style="height:50%;background:#2563eb"');
+  });
+
+  it("tallies severity counts locally when findingsBySeverity is empty", () => {
+    const report = {
+      ...baseReport,
+      metrics: { ...baseReport.metrics, findingsBySeverity: {} },
+    };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("Severity Distribution");
+    expect(html).toContain("1 high");
+    expect(html).toContain("1 medium");
+    expect(html).toContain("1 low");
+    expect(html).not.toContain(">none</div>");
+  });
+
+  it("renders file:line suffix for a finding at line 0", () => {
+    const report = {
+      ...baseReport,
+      findings: [{ severity: "high", category: "bug", file: "x.ts", line: 0, comment: "c", source: "static" }],
+      metrics: { ...baseReport.metrics, findingsBySeverity: { high: 1 } },
+    };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("x.ts:0");
+  });
+
+  it("renders skipped and applied fix statuses", () => {
+    const report = {
+      ...baseReport,
+      fixAttempts: [
+        { iteration: 1, file: "a.ts", fixed: false, explanation: "e" },
+        { iteration: 2, file: "b.ts", fixed: true, verified: false, explanation: "e" },
+      ],
+    };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("skipped");
+    expect(html).toContain("applied");
+  });
+
+  it("escapes AI-derived severity, category, and mode values plus single quotes", () => {
+    const report = {
+      ...baseReport,
+      mode: "<script>evil</script>" as unknown as typeof baseReport.mode,
+      findings: [{
+        severity: "<b>high</b>" as unknown as typeof baseReport.findings[number]["severity"],
+        category: "<i>smell</i>" as unknown as typeof baseReport.findings[number]["category"],
+        file: "x.ts",
+        line: 1,
+        comment: "it's fine",
+        source: "static" as const,
+      }],
+      metrics: { ...baseReport.metrics, findingsBySeverity: {} },
+    };
+    const html = renderHtmlReport(report);
+    expect(html).not.toContain("<script>evil");
+    expect(html).not.toContain("<b>high</b>");
+    expect(html).not.toContain("<i>smell</i>");
+    expect(html).toContain("&lt;script&gt;evil");
+    expect(html).toContain("&lt;b&gt;high&lt;/b&gt;");
+    expect(html).toContain("&lt;i&gt;smell&lt;/i&gt;");
+    expect(html).toContain("it&#39;s fine");
+  });
+});
       </div>
     </div>`;
 }
 
-function renderSeverityChart(report: EngineReport): string {
-  if (report.findings.length === 0) return "";
-  const counts = report.metrics.findingsBySeverity;
-  const maxCount = Math.max(...Object.values(counts));
-  return `<h2>Severity Distribution</h2>
+function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
+  if (items.length === 0) return "";
+  const maxCount = Math.max(...items.map((item) => item.value));
+  return `<h2>${escapeHtml(title)}</h2>
   <div class="bar-chart">
-    ${Object.entries(counts)
-      .map(([sev, count]) => {
-        const height = maxCount > 0 ? Math.round((count / maxCount) * BAR_HEIGHT_PERCENT) : 0;
+    ${items
+      .map((item) => {
+        const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
         return `<div class="bar">
-        <div class="bar-value">${count}</div>
-        <div class="bar-fill" style="height:${height}%;background:${SEVERITY_COLORS[sev] ?? "#6b7280"}"></div>
-        <div class="bar-label">${sev}</div>
-      </div>`;
-      })
-      .join("\n    ")}
-  </div>`;
-}
-
-function renderCategoryChart(categoryCounts: Record<string, number>): string {
-  if (Object.keys(categoryCounts).length === 0) return "";
-  const maxCount = Math.max(...Object.values(categoryCounts));
-  return `<h2>Category Breakdown</h2>
-  <div class="bar-chart">
-    ${Object.entries(categoryCounts)
-      .map(([cat, count]) => {
-        const height = maxCount > 0 ? Math.round((count / maxCount) * BAR_HEIGHT_PERCENT) : 0;
-        return `<div class="bar">
-        <div class="bar-value">${count}</div>
-        <div class="bar-fill" style="height:${height}%;background:#6366f1"></div>
-        <div class="bar-label">${cat}</div>
+        <div class="bar-value">${item.value}</div>
+        <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
+        <div class="bar-label">${escapeHtml(item.key)}</div>
       </div>`;
       })
       .join("\n    ")}
@@ -210,7 +275,8 @@ function escapeHtml(s: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function scoreColor(score: number): string {
