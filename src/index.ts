@@ -26,6 +26,16 @@ function mergeOverride<T extends object>(current: T | undefined, patch: Partial<
   return { ...(current as T), ...patch } as T;
 }
 
+function parseNumberFlag(value: string, flag: string): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    process.stdout.write(`Error: --${flag} expects a numeric value, got "${value}"\n`);
+    process.exitCode = 1;
+    return null;
+  }
+  return n;
+}
+
 const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
   "# Uses pre-built composite action (no TypeScript compilation needed)",
@@ -523,7 +533,7 @@ async function main(): Promise<void> {
     const dash = engine.getDashboard();
     if (dash) {
       dash.start();
-      process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
+      process.stdout.write(`Dashboard running at http://${engine.config.dashboard.host}:${engine.config.dashboard.port}\n`);
     } else {
       process.stdout.write("Dashboard is not available.\n");
     }
@@ -651,12 +661,25 @@ async function main(): Promise<void> {
 
   const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
-  if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
+  if (values["max-iterations"]) {
+    const maxIterations = parseNumberFlag(values["max-iterations"], "max-iterations");
+    if (maxIterations === null) return;
+    overrides.max_iterations = maxIterations;
+  }
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
-  if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
+  if (values["improve-type"]) {
+    const IMPROVE_TYPES = ["test", "util", "doc"] as const;
+    const improveType = values["improve-type"];
+    if (!(IMPROVE_TYPES as readonly string[]).includes(improveType)) {
+      process.stdout.write(`Error: --improve-type must be one of ${IMPROVE_TYPES.join(", ")}, got "${improveType}"\n`);
+      process.exitCode = 1;
+      return;
+    }
+    overrides.improve_type = improveType as (typeof IMPROVE_TYPES)[number];
+  }
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
   const issueTitle = process.env.INPUT_ISSUE_TITLE;
@@ -665,13 +688,19 @@ async function main(): Promise<void> {
   if (issueBody) overrides.issue_body = issueBody;
 
   if (values["min-score"]) {
-    overrides.gate = mergeOverride(overrides.gate, { minScore: Number(values["min-score"]) });
+    const minScore = parseNumberFlag(values["min-score"], "min-score");
+    if (minScore === null) return;
+    overrides.gate = mergeOverride(overrides.gate, { minScore });
   }
   if (values["max-critical"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Number(values["max-critical"]) });
+    const maxCritical = parseNumberFlag(values["max-critical"], "max-critical");
+    if (maxCritical === null) return;
+    overrides.gate = mergeOverride(overrides.gate, { maxCritical });
   }
   if (values["max-high"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Number(values["max-high"]) });
+    const maxHigh = parseNumberFlag(values["max-high"], "max-high");
+    if (maxHigh === null) return;
+    overrides.gate = mergeOverride(overrides.gate, { maxHigh });
   }
 
   if (values.provider) {
@@ -744,21 +773,20 @@ async function main(): Promise<void> {
 
   const report = await engine.run();
 
+  // Exit non-zero if the quality gate fails (applies to every output mode)
+  if (report.mode === "gate" && report.gatePassed === false) {
+    throw new Error("Gate check failed");
+  }
+
   // JSON output mode
   if (values.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
-    if (report.mode === "gate" && report.gatePassed === false) {
-      throw new Error("Gate check failed");
-    }
     return;
   }
 
   // SARIF output mode
   if (values.sarif) {
     process.stdout.write(renderSarif(report) + "\n");
-    if (report.mode === "gate" && report.gatePassed === false) {
-      throw new Error("Gate check failed");
-    }
     return;
   }
 
@@ -790,11 +818,6 @@ async function main(): Promise<void> {
     }
   }
   process.stdout.write(`\nDone in ${report.metrics.durationMs}ms.\n`);
-
-  // Exit non-zero if gate fails
-  if (report.mode === "gate" && report.gatePassed === false) {
-    throw new Error("Gate check failed");
-  }
 }
 
 main().catch((err) => {
