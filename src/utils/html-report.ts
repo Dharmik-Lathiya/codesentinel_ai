@@ -17,6 +17,8 @@ const SCORE_ORANGE_THRESHOLD = 60;
 const SCORE_RED_THRESHOLD = 40;
 const APOSTROPHE_ENTITY = "&#39;";
 
+const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
+
 /**
  * Generate a self-contained HTML dashboard report from an EngineReport.
  * The HTML includes inline CSS and is fully portable (no external deps).
@@ -25,7 +27,7 @@ export function renderHtmlReport(report: EngineReport): string {
   const { categoryCounts, severityCounts } = tallyCounts(report);
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    buildSeverityBars(severityCounts),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -53,6 +55,14 @@ function tallyCounts(report: EngineReport): {
     severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
   }
   return { categoryCounts, severityCounts };
+}
+
+function buildSeverityBars(counts: Record<string, number>): { key: string; value: number; color: string }[] {
+  const known = new Set(SEVERITY_ORDER);
+  return [
+    ...SEVERITY_ORDER.filter((s) => counts[s] != null).map((s) => ({ key: s, value: counts[s], color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    ...Object.keys(counts).filter((s) => !known.has(s)).map((s) => ({ key: s, value: counts[s], color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+  ];
 }
 
 function buildFindingsRows(findings: EngineReport["findings"]): string {
@@ -181,7 +191,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
       </div>
     </div>`;
 }
