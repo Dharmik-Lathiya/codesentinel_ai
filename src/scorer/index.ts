@@ -35,6 +35,10 @@ const SEVERITY_PENALTY: Record<Severity, number> = {
   critical: CRITICAL_SEVERITY_PENALTY,
 };
 
+/** Readability heuristic constants. */
+const COMMENT_BONUS = 20;
+const MIN_READABILITY_SCORE = 20;
+
 /**
  * Scorer computes a deterministic baseline quality score from static findings
  * and code metrics, and can blend in AI-provided sub-scores.
@@ -148,10 +152,10 @@ export class Scorer {
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const score = MAX_SCORE - longLines * 2 + commentRatio * COMMENT_BONUS;
+      total += Math.max(MIN_READABILITY_SCORE, score);
     }
-    return fileCount ? total / fileCount : 100;
+    return fileCount ? total / fileCount : MAX_SCORE;
   }
 
   /** Coverage heuristic: fraction of source files that have a related test. */
@@ -164,12 +168,12 @@ export class Scorer {
         .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
     );
     const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
-    if (sourceFiles.length === 0) return 100;
+    if (sourceFiles.length === 0) return MAX_SCORE;
     let covered = 0;
     for (const f of sourceFiles) {
       const base = f.path.replace(/\.[^.]+$/, "");
       if ([...testPaths].some((t) => t.startsWith(base))) covered++;
     }
-    return (covered / sourceFiles.length) * 100;
+    return (covered / sourceFiles.length) * MAX_SCORE;
   }
 }
