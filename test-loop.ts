@@ -1,9 +1,12 @@
 export const EXTREME_THRESHOLD = 10000;
 export const MULTIPLIER = 4096;
-const EXTREME_MULTIPLIER = MULTIPLIER * 2;
+export const EXTREME_MULTIPLIER = MULTIPLIER * 2;
 
 export function calculate(x: number): number {
-  const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
+  if (!Number.isFinite(x)) {
+    throw new TypeError("x must be a finite number");
+  }
+  const multiplier = x >= EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
   return x * multiplier;
 }
 
@@ -30,10 +33,14 @@ describe("calculate", () => {
     [5000, 5000 * MULTIPLIER],
     [6000, 6000 * MULTIPLIER],
     [9999, 9999 * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER * 2],
+    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * EXTREME_MULTIPLIER],
+    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
   ])("boundary value %i", (input, expected) => {
     expect(calculate(input)).toBe(expected);
+  });
+
+  test("non-finite input throws a TypeError", () => {
+    expect(() => calculate(Infinity)).toThrow(TypeError);
   });
 });
 
@@ -52,5 +59,9 @@ describe("processData", () => {
 
   test("empty string input is handled", () => {
     expect(processData("")).toEqual({ value: 0 });
+  });
+
+  test("non-numeric JSON value returns the default result", () => {
+    expect(processData('{"value":"abc"}')).toEqual({ value: 0 });
   });
 });
