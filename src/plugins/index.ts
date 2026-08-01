@@ -11,19 +11,18 @@ export interface PluginContext {
   config: CodeSentinelConfig;
   logger: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 }
+export type PluginFile = { path: string; content: string };
 
 export interface CodeSentinelPlugin {
   name: string;
   /** Called once at engine startup. */
   init?(ctx: PluginContext): void | Promise<void>;
   /** Add findings based on the analyzed files. */
-  analyze?(
-    files: { path: string; content: string }[],
-  ): Finding[] | Promise<Finding[]>;
+  analyze?(files: PluginFile[]): Finding[] | Promise<Finding[]>;
   /** Adjust the final score breakdown. */
   score?(
     breakdown: ScoreBreakdown,
-    files: { path: string; content: string }[],
+    files: PluginFile[],
   ): ScoreBreakdown | Promise<ScoreBreakdown>;
 }
 
@@ -42,12 +41,12 @@ export class PluginManager {
       try {
         const plugin = await this.loadPlugin(p);
         if (plugin) {
-          this.plugins.push(plugin);
           await plugin.init?.(this.ctx);
+          this.plugins.push(plugin);
           this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
         }
       } catch (err) {
-        this.ctx.logger.warn(`Failed to load plugin "${p}":`, err);
+        this.ctx.logger.error(`Failed to load plugin "${p}":`, err);
       }
     }
   }
@@ -70,7 +69,7 @@ export class PluginManager {
       }
       return plugin;
     } catch (err) {
-      this.ctx.logger.warn(`Failed to load plugin "${path}":`, err);
+      this.ctx.logger.error(`Failed to load plugin "${path}":`, err);
       return null;
     }
   }
@@ -81,7 +80,7 @@ export class PluginManager {
 
   /** Run all plugins' analyze hooks and merge their findings. */
   async runAnalyze(
-    files: { path: string; content: string }[],
+    files: PluginFile[],
   ): Promise<Finding[]> {
     try {
       const results = await Promise.all(
@@ -89,7 +88,7 @@ export class PluginManager {
           try {
             return (await p.analyze?.(files)) ?? [];
           } catch (err) {
-            this.ctx.logger.warn(
+            this.ctx.logger.error(
               `Analyze hook failed for plugin "${p.name}":`,
               err,
             );
@@ -99,7 +98,7 @@ export class PluginManager {
       );
       return results.flat();
     } catch (err) {
-      this.ctx.logger.warn(`Analyze phase failed:`, err);
+      this.ctx.logger.error(`Analyze phase failed:`, err);
       return [];
     }
   }
@@ -107,14 +106,14 @@ export class PluginManager {
   /** Run all plugins' score hooks sequentially. */
   async runScore(
     breakdown: ScoreBreakdown,
-    files: { path: string; content: string }[],
+    files: PluginFile[],
   ): Promise<ScoreBreakdown> {
     let b = breakdown;
     for (const p of this.plugins) {
       try {
         b = (await p.score?.(b, files)) ?? b;
       } catch (err) {
-        this.ctx.logger.warn(
+        this.ctx.logger.error(
           `Score hook failed for plugin "${p.name}":`,
           err,
         );
