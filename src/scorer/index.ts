@@ -24,6 +24,8 @@ const clamp = (n: number): number => Math.max(0, Math.min(100, Math.round(n)));
 
 
 const MAX_SCORE = 100;
+const COMMENT_RATIO_WEIGHT = 20;
+const MIN_FILE_SCORE = 20;
 const HIGH_SEVERITY_PENALTY = 16;
 const CRITICAL_SEVERITY_PENALTY = 30;
 /** Severity penalty weights applied to the security dimension. */
@@ -148,10 +150,10 @@ export class Scorer {
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const score = 100 - longLines * 2 + commentRatio * COMMENT_RATIO_WEIGHT;
+      total += Math.max(MIN_FILE_SCORE, score);
     }
-    return fileCount ? total / fileCount : 100;
+    return fileCount ? total / fileCount : MAX_SCORE;
   }
 
   /** Coverage heuristic: fraction of source files that have a related test. */
@@ -164,12 +166,12 @@ export class Scorer {
         .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
     );
     const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
-    if (sourceFiles.length === 0) return 100;
+    if (sourceFiles.length === 0) return MAX_SCORE;
     let covered = 0;
     for (const f of sourceFiles) {
       const base = f.path.replace(/\.[^.]+$/, "");
       if ([...testPaths].some((t) => t.startsWith(base))) covered++;
     }
-    return (covered / sourceFiles.length) * 100;
+    return (covered / sourceFiles.length) * MAX_SCORE;
   }
 }
