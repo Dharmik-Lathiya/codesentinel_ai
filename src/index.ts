@@ -61,12 +61,17 @@ const WORKFLOW_CONTENT = [
 "        with:",
 "          script: |",
 "            try {",
-"              const { data: comment } = await github.rest.issues.createComment({",
-"                owner: context.repo.owner, repo: context.repo.repo,",
-"                issue_number: context.issue.number,",
-"                body: '\u{1F504} **CodeSentinel** is analyzing this issue and generating an implementation plan...'",
-"              });",
-"              core.setOutput('comment_id', comment.id);",
+  "              const { data: comment } = await github.rest.issues.createComment({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                issue_number: context.issue.number,",
+  "                body: '\u{1F504} **CodeSentinel** is analyzing this issue and generating an implementation plan...'",
+  "              });",
+  "              core.setOutput('comment_id', comment.id);",
+  "              const { data: issue } = await github.rest.issues.get({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                issue_number: context.issue.number",
+  "              });",
+  "              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));",
 "            } catch (err) {",
 "              core.setFailed(err.message);",
 "            }",
@@ -80,7 +85,7 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          mode: plan",
   "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+  "          issue_body: ${{ steps.loading.outputs.body }}",
   "          use_opencode_cli: \"false\"",
   "",
 "      - name: Update comment with plan",
@@ -373,21 +378,24 @@ function runSetup(): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
 }
 
-function showHelp(): void {
-  let pkg;
+function readPackage(): { version: string } {
   try {
-    pkg = JSON.parse(
+    return JSON.parse(
       readFileSync(join(__dirname, "..", "package.json"), "utf8"),
     );
   } catch {
-    pkg = { version: "unknown" };
+    return { version: "unknown" };
   }
+}
+
+function showHelp(): void {
+  const pkg = readPackage();
   process.stdout.write(`CodeSentinel AI v${pkg.version}
 AI-powered code review, fix, audit, scoring, and test generation.
 
@@ -452,7 +460,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -462,14 +470,7 @@ Examples:
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
+  const pkg = readPackage();
   process.stdout.write(`${pkg.version}\n`);
 }
 
