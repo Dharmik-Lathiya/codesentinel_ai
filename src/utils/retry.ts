@@ -50,6 +50,10 @@ export async function retry<T>(
   const maxAttempts = opts.maxAttempts ?? 3;
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
+  if (maxAttempts < 1) {
+    throw new Error("maxAttempts must be at least 1");
+  }
+
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {

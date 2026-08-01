@@ -8,13 +8,16 @@ const SEVERITY_COLORS: Record<string, string> = {
   info: "#6b7280",
 };
 
+const SEVERITY_ORDER: string[] = ["critical", "high", "medium", "low", "info"];
+
 const BOLD_FONT_WEIGHT = "700";
 const H2_COLOR = "#334155";
 const SHADOW_ALPHA = "0.08";
 const BAR_HEIGHT_PERCENT = 100;
 const SCORE_GREEN_THRESHOLD = 80;
-const SCORE_ORANGE_THRESHOLD = 60;
-const SCORE_RED_THRESHOLD = 40;
+const SCORE_AMBER_THRESHOLD = 60;
+const SCORE_ORANGE_THRESHOLD = 40;
+const SCORE_RED_COLOR = "#dc2626";
 
 /**
  * Generate a self-contained HTML dashboard report from an EngineReport.
@@ -32,7 +35,7 @@ export function renderHtmlReport(report: EngineReport): string {
     .map((f) => {
       const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
       return `<tr>
-        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${f.severity}</span></td>
+        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
         <td>${escapeHtml(f.file)}${f.line ? `:${f.line}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
@@ -48,7 +51,7 @@ export function renderHtmlReport(report: EngineReport): string {
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
-        <td><span style="color:${statusColor};font-weight:${BOLD_FONT_WEIGHT}">${status}</span></td>
+        <td><span style="color:${statusColor};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(status)}</span></td>
         <td>${escapeHtml(a.explanation)}</td>
       </tr>`;
     })
@@ -63,7 +66,7 @@ export function renderHtmlReport(report: EngineReport): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CodeSentinel — ${report.mode} Report</title>
+  <title>CodeSentinel — ${escapeHtml(report.mode)} Report</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
@@ -91,14 +94,14 @@ export function renderHtmlReport(report: EngineReport): string {
 </head>
 <body>
 <div class="container">
-  <h1>CodeSentinel — ${report.mode} Report</h1>
+  <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
   <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
 
   <div class="cards">
     <div class="card">
       <div class="label">Findings</div>
       <div class="value">${report.findings.length}</div>
-      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${s}`).join(", ") || "none"}</div>
+      <div class="sub">${severityEntries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
     </div>
     ${renderScoreCard(report.score)}
     <div class="card">
@@ -142,41 +145,42 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
     </div>`;
 }
 
-function renderSeverityChart(report: EngineReport): string {
-  if (report.findings.length === 0) return "";
-  const counts = report.metrics.findingsBySeverity;
-  const maxCount = Math.max(...Object.values(counts));
-  return `<h2>Severity Distribution</h2>
+function renderBarChart(
+  title: string,
+  entries: [string, number][],
+  colorFor: (label: string) => string,
+): string {
+  if (entries.length === 0) return "";
+  const maxCount = Math.max(...entries.map(([, count]) => count));
+  return `<h2>${title}</h2>
   <div class="bar-chart">
-    ${Object.entries(counts)
-      .map(([sev, count]) => {
+    ${entries
+      .map(([label, count]) => {
         const height = maxCount > 0 ? Math.round((count / maxCount) * BAR_HEIGHT_PERCENT) : 0;
         return `<div class="bar">
         <div class="bar-value">${count}</div>
-        <div class="bar-fill" style="height:${height}%;background:${SEVERITY_COLORS[sev] ?? "#6b7280"}"></div>
-        <div class="bar-label">${sev}</div>
+        <div class="bar-fill" style="height:${height}%;background:${colorFor(label)}"></div>
+        <div class="bar-label">${label}</div>
       </div>`;
       })
       .join("\n    ")}
   </div>`;
 }
 
+function severityEntries(counts: Record<string, number>): [string, number][] {
+  return SEVERITY_ORDER.filter((sev) => counts[sev]).map((sev) => [sev, counts[sev]] as [string, number]);
+}
+
+function renderSeverityChart(report: EngineReport): string {
+  return renderBarChart(
+    "Severity Distribution",
+    severityEntries(report.metrics.findingsBySeverity),
+    (sev) => SEVERITY_COLORS[sev] ?? "#6b7280",
+  );
+}
+
 function renderCategoryChart(categoryCounts: Record<string, number>): string {
-  if (Object.keys(categoryCounts).length === 0) return "";
-  const maxCount = Math.max(...Object.values(categoryCounts));
-  return `<h2>Category Breakdown</h2>
-  <div class="bar-chart">
-    ${Object.entries(categoryCounts)
-      .map(([cat, count]) => {
-        const height = maxCount > 0 ? Math.round((count / maxCount) * BAR_HEIGHT_PERCENT) : 0;
-        return `<div class="bar">
-        <div class="bar-value">${count}</div>
-        <div class="bar-fill" style="height:${height}%;background:#6366f1"></div>
-        <div class="bar-label">${cat}</div>
-      </div>`;
-      })
-      .join("\n    ")}
-  </div>`;
+  return renderBarChart("Category Breakdown", Object.entries(categoryCounts), () => "#6366f1");
 }
 
 function renderFindingsTable(count: number, rows: string): string {
@@ -215,7 +219,7 @@ function escapeHtml(s: string): string {
 
 function scoreColor(score: number): string {
   if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
-  if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
-  if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
-  return "#dc2626";
+  if (score >= SCORE_AMBER_THRESHOLD) return "#d97706";
+  if (score >= SCORE_ORANGE_THRESHOLD) return "#ea580c";
+  return SCORE_RED_COLOR;
 }
