@@ -55,21 +55,21 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          fetch-depth: 1",
   "",
-"      - name: Generate implementation plan",
-"        id: loading",
-"        uses: actions/github-script@v7",
-"        with:",
-"          script: |",
-"            try {",
-"              const { data: comment } = await github.rest.issues.createComment({",
-"                owner: context.repo.owner, repo: context.repo.repo,",
-"                issue_number: context.issue.number,",
-"                body: '\u{1F504} **CodeSentinel** is analyzing this issue and generating an implementation plan...'",
-"              });",
-"              core.setOutput('comment_id', comment.id);",
-"            } catch (err) {",
-"              core.setFailed(err.message);",
-"            }",
+  "      - name: Generate implementation plan",
+  "        id: loading",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            try {",
+  "              const { data: comment } = await github.rest.issues.createComment({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                issue_number: context.issue.number,",
+  "                body: '\u{1F504} **CodeSentinel** is analyzing this issue and generating an implementation plan...'",
+  "              });",
+  "              core.setOutput('comment_id', comment.id);",
+  "            } catch (err) {",
+  "              core.setFailed(err.message);",
+  "            }",
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
@@ -83,22 +83,22 @@ const WORKFLOW_CONTENT = [
   "          issue_body: ${{ github.event.issue.body }}",
   "          use_opencode_cli: \"false\"",
   "",
-"      - name: Update comment with plan",
-"        uses: actions/github-script@v7",
-"        with:",
-"          script: |",
-"            const fs = require('fs');",
-"            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
-"            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
-"            try {",
-"              await github.rest.issues.updateComment({",
-"                owner: context.repo.owner, repo: context.repo.repo,",
-"                comment_id: ${{ steps.loading.outputs.comment_id }},",
-"                body: body",
-"              });",
-"            } catch (err) {",
-"              core.setFailed(err.message);",
-"            }",
+  "      - name: Update comment with plan",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            const fs = require('fs');",
+  "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
+  "            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
+  "            try {",
+  "              await github.rest.issues.updateComment({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                comment_id: ${{ steps.loading.outputs.comment_id }},",
+  "                body: body",
+  "              });",
+  "            } catch (err) {",
+  "              core.setFailed(err.message);",
+  "            }",
   "",
   "  slash-command:",
   "    if: github.event_name == 'issue_comment' && github.event.action == 'created'",
@@ -172,7 +172,7 @@ const WORKFLOW_CONTENT = [
   "              issue_number: context.issue.number",
   "            });",
   "            core.setOutput('title', issue.title);",
-`            core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));`,
+  `            core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));`,
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
@@ -238,10 +238,10 @@ const BUILD_WORKFLOW_CONTENT = [
   '          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}',
   '          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}',
   '          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}',
-'          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}',
-'          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}',
-'          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
-'          CODESENTINEL_GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN }}',
+  '          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}',
+  '          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}',
+  '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
+  '          CODESENTINEL_GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN }}',
   "        run: |",
   "          MAX_ITER=${MAX_ITERATIONS:-5}",
   '          echo "::group::Build-Fix Loop"',
@@ -496,7 +496,6 @@ async function main(): Promise<void> {
       process.stdout.write("Dashboard is not available.\n");
     }
     process.stdout.write("Press Ctrl+C to stop.\n");
-    await new Promise(() => {});
     return;
   }
 
@@ -595,7 +594,12 @@ async function main(): Promise<void> {
   }
 
   if (values["log-level"]) {
-    logger.level = values["log-level"] as any;
+    const level = values["log-level"];
+    if (level === "debug" || level === "info" || level === "warn" || level === "error") {
+      logger.level = level;
+    } else {
+      logger.error(`Invalid log level: ${level} (expected debug|info|warn|error)`);
+    }
   }
   if (values.json) {
     logger.setJsonMode(true);

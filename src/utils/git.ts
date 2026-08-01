@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
@@ -60,34 +60,33 @@ export async function collectDiff(
   let nameStatus: string;
   try {
     nameStatus = await git(
-      ["diff", "--name-status", "--no-renames", baseRef + "..."],
+      ["diff", "--name-status", "--no-renames", "-z", baseRef + "..."],
       cwd,
     );
   } catch (err) {
     logger.warn(`Failed to collect diff against "${baseRef}":`, err);
-    return [];
+    throw err;
   }
 
-  const lines = nameStatus
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
+  const records = nameStatus.split("\0").filter(Boolean);
 
   const files: DiffFile[] = [];
-  for (const line of lines) {
-    const [statusCode, path] = line.split(/\t/);
+  const root = resolve(cwd);
+  for (let i = 0; i < records.length; i += 2) {
+    const statusCode = records[i];
+    const path = records[i + 1];
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
       const full = resolve(cwd, path);
-      if (!full.startsWith(resolve(cwd))) {
+      if (full !== root && !full.startsWith(root + sep)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
       try {
-        content = readFileSync(full, "utf8");
+        content = await readFile(full, "utf8");
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
@@ -121,7 +120,8 @@ async function defaultBaseRef(cwd: string): Promise<string> {
   for (const ref of candidates) {
     if (await refExists(ref, cwd)) return ref;
   }
-  // Fall back to merge-base with the default remote branch.
+  // Fall back to a two-dot diff against HEAD (working-tree/committed changes)
+  // when no upstream base branch is available.
   return "HEAD";
 }
 
