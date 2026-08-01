@@ -47,7 +47,7 @@ function createSarifLocation(file: string, line?: number): SarifResult["location
   return {
     physicalLocation: {
       artifactLocation: { uri: file },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      ...(line != null && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }
@@ -78,16 +78,13 @@ export function renderSarif(report: EngineReport): string {
   const rules = new Map<string, { id: string; shortDescription: { text: string } }>();
   const results: SarifResult[] = [];
 
-  for (const f of report.findings) {
-    const ruleId = `${f.category}:${simpleHash(f.comment)}`;
+  for (const [index, f] of report.findings.entries()) {
+    const ruleId = `codesentinel/${f.category}/${index + 1}`;
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
-        shortDescription: { text: f.comment },
+        shortDescription: { text: f.category },
       });
-    }
-    if (!SEVERITY_MAP[f.severity]) {
-      throw new Error(`Unknown severity: "${f.severity}"`);
     }
     results.push({
       ruleId,
