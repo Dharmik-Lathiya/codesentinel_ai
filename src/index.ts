@@ -5,8 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Engine } from "./engine/index.js";
-import type { Mode, RuntimeSecrets } from "./config/types.js";
-import { logger } from "./utils/logger.js";
+import type { CodeSentinelConfig, Mode, ModelConfig, Provider, RuntimeSecrets } from "./config/types.js";
+import { logger, type LogLevel } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
@@ -21,6 +21,9 @@ const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
+}
+function mergeOverride<T extends object>(current: T | undefined, patch: Partial<T>): T {
+  return { ...(current as T), ...patch } as T;
 }
 
 const WORKFLOW_CONTENT = [
@@ -532,6 +535,13 @@ async function main(): Promise<void> {
     const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
     const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
 
+    if (dismissArgs.includes("--rule") && dismissArgs.includes("--file")) {
+      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+      process.stdout.write("Options --rule and --file are mutually exclusive.\n");
+      return;
+    }
+
     if (dismissArgs.includes("--rule")) {
       const ruleIdx = dismissArgs.indexOf("--rule");
       const ruleId = dismissArgs[ruleIdx + 1];
@@ -605,7 +615,7 @@ async function main(): Promise<void> {
   }
 
   if (values["log-level"]) {
-    logger.level = values["log-level"] as any;
+    logger.level = values["log-level"] as LogLevel;
   }
   if (values.json) {
     logger.setJsonMode(true);
@@ -620,14 +630,14 @@ async function main(): Promise<void> {
     opencode_base_url: process.env.OPENCODE_BASE_URL,
   };
 
-  const overrides: Record<string, unknown> = {};
+  const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
-  if (values["improve-type"]) overrides.improve_type = values["improve-type"];
+  if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
   const issueTitle = process.env.INPUT_ISSUE_TITLE;
@@ -636,17 +646,17 @@ async function main(): Promise<void> {
   if (issueBody) overrides.issue_body = issueBody;
 
   if (values["min-score"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), minScore: Number(values["min-score"]) };
+    overrides.gate = mergeOverride(overrides.gate, { minScore: Number(values["min-score"]) });
   }
   if (values["max-critical"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), maxCritical: Number(values["max-critical"]) };
+    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Number(values["max-critical"]) });
   }
   if (values["max-high"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), maxHigh: Number(values["max-high"]) };
+    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Number(values["max-high"]) });
   }
 
   if (values.provider) {
-    const providerModel = { provider: values.provider as any, model: "default" };
+    const providerModel: ModelConfig = { provider: values.provider as Provider, model: "default" };
     overrides.default_model = providerModel;
     overrides.models = {
       review: providerModel,
@@ -660,9 +670,9 @@ async function main(): Promise<void> {
   }
   if (values["dry-run"]) overrides.enable_auto_fix = false;
   if (values.jsonl) overrides.jsonl_output = true;
-  if (values.mcp) overrides.mcp = { ...(overrides.mcp as any || {}), enabled: true };
+  if (values.mcp) overrides.mcp = mergeOverride(overrides.mcp, { enabled: true });
   if (values["learning-db"]) {
-    overrides.learning = { ...(overrides.learning as any || {}), enabled: true, dbPath: values["learning-db"] };
+    overrides.learning = mergeOverride(overrides.learning, { enabled: true, dbPath: values["learning-db"] });
   }
   if (values["use-opencode-cli"]) {
     overrides.use_opencode_cli = true;
@@ -679,7 +689,7 @@ async function main(): Promise<void> {
 
   const engine = Engine.fromInputs({
     configPath: values.config,
-    overrides: overrides as any,
+    overrides,
     secrets,
   });
 
@@ -719,7 +729,7 @@ async function main(): Promise<void> {
   if (values.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
-    throw new Error("Gate check failed");
+      throw new Error("Gate check failed");
     }
     return;
   }
