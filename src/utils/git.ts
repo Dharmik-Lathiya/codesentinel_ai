@@ -79,6 +79,8 @@ export async function collectDiff(
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
+    // Note: content is read from the working tree while the diff reflects the
+    // committed state vs base; these can disagree with uncommitted edits.
     let content = "";
     if (status !== "deleted") {
       const full = resolve(cwd, path);
@@ -121,7 +123,7 @@ async function defaultBaseRef(cwd: string): Promise<string> {
   for (const ref of candidates) {
     if (await refExists(ref, cwd)) return ref;
   }
-  // Fall back to merge-base with the default remote branch.
+  // No remote refs found; fall back to HEAD (diff against HEAD is empty).
   return "HEAD";
 }
 
