@@ -1,13 +1,15 @@
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
 import { logger } from "./logger.js";
+import { concurrentMap } from "./concurrency.js";
 
 const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER = 64 * MEGABYTE;
+const DIFF_CONCURRENCY = 8;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -65,7 +67,15 @@ export async function collectDiff(
     );
   } catch (err) {
     logger.warn(`Failed to collect diff against "${baseRef}":`, err);
-    return [];
+    throw err;
+  }
+
+  let root: string;
+  try {
+    root = await repoTopLevel(cwd);
+  } catch (err) {
+    logger.error("Failed to resolve git repository top-level", err);
+    throw err;
   }
 
   const lines = nameStatus
@@ -73,34 +83,40 @@ export async function collectDiff(
     .map((l) => l.trim())
     .filter(Boolean);
 
-  const files: DiffFile[] = [];
-  for (const line of lines) {
-    const [statusCode, path] = line.split(/\t/);
-    if (!statusCode || !path) continue;
-    const status = mapStatus(statusCode);
-    if (!status) continue;
-    let content = "";
-    if (status !== "deleted") {
-      const full = resolve(cwd, path);
-      if (!full.startsWith(resolve(cwd))) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
-        continue;
+  const entries = await concurrentMap(
+    lines,
+    async (line): Promise<DiffFile | null> => {
+      const [statusCode, path] = line.split(/\t/);
+      if (!statusCode || !path) return null;
+      const status = mapStatus(statusCode);
+      if (!status) return null;
+      let content = "";
+      if (status !== "deleted") {
+        const full = resolve(root, path);
+        if (!full.startsWith(resolve(root))) {
+          logger.warn(`Skipping path outside workspace: ${path}`);
+          return null;
+        }
+        try {
+          content = await readFile(full, "utf8");
+        } catch {
+          logger.debug(`Could not read content for ${path}`);
+        }
       }
+      let diff = "";
       try {
-        content = readFileSync(full, "utf8");
+        diff = await git(["diff", baseRef + "...", "--", path], cwd);
       } catch {
-        logger.debug(`Could not read content for ${path}`);
+        logger.debug(`Could not collect diff for ${path}`);
       }
-    }
-    let diff = "";
-    try {
-      diff = await git(["diff", baseRef + "...", "--", path], cwd);
-    } catch {
-      logger.debug(`Could not collect diff for ${path}`);
-    }
-    files.push({ path, status, content, diff });
-  }
-  return files;
+      return { path, status, content, diff };
+    },
+    DIFF_CONCURRENCY,
+  );
+
+  return entries.filter(
+    (entry): entry is DiffFile => entry !== null,
+  );
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
@@ -135,10 +151,18 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
   }
 }
 
+async function repoTopLevel(cwd: string): Promise<string> {
+  try {
+    const out = await git(["rev-parse", "--show-toplevel"], cwd, { quiet: true });
+    return out.trim();
+  } catch (err) {
+    throw new Error(`Failed to resolve git repository top-level: ${String(err)}`);
+  }
+}
+
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code.startsWith("R")) return "renamed";
   if (code === "M") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;

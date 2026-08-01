@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Engine } from "./engine/index.js";
+import { Engine, type EngineReport } from "./engine/index.js";
 import type { Mode, RuntimeSecrets } from "./config/types.js";
 import { logger } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
@@ -22,6 +22,12 @@ const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
 }
+function assertGatePassed(report: EngineReport): void {
+  if (report.mode === "gate" && report.gatePassed === false) {
+    throw new Error("Gate check failed");
+  }
+}
+
 
 const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
@@ -526,7 +532,7 @@ async function main(): Promise<void> {
       const ruleIdx = dismissArgs.indexOf("--rule");
       const ruleId = dismissArgs[ruleIdx + 1];
       if (!ruleId || ruleId.startsWith("--")) {
-        process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+        process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
         return;
       }
       await engine.dismissByRule(ruleId, reason);
@@ -536,17 +542,18 @@ async function main(): Promise<void> {
       const filePath = dismissArgs[fileIdx + 1];
       const lineIdx = dismissArgs.indexOf("--line");
       const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-      const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+      const parsedLine = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+      const lineNum = parsedLine !== null && parsedLine >= 1 ? parsedLine : null;
       if (!filePath) {
-        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
+        process.stderr.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
         return;
       }
       const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
       await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
       process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
-      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+      process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+      process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
     }
     return;
   }
@@ -707,19 +714,15 @@ async function main(): Promise<void> {
 
   // JSON output mode
   if (values.json) {
+    assertGatePassed(report);
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
-    if (report.mode === "gate" && report.gatePassed === false) {
-    throw new Error("Gate check failed");
-    }
     return;
   }
 
   // SARIF output mode
   if (values.sarif) {
+    assertGatePassed(report);
     process.stdout.write(renderSarif(report) + "\n");
-    if (report.mode === "gate" && report.gatePassed === false) {
-      throw new Error("Gate check failed");
-    }
     return;
   }
 
@@ -753,9 +756,7 @@ async function main(): Promise<void> {
   process.stdout.write(`\nDone in ${report.metrics.durationMs}ms.\n`);
 
   // Exit non-zero if gate fails
-  if (report.mode === "gate" && report.gatePassed === false) {
-    throw new Error("Gate check failed");
-  }
+  assertGatePassed(report);
 }
 
 main().catch((err) => {
