@@ -8,7 +8,7 @@ export async function concurrentMap<T, R>(
   concurrency: number = 5,
 ): Promise<(R | Error)[]> {
   if (!Array.isArray(items)) throw new TypeError('items must be an array');
-  if (concurrency < 1) throw new Error('concurrency must be >= 1');
+  if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error('concurrency must be a positive integer');
   const results: (R | Error)[] = new Array(items.length);
   let nextIndex = 0;
 
@@ -24,6 +24,10 @@ export async function concurrentMap<T, R>(
   }
 
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
-  await Promise.all(workers);
+  try {
+    await Promise.all(workers);
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  }
   return results;
 }

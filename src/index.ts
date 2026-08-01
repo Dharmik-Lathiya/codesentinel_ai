@@ -17,6 +17,11 @@ const PARSE_INT_RADIX = 10;
 const MAX_SCORE = 100;
 const MAX_ISSUE_BODY_LENGTH = 8000;
 const NODE_VERSION = 20;
+const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
+
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE_RE, "");
+}
 
 const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
@@ -496,6 +501,14 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dismiss") {
+    if (args.includes("--help") || args.includes("-h")) {
+      showHelp();
+      return;
+    }
+    if (args.includes("--version")) {
+      showVersion();
+      return;
+    }
     const secrets: RuntimeSecrets = {
       github_token: process.env.GITHUB_TOKEN,
       openai_api_key: process.env.OPENAI_API_KEY,
@@ -512,7 +525,7 @@ async function main(): Promise<void> {
     if (dismissArgs.includes("--rule")) {
       const ruleIdx = dismissArgs.indexOf("--rule");
       const ruleId = dismissArgs[ruleIdx + 1];
-      if (!ruleId) {
+      if (!ruleId || ruleId.startsWith("--")) {
         process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
         return;
       }
@@ -644,7 +657,7 @@ async function main(): Promise<void> {
   if (values["use-opencode-cli"]) {
     overrides.use_opencode_cli = true;
   }
-  if (values["yaml-config"]) {
+  if (values["yaml-config"] && !values.config) {
     const searchPaths = [".opencode-reviewer.yml", ".codesentinel.yml", "codesentinel.config.yml"];
     for (const p of searchPaths) {
       if (existsSync(resolve(process.cwd(), p))) {
@@ -684,7 +697,7 @@ async function main(): Promise<void> {
       process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
       process.stdout.write(`Unused exports (${findings.length}):\n`);
       for (const f of findings) {
-        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${f.comment}\n`);
+        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
       }
     }
     return;
@@ -728,7 +741,7 @@ async function main(): Promise<void> {
   if (report.findings.length && (report.mode !== "review" && report.mode !== "fix")) {
     process.stdout.write(`\nFindings (${report.findings.length}):\n`);
     for (const f of report.findings) {
-      process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${f.comment}\n`);
+      process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${stripAnsi(f.comment)}\n`);
     }
   }
   if (report.generatedTests.length) {
