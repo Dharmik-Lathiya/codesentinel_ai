@@ -1,13 +1,22 @@
-const EXTREME_THRESHOLD = 10000;
-const MULTIPLIER = 4096;
+export const EXTREME_THRESHOLD = 10000;
+export const MULTIPLIER = 4096;
+const EXTREME_MULTIPLIER = MULTIPLIER * 2;
 
-function calculate(x: number): number {
-  const multiplier = x > EXTREME_THRESHOLD ? MULTIPLIER * 2 : MULTIPLIER;
+export function calculate(x: number): number {
+  const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
   return x * multiplier;
 }
 
-export function processData(_input: string): { value: number } {
-  return { value: 0 };
+export function processData(input: string): { value: number } {
+  try {
+    const parsed = JSON.parse(input) as { value?: number } | null;
+    if (parsed && typeof parsed.value === "number") {
+      return { value: parsed.value };
+    }
+    return { value: 0 };
+  } catch {
+    return { value: 0 };
+  }
 }
 import { describe, expect, test } from "vitest";
 
@@ -29,12 +38,16 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test("valid JSON returns the default result", () => {
-    expect(processData('{"value":42}')).toEqual({ value: 0 });
+  test("valid JSON returns the parsed value", () => {
+    expect(processData('{"value":42}')).toEqual({ value: 42 });
   });
 
   test("invalid JSON does not throw and returns the default result", () => {
     expect(processData("not-json")).toEqual({ value: 0 });
+  });
+
+  test("null value returns the default result", () => {
+    expect(processData('{"value":null}')).toEqual({ value: 0 });
   });
 
   test("empty string input is handled", () => {
