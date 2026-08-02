@@ -60,7 +60,7 @@ export async function collectDiff(
   let nameStatus: string;
   try {
     nameStatus = await git(
-      ["diff", "--name-status", "--no-renames", baseRef + "..."],
+      ["diff", "--name-status", "--no-renames", diffRange(baseRef)],
       cwd,
     );
   } catch (err) {
@@ -94,13 +94,18 @@ export async function collectDiff(
     }
     let diff = "";
     try {
-      diff = await git(["diff", baseRef + "...", "--", path], cwd);
+      diff = await git(["diff", diffRange(baseRef), "--", path], cwd);
     } catch {
       logger.debug(`Could not collect diff for ${path}`);
     }
     files.push({ path, status, content, diff });
   }
   return files;
+}
+
+/** Diff range: three-dot against a real base, or working tree vs HEAD when falling back. */
+function diffRange(baseRef: string): string {
+  return baseRef === "HEAD" ? "HEAD" : `${baseRef}...`;
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
