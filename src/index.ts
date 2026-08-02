@@ -74,6 +74,19 @@ const WORKFLOW_CONTENT = [
 "              core.setFailed(err.message);",
 "            }",
   "",
+  "      - name: Get issue info (for plan mode)",
+  "        id: issue_info",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            try {",
+  "              const { data: issue } = await github.rest.issues.get({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                issue_number: context.issue.number",
+  "              });",
+  "              core.setOutput('title', issue.title);",
+  "              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));",
+  "            } catch (err) { core.setFailed(err.message); }",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
   "      - name: Run CodeSentinel plan",
@@ -82,8 +95,8 @@ const WORKFLOW_CONTENT = [
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
   "        with:",
   "          mode: plan",
-  "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+  "          issue_title: ${{ steps.issue_info.outputs.title }}",
+  "          issue_body: ${{ steps.issue_info.outputs.body }}",
   "          use_opencode_cli: \"false\"",
   "",
 "      - name: Update comment with plan",
@@ -121,7 +134,7 @@ const WORKFLOW_CONTENT = [
   "          script: |",
   "            const body = context.payload.comment.body.trim();",
   "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
-  "            if (!match) { core.setFailed('No valid command'); return; }",
+  "            if (!match) { core.setOutput('mode', ''); return; }",
   "            const mode = match[1].toLowerCase();",
   "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
   "            core.setOutput('mode', mode);",
@@ -157,6 +170,7 @@ const WORKFLOW_CONTENT = [
   "",
   "      - name: Loading comment",
   "        id: loading",
+  "        if: steps.cmd.outputs.mode != ''",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
@@ -186,6 +200,7 @@ const WORKFLOW_CONTENT = [
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
   "      - name: Run CodeSentinel",
+  "        if: steps.cmd.outputs.mode != ''",
   "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        env:",
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
@@ -197,6 +212,7 @@ const WORKFLOW_CONTENT = [
   "          use_opencode_cli: \"false\"",
   "",
   "      - name: Update comment",
+  "        if: steps.cmd.outputs.mode != ''",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
@@ -254,7 +270,7 @@ const BUILD_WORKFLOW_CONTENT = [
 '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
 '          CODESENTINEL_GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN }}',
   "        run: |",
-  "          MAX_ITER=${MAX_ITERATIONS:-5}",
+  "          MAX_ITER=5",
   '          echo "::group::Build-Fix Loop"',
   "          for i in $(seq 1 $MAX_ITER); do",
   '            echo "=== Iteration $i/$MAX_ITER ==="',
@@ -273,7 +289,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   "            if [ ! -d \"codesentinel\" ]; then",
   '              echo "Cloning CodeSentinel..."',
-  "              git clone --depth 1 https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git codesentinel",
+  "              git clone --depth 1 --branch v0.8.0 https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git codesentinel",
   '              cd codesentinel && npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>&1 && cd ..',
   "            fi",
   "",
@@ -571,13 +587,15 @@ async function main(): Promise<void> {
     return;
   }
 
+  const noScoring = args.includes("--no-scoring");
+  const parseArgv = args.filter((a) => a !== "--no-scoring");
   const { values, positionals } = parseArgs({
     options: {
       mode: { type: "string", short: "m" },
       config: { type: "string", short: "c" },
       "max-iterations": { type: "string" },
       "auto-fix": { type: "boolean", default: false },
-      scoring: { type: "boolean", default: true },
+      scoring: { type: "boolean" },
       "test-gen": { type: "boolean", default: false },
       provider: { type: "string" },
       ask: { type: "string" },
@@ -598,7 +616,7 @@ async function main(): Promise<void> {
       "improve-type": { type: "string" },
       "use-opencode-cli": { type: "boolean", default: false },
     },
-    args: process.argv.slice(2),
+    args: parseArgv,
     allowPositionals: true,
   });
 
@@ -635,6 +653,7 @@ async function main(): Promise<void> {
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
+  if (noScoring) overrides.enable_scoring = false;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
   if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
