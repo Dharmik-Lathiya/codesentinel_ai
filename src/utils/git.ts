@@ -214,9 +214,9 @@ async function collectWorkingTreeDiff(cwd: string): Promise<DiffFile[]> {
 }
 
 function mapStatus(code: string): DiffFile["status"] | null {
-  if (code.startsWith("A")) return "added";
-  if (code.startsWith("D")) return "deleted";
-  if (code.startsWith("R")) return "renamed";
+  if (code === "A") return "added";
+  if (code === "D") return "deleted";
+  if (code === "R") return "renamed";
   if (code === "M") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
