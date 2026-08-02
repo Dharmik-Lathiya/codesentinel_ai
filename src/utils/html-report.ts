@@ -14,7 +14,9 @@ const SHADOW_ALPHA = "0.08";
 const BAR_HEIGHT_PERCENT = 100;
 const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
-const SCORE_RED_THRESHOLD = 40;
+const SCORE_ORANGE_LOW_THRESHOLD = 40;
+
+export const HTML_APOSTROPHE = "&#39;";
 
 /**
  * Generate a self-contained HTML dashboard report from an EngineReport.
@@ -22,10 +24,15 @@ const SCORE_RED_THRESHOLD = 40;
  */
 export function renderHtmlReport(report: EngineReport): string {
   const categoryCounts: Record<string, number> = {};
-  const severityCounts: Record<string, number> = {};
+  let severityCounts: Record<string, number> = report.metrics.findingsBySeverity;
+  if (Object.keys(severityCounts).length === 0) {
+    severityCounts = {};
+    for (const f of report.findings) {
+      severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
+    }
+  }
   for (const f of report.findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
-    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
   }
 
   const findingsRows = report.findings
@@ -145,90 +152,14 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
-
-  it("renders severity bar heights proportional to the max count", () => {
-    const report = {
-      ...baseReport,
-      findings: [
-        { severity: "high", category: "security", file: "a.ts", line: 1, comment: "c", source: "static" },
-        { severity: "high", category: "security", file: "b.ts", line: 2, comment: "c", source: "static" },
-        { severity: "low", category: "smell", file: "c.ts", line: null, comment: "c", source: "static" },
-      ],
-      metrics: { ...baseReport.metrics, findingsBySeverity: { high: 2, low: 1 } },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain('class="bar-fill" style="height:100%;background:#ea580c"');
-    expect(html).toContain('class="bar-fill" style="height:50%;background:#2563eb"');
-  });
-
-  it("tallies severity counts locally when findingsBySeverity is empty", () => {
-    const report = {
-      ...baseReport,
-      metrics: { ...baseReport.metrics, findingsBySeverity: {} },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain("Severity Distribution");
-    expect(html).toContain("1 high");
-    expect(html).toContain("1 medium");
-    expect(html).toContain("1 low");
-    expect(html).not.toContain(">none</div>");
-  });
-
-  it("renders file:line suffix for a finding at line 0", () => {
-    const report = {
-      ...baseReport,
-      findings: [{ severity: "high", category: "bug", file: "x.ts", line: 0, comment: "c", source: "static" }],
-      metrics: { ...baseReport.metrics, findingsBySeverity: { high: 1 } },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain("x.ts:0");
-  });
-
-  it("renders skipped and applied fix statuses", () => {
-    const report = {
-      ...baseReport,
-      fixAttempts: [
-        { iteration: 1, file: "a.ts", fixed: false, explanation: "e" },
-        { iteration: 2, file: "b.ts", fixed: true, verified: false, explanation: "e" },
-      ],
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain("skipped");
-    expect(html).toContain("applied");
-  });
-
-  it("escapes AI-derived severity, category, and mode values plus single quotes", () => {
-    const report = {
-      ...baseReport,
-      mode: "<script>evil</script>" as unknown as typeof baseReport.mode,
-      findings: [{
-        severity: "<b>high</b>" as unknown as typeof baseReport.findings[number]["severity"],
-        category: "<i>smell</i>" as unknown as typeof baseReport.findings[number]["category"],
-        file: "x.ts",
-        line: 1,
-        comment: "it's fine",
-        source: "static" as const,
-      }],
-      metrics: { ...baseReport.metrics, findingsBySeverity: {} },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).not.toContain("<script>evil");
-    expect(html).not.toContain("<b>high</b>");
-    expect(html).not.toContain("<i>smell</i>");
-    expect(html).toContain("&lt;script&gt;evil");
-    expect(html).toContain("&lt;b&gt;high&lt;/b&gt;");
-    expect(html).toContain("&lt;i&gt;smell&lt;/i&gt;");
-    expect(html).toContain("it&#39;s fine");
-  });
-});
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
       </div>
     </div>`;
 }
 
 function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
   if (items.length === 0) return "";
-  const maxCount = Math.max(...items.map((item) => item.value));
+  const maxCount = items.reduce((max, item) => Math.max(max, item.value), 0);
   return `<h2>${escapeHtml(title)}</h2>
   <div class="bar-chart">
     ${items
@@ -276,12 +207,12 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/'/g, HTML_APOSTROPHE);
 }
 
 function scoreColor(score: number): string {
   if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
   if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
-  if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
+  if (score >= SCORE_ORANGE_LOW_THRESHOLD) return "#ea580c";
   return "#dc2626";
 }

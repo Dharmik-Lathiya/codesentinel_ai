@@ -38,7 +38,7 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
-const COMMENT_TRUNCATION_LENGTH = 40;
+const HASH_RADIX = 36;
 
 function simpleHash(s: string): string {
   let hash = 0;
@@ -47,14 +47,14 @@ function simpleHash(s: string): string {
     hash = ((hash << 5) - hash) + char;
     hash |= 0;
   }
-  return Math.abs(hash).toString(36);
+  return Math.abs(hash).toString(HASH_RADIX);
 }
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      artifactLocation: { uri: file.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/") },
+      ...(line != null && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }
@@ -102,7 +102,7 @@ export function renderSarif(report: EngineReport): string {
   }
 
   const sarif: SarifLog = {
-    $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+    $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/sarif-2.1/schema/sarif-schema-2.1.0.json",
     version: "2.1.0",
     runs: [createSarifRun(rules, results)],
   };
