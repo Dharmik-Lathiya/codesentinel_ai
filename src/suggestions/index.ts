@@ -13,7 +13,7 @@ export function buildSuggestionsComment(
   const parts: string[] = ["### CodeSentinel — Suggested Fixes\n"];
   for (const f of findings.slice(0, MAX_FINDINGS)) {
     const content = fileContents.get(f.file) ?? "";
-    const lines = content.split("\n");
+    const lines = content.replace(/\r\n?/g, "\n").split("\n");
     if (f.line && f.line > 0 && f.line <= lines.length) {
       const ctxBefore = lines.slice(Math.max(0, f.line - 1 - CONTEXT_BEFORE), f.line - 1).join("\n");
       const ctxAfter = lines.slice(f.line, Math.min(lines.length, f.line + CONTEXT_AFTER)).join("\n");
@@ -27,6 +27,9 @@ export function buildSuggestionsComment(
       const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
       parts.push(`**${f.file}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${suggested || "// " + f.comment}\n\`\`\`\n`);
     }
+  }
+  if (findings.length > MAX_FINDINGS) {
+    parts.push(`...and ${findings.length - MAX_FINDINGS} more findings`);
   }
   return parts.join("\n---\n");
 }

@@ -60,16 +60,23 @@ const gitleaks: ScannerTool = {
         logger.warn("gitleaks JSON parse failed");
         return [];
       }
-      return results.map((r) => ({
-        file: r.File,
-        line: r.StartLine || null,
-        severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
-        category: "security" as const,
-        comment: `[gitleaks] ${r.Description}`,
-        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
-        source: "scanner" as const,
-      }));
+      return results.map((r) => {
+        const sev = (r.Severity || "medium").toLowerCase();
+        return {
+          file: r.File,
+          line: r.StartLine || null,
+          severity: sev === "high" ? "high" : "medium",
+          category: "security" as const,
+          comment: `[gitleaks] ${r.Description}`,
+          suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
+          source: "scanner" as const,
+        };
+      });
     } catch (e) {
+      if (e instanceof RangeError) {
+        logger.warn("gitleaks output exceeded 10MB, no findings reported");
+        return [];
+      }
       logger.warn(`gitleaks run failed: ${e}`);
       return [];
     }
@@ -97,6 +104,10 @@ const trufflehog: ScannerTool = {
       const lines = out.trim().split("\n").filter(Boolean);
       return lines.map(parseTrufflehogLine).filter((f): f is Finding => f !== null);
     } catch (e) {
+      if (e instanceof RangeError) {
+        logger.warn("trufflehog output exceeded 10MB, no findings reported");
+        return [];
+      }
       logger.warn(`trufflehog run failed: ${e}`);
       return [];
     }
