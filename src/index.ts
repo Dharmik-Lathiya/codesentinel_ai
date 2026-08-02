@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,6 +10,7 @@ import { logger, type LogLevel } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
+import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GATE_MIN_SCORE = 70;
@@ -104,7 +105,7 @@ const WORKFLOW_CONTENT = [
 "            }",
   "",
   "  slash-command:",
-  "    if: github.event_name == 'issue_comment' && github.event.action == 'created'",
+  "    if: github.event_name == 'issue_comment' && github.event.action == 'created' && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)",
   "    runs-on: ubuntu-latest",
   "    steps:",
   "      - name: Is PR comment?",
@@ -271,13 +272,13 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   '            echo "❌ Build failed. Running auto-fix..."',
   "",
-  "            if [ ! -d \"codesentinel\" ]; then",
+  "            if [ ! -d \"$RUNNER_TEMP/codesentinel\" ]; then",
   '              echo "Cloning CodeSentinel..."',
-  "              git clone --depth 1 https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git codesentinel",
-  '              cd codesentinel && npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>&1 && cd ..',
+  "              git clone --depth 1 https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git \"$RUNNER_TEMP/codesentinel\"",
+  '              (cd "$RUNNER_TEMP/codesentinel" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund) 2>&1',
   "            fi",
   "",
-  '            node codesentinel/dist/index.js fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
+  '            node "$RUNNER_TEMP/codesentinel/dist/index.js" fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
   "",
   "            git add -A",
   "            if git diff --cached --quiet; then",
@@ -289,10 +290,12 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.name "CodeSentinel Bot"',
   '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
-  "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
+  "            if git push origin HEAD:${{ github.ref_name }} 2>&1; then",
+  '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
+  "            else",
+  "              echo \"::error::push failed for ${{ github.ref_name }} — fix was not delivered\"",
+  "              exit 1",
+  "            fi",
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
@@ -329,14 +332,16 @@ function runSetup(): void {
   const buildWorkflowPath = join(workflowDir, "codesentinel-build.yml");
 
   if (existsSync(workflowPath)) {
-    process.stdout.write(`Overwriting existing workflow...\n`);
+    copyFileSync(workflowPath, `${workflowPath}.bak`);
+    process.stdout.write(`Backed up existing workflow to .github/workflows/codesentinel.yml.bak\n`);
   }
   mkdirSync(workflowDir, { recursive: true });
   writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
   process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
 
   if (existsSync(buildWorkflowPath)) {
-    process.stdout.write(`Overwriting existing build-fix workflow...\n`);
+    copyFileSync(buildWorkflowPath, `${buildWorkflowPath}.bak`);
+    process.stdout.write(`Backed up existing build-fix workflow to .github/workflows/codesentinel-build.yml.bak\n`);
   }
   writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
   process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
@@ -433,7 +438,7 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
   CODESENTINEL_LOG_LEVEL      Default log level
 
 Examples:
