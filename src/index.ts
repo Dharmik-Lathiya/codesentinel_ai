@@ -17,6 +17,7 @@ const PARSE_INT_RADIX = 10;
 const MAX_SCORE = 100;
 const MAX_ISSUE_BODY_LENGTH = 8000;
 const NODE_VERSION = 20;
+const DEFAULT_CLI_TIMEOUT_MINUTES = 20;
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 
 function stripAnsi(text: string): string {
@@ -82,12 +83,13 @@ const WORKFLOW_CONTENT = [
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
   "        with:",
   "          mode: plan",
-  "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+  "          issue_title: ${{ toJSON(github.event.issue.title) }}",
+  "          issue_body: ${{ toJSON(github.event.issue.body) }}",
   "          use_opencode_cli: \"false\"",
   "",
-"      - name: Update comment with plan",
-"        uses: actions/github-script@v7",
+  "      - name: Update comment with plan",
+  "        if: always()",
+  "        uses: actions/github-script@v7",
 "        with:",
 "          script: |",
 "            const fs = require('fs');",
@@ -104,7 +106,7 @@ const WORKFLOW_CONTENT = [
 "            }",
   "",
   "  slash-command:",
-  "    if: github.event_name == 'issue_comment' && github.event.action == 'created'",
+  "    if: github.event_name == 'issue_comment' && github.event.action == 'created' && github.event.comment.user.type != 'Bot'",
   "    runs-on: ubuntu-latest",
   "    steps:",
   "      - name: Is PR comment?",
@@ -121,7 +123,7 @@ const WORKFLOW_CONTENT = [
   "          script: |",
   "            const body = context.payload.comment.body.trim();",
   "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
-  "            if (!match) { core.setFailed('No valid command'); return; }",
+  "            if (!match) { return; }",
   "            const mode = match[1].toLowerCase();",
   "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
   "            core.setOutput('mode', mode);",
@@ -191,12 +193,13 @@ const WORKFLOW_CONTENT = [
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
   "        with:",
   "          mode: ${{ steps.cmd.outputs.mode }}",
-  "          issue_title: ${{ steps.issue_info.outputs.title }}",
-  "          issue_body: ${{ steps.issue_info.outputs.body }}",
-  "          ask: ${{ steps.cmd.outputs.question }}",
+  "          issue_title: ${{ toJSON(steps.issue_info.outputs.title) }}",
+  "          issue_body: ${{ toJSON(steps.issue_info.outputs.body) }}",
+  "          ask: ${{ toJSON(steps.cmd.outputs.question) }}",
   "          use_opencode_cli: \"false\"",
   "",
   "      - name: Update comment",
+  "        if: always()",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
@@ -241,8 +244,8 @@ const BUILD_WORKFLOW_CONTENT = [
   "        with:",
 `          node-version: ${NODE_VERSION}`,
   "",
-  "      - name: Install dependencies (fast — no devDeps, no scripts)",
-  "        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --omit=dev --ignore-scripts --no-audit --no-fund",
+  "      - name: Install dependencies (including devDeps for build)",
+  "        run: npm ci --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --ignore-scripts --no-audit --no-fund",
   "",
   "      - name: Build and auto-fix loop",
   "        env:",
@@ -289,8 +292,6 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.name "CodeSentinel Bot"',
   '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
-  "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
@@ -433,7 +434,7 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
   CODESENTINEL_LOG_LEVEL      Default log level
 
 Examples:
