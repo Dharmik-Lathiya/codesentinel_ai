@@ -22,11 +22,16 @@ const SCORE_RED_THRESHOLD = 40;
  */
 export function renderHtmlReport(report: EngineReport): string {
   const categoryCounts: Record<string, number> = {};
-  const severityCounts: Record<string, number> = {};
+  const findingSeverityCounts: Record<string, number> = {};
   for (const f of report.findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
-    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
+    findingSeverityCounts[f.severity] = (findingSeverityCounts[f.severity] ?? 0) + 1;
   }
+
+  const severityCounts: Record<string, number> =
+    Object.keys(report.metrics.findingsBySeverity ?? {}).length > 0
+      ? report.metrics.findingsBySeverity
+      : findingSeverityCounts;
 
   const findingsRows = report.findings
     .map((f) => {
@@ -142,10 +147,10 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
   if (!score) return "";
   return `
     <div class="card" style="display:flex;align-items:center;gap:1rem">
-      <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
+      <div class="score-ring" style="background:${scoreColor(score.overall)}">${escapeHtml(String(score.overall))}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${escapeHtml(String(score.readability))} &middot; Maintainability ${escapeHtml(String(score.maintainability))} &middot; Security ${escapeHtml(String(score.security))} &middot; Tests ${escapeHtml(String(score.test_coverage))}</div>
 
   it("renders severity bar heights proportional to the max count", () => {
     const report = {

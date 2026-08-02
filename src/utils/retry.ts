@@ -8,6 +8,14 @@ const HTTP_STATUS_503 = "503";
 const HTTP_STATUS_SERVICE_UNAVAILABLE = HTTP_STATUS_503;
 const HTTP_STATUS_502 = "502";
 const HTTP_STATUS_BAD_GATEWAY = HTTP_STATUS_502;
+const RETRYABLE_STATUS_CODES = [
+  "408",
+  HTTP_STATUS_RATE_LIMIT,
+  "500",
+  HTTP_STATUS_BAD_GATEWAY,
+  HTTP_STATUS_SERVICE_UNAVAILABLE,
+  "504",
+];
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -27,6 +35,13 @@ export interface RetryOptions {
 
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
   if (err instanceof Error) {
+    const status =
+      (err as { status?: number | string }).status ??
+      (err as { statusCode?: number | string }).statusCode;
+    const code = String(status ?? "");
+    if (RETRYABLE_STATUS_CODES.includes(code)) {
+      return true;
+    }
     const msg = err.message.toLowerCase();
     return (
       msg.includes("rate limit") ||
