@@ -15,6 +15,31 @@ const BAR_HEIGHT_PERCENT = 100;
 const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
 const SCORE_RED_THRESHOLD = 40;
+const APOSTROPHE_ENTITY = "&#39;";
+const REPORT_STYLES = `  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.25rem; margin: 1.5rem 0 0.75rem; color: ${H2_COLOR}; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.25rem; }
+    .meta { color: #64748b; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .card { background: #fff; border-radius: 8px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); }
+    .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+    .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
+    .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
+    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
+    td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
+    tr:hover td { background: #f8fafc; }
+    .empty { text-align: center; color: #94a3b8; padding: 2rem; }
+    .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
+    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
+    .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
+    .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
+  </style>`;
 
 /**
  * Generate a self-contained HTML dashboard report from an EngineReport.
@@ -73,53 +98,14 @@ export function renderHtmlReport(report: EngineReport): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CodeSentinel — ${escapeHtml(report.mode)} Report</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
-    .container { max-width: 1100px; margin: 0 auto; }
-    h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
-    h2 { font-size: 1.25rem; margin: 1.5rem 0 0.75rem; color: ${H2_COLOR}; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.25rem; }
-    .meta { color: #64748b; margin-bottom: 1.5rem; font-size: 0.9rem; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-    .card { background: #fff; border-radius: 8px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); }
-    .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
-    .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
-    .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
-    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
-    th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
-    td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
-    tr:hover td { background: #f8fafc; }
-    .empty { text-align: center; color: #94a3b8; padding: 2rem; }
-    .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
-    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
-    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
-    .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
-    .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
-  </style>
+  ${REPORT_STYLES}
 </head>
 <body>
 <div class="container">
   <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
   <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
 
-  <div class="cards">
-    <div class="card">
-      <div class="label">Findings</div>
-      <div class="value">${report.findings.length}</div>
-      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
-    </div>
-    ${renderScoreCard(report.score)}
-    <div class="card">
-      <div class="label">Fix Attempts</div>
-      <div class="value">${report.fixAttempts.length}</div>
-      <div class="sub">${report.fixAttempts.filter((a) => a.fixed && a.verified).length} verified</div>
-    </div>
-    <div class="card">
-      <div class="label">Tests Generated</div>
-      <div class="value">${report.generatedTests.length}</div>
-    </div>
-  </div>
+  ${renderSummaryCards(report, severityCounts)}
 
   ${severityChart}
 
@@ -138,6 +124,27 @@ export function renderHtmlReport(report: EngineReport): string {
 </html>`;
 }
 
+function renderSummaryCards(report: EngineReport, severityCounts: Record<string, number>): string {
+  return `
+  <div class="cards">
+    <div class="card">
+      <div class="label">Findings</div>
+      <div class="value">${report.findings.length}</div>
+      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
+    </div>
+    ${renderScoreCard(report.score)}
+    <div class="card">
+      <div class="label">Fix Attempts</div>
+      <div class="value">${report.fixAttempts.length}</div>
+      <div class="sub">${report.fixAttempts.filter((a) => a.fixed && a.verified).length} verified</div>
+    </div>
+    <div class="card">
+      <div class="label">Tests Generated</div>
+      <div class="value">${report.generatedTests.length}</div>
+    </div>
+  </div>`;
+}
+
 function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): string {
   if (!score) return "";
   return `
@@ -147,81 +154,6 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
         <div class="label">Quality Score</div>
         <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
 
-  it("renders severity bar heights proportional to the max count", () => {
-    const report = {
-      ...baseReport,
-      findings: [
-        { severity: "high", category: "security", file: "a.ts", line: 1, comment: "c", source: "static" },
-        { severity: "high", category: "security", file: "b.ts", line: 2, comment: "c", source: "static" },
-        { severity: "low", category: "smell", file: "c.ts", line: null, comment: "c", source: "static" },
-      ],
-      metrics: { ...baseReport.metrics, findingsBySeverity: { high: 2, low: 1 } },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain('class="bar-fill" style="height:100%;background:#ea580c"');
-    expect(html).toContain('class="bar-fill" style="height:50%;background:#2563eb"');
-  });
-
-  it("tallies severity counts locally when findingsBySeverity is empty", () => {
-    const report = {
-      ...baseReport,
-      metrics: { ...baseReport.metrics, findingsBySeverity: {} },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain("Severity Distribution");
-    expect(html).toContain("1 high");
-    expect(html).toContain("1 medium");
-    expect(html).toContain("1 low");
-    expect(html).not.toContain(">none</div>");
-  });
-
-  it("renders file:line suffix for a finding at line 0", () => {
-    const report = {
-      ...baseReport,
-      findings: [{ severity: "high", category: "bug", file: "x.ts", line: 0, comment: "c", source: "static" }],
-      metrics: { ...baseReport.metrics, findingsBySeverity: { high: 1 } },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain("x.ts:0");
-  });
-
-  it("renders skipped and applied fix statuses", () => {
-    const report = {
-      ...baseReport,
-      fixAttempts: [
-        { iteration: 1, file: "a.ts", fixed: false, explanation: "e" },
-        { iteration: 2, file: "b.ts", fixed: true, verified: false, explanation: "e" },
-      ],
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain("skipped");
-    expect(html).toContain("applied");
-  });
-
-  it("escapes AI-derived severity, category, and mode values plus single quotes", () => {
-    const report = {
-      ...baseReport,
-      mode: "<script>evil</script>" as unknown as typeof baseReport.mode,
-      findings: [{
-        severity: "<b>high</b>" as unknown as typeof baseReport.findings[number]["severity"],
-        category: "<i>smell</i>" as unknown as typeof baseReport.findings[number]["category"],
-        file: "x.ts",
-        line: 1,
-        comment: "it's fine",
-        source: "static" as const,
-      }],
-      metrics: { ...baseReport.metrics, findingsBySeverity: {} },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).not.toContain("<script>evil");
-    expect(html).not.toContain("<b>high</b>");
-    expect(html).not.toContain("<i>smell</i>");
-    expect(html).toContain("&lt;script&gt;evil");
-    expect(html).toContain("&lt;b&gt;high&lt;/b&gt;");
-    expect(html).toContain("&lt;i&gt;smell&lt;/i&gt;");
-    expect(html).toContain("it&#39;s fine");
-  });
-});
       </div>
     </div>`;
 }
@@ -276,7 +208,7 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+.replace(/'/g, APOSTROPHE_ENTITY);
 }
 
 function scoreColor(score: number): string {
