@@ -1,11 +1,13 @@
 export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
 export const MULTIPLIER = 4096;
-const EXTREME_MULTIPLIER = 8192; // 2x MULTIPLIER
-const SMALL_INPUT = 100;
-const MEDIUM_INPUT = 1000;
+const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
+const STANDARD_INPUT = 5000;
 
 export function calculate(x: number): number {
+  if (!Number.isFinite(x)) {
+    throw new RangeError(`calculate() expected a finite number, received ${x}`);
+  }
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
   return x * multiplier;
 }
@@ -28,7 +30,7 @@ describe("calculate", () => {
     [0, 0],
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [5000, 5000 * MULTIPLIER],
+    [STANDARD_INPUT, STANDARD_INPUT * MULTIPLIER],
     [6000, 6000 * MULTIPLIER],
     [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
