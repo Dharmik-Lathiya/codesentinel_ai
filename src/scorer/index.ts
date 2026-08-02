@@ -40,6 +40,11 @@ const SEVERITY_PENALTY: Record<Severity, number> = {
   high: HIGH_SEVERITY_PENALTY,
   critical: CRITICAL_SEVERITY_PENALTY,
 };
+/** Readability heuristics used by {@link Scorer.readabilityMetric}. */
+const MAX_LINE_LENGTH = 120;
+const LONG_LINE_PENALTY = 2;
+const COMMENT_RATIO_BONUS = 20;
+const MIN_READABILITY_SCORE = 20;
 
 /**
  * Scorer computes a deterministic baseline quality score from static findings
@@ -56,11 +61,11 @@ export class Scorer {
   ): ScoreBreakdown {
     const securityPenalty = findings
       .filter((f) => f.category === "security")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity], 0);
+      .reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0), 0);
 
     const smellPenalty = findings
       .filter((f) => f.category === "smell" || f.category === "style")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity] / 2, 0);
+      .reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0) / 2, 0);
 
     const security = clamp(MAX_SCORE - securityPenalty);
     const maintainability = clamp(MAX_SCORE - smellPenalty);
@@ -112,7 +117,7 @@ export class Scorer {
       default:
         // Keep the more conservative (lower) security number: static analysis
         // is more reliable for security, so we take the stricter assessment.
-        security = Math.min(ai.security ?? MAX_SCORE, baseline.security);
+        security = Math.min(ai.security ?? baseline.security, baseline.security);
         break;
     }
     const test_coverage = ai.test_coverage ?? baseline.test_coverage;
@@ -150,31 +155,42 @@ export class Scorer {
       fileCount++;
       const lines = content.split("\n");
       const commentLines = lines.filter(
-        (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
+        (l) => /^\s*(\/\/|\/\*|\*|#!)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
-      const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const longLines = lines.filter((l) => l.length > MAX_LINE_LENGTH).length;
+      const score = 100 - longLines * LONG_LINE_PENALTY + commentRatio * COMMENT_RATIO_BONUS;
+      total += Math.max(MIN_READABILITY_SCORE, score);
     }
     return fileCount ? total / fileCount : 100;
   }
 
   /** Coverage heuristic: fraction of source files that have a related test. */
+  /** Coverage heuristic: fraction of source files that have a related test. */
   private coverageMetric(
     files: { path: string; content: string }[],
   ): number {
-    const testPaths = new Set(
-      files
-        .map((f) => f.path)
-        .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
+    const TEST_FILE = /\.(test|spec)\.[jt]sx?$/;
+    const CODE_FILE = /\.(c|m)?[jt]sx?$/;
+    const testBases = new Set<string>();
+    for (const p of files.map((f) => f.path)) {
+      if (TEST_FILE.test(p) || /__tests__\//.test(p)) {
+        testBases.add(p.replace(/\.[^.]+$/, ""));
+      }
+    }
+    const sourceFiles = files.filter(
+      (f) =>
+        !TEST_FILE.test(f.path) &&
+        !/__tests__\//.test(f.path) &&
+        CODE_FILE.test(f.path),
     );
-    const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
     if (sourceFiles.length === 0) return 100;
     let covered = 0;
     for (const f of sourceFiles) {
       const base = f.path.replace(/\.[^.]+$/, "");
-      if ([...testPaths].some((t) => t.startsWith(base))) covered++;
+      if (testBases.has(base + ".test") || testBases.has(base + ".spec")) {
+        covered++;
+      }
     }
     return (covered / sourceFiles.length) * 100;
   }
