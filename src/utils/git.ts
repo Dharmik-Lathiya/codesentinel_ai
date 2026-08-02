@@ -50,12 +50,7 @@ export async function collectDiff(
   if (base) {
     baseRef = base;
   } else {
-    try {
       baseRef = await defaultBaseRef(cwd);
-    } catch (err) {
-      logger.error("Failed to determine default base ref", err);
-      throw err;
-    }
   }
   let nameStatus: string;
   try {
