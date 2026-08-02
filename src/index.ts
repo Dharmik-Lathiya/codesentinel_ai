@@ -92,6 +92,7 @@ const WORKFLOW_CONTENT = [
 "          script: |",
 "            const fs = require('fs');",
 "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
+  "            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }",
 "            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
 "            try {",
 "              await github.rest.issues.updateComment({",
@@ -186,6 +187,7 @@ const WORKFLOW_CONTENT = [
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
   "      - name: Run CodeSentinel",
+  "        id: cs",
   "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        env:",
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
@@ -202,6 +204,7 @@ const WORKFLOW_CONTENT = [
   "          script: |",
   "            const fs = require('fs');",
   "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
+  "            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }",
   "            const mode = '${{ steps.cmd.outputs.mode }}';",
   "            const planSuffix = mode === 'plan' ? '\\n\\nReply with `/fix` to start implementation.' : '';",
   "            const body = '### CodeSentinel \\u2014 ' + mode + '\\n\\n```\\n' + out + '\\n```' + planSuffix;",
@@ -226,10 +229,14 @@ const BUILD_WORKFLOW_CONTENT = [
   "  contents: write",
   "  pull-requests: write",
   "",
+  "env:",
+  "  # Pin CodeSentinel CLI to a release tag, not the default branch",
+  "  CODESENTINEL_VERSION: v0.8.0",
+  "",
   "jobs:",
   "  build-fix:",
   "    if: ${{ github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
-  "    runs-on: ubuntu-latest",
+  "    if: ${{ github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
   "        with:",
@@ -241,6 +248,16 @@ const BUILD_WORKFLOW_CONTENT = [
   "        with:",
 `          node-version: ${NODE_VERSION}`,
   "",
+  "      - name: Checkout CodeSentinel CLI (pinned tag)",
+  "        uses: actions/checkout@v4",
+  "        with:",
+  "          repository: Dharmik-Lathiya/CodeSentinel_AI",
+  "          ref: ${{ env.CODESENTINEL_VERSION }}",
+  "          path: ${{ runner.temp }}/codesentinel",
+  "          fetch-depth: 1",
+  "",
+  "      - name: Install CodeSentinel CLI dependencies",
+  "        run: npm ci --prefix \"${{ runner.temp }}/codesentinel\" --omit=dev --ignore-scripts --no-audit --no-fund",
   "      - name: Install dependencies (fast — no devDeps, no scripts)",
   "        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --omit=dev --ignore-scripts --no-audit --no-fund",
   "",
@@ -271,14 +288,9 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   '            echo "❌ Build failed. Running auto-fix..."',
   "",
-  "            if [ ! -d \"codesentinel\" ]; then",
-  '              echo "Cloning CodeSentinel..."',
-  "              git clone --depth 1 https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git codesentinel",
-  '              cd codesentinel && npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>&1 && cd ..',
-  "            fi",
+  '            node "${RUNNER_TEMP}/codesentinel/dist/index.js" fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
   "",
-  '            node codesentinel/dist/index.js fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
-  "",
+  "            grep -qxF \"node_modules/\" .gitignore 2>/dev/null || echo \"node_modules/\" >> .gitignore",
   "            git add -A",
   "            if git diff --cached --quiet; then",
   '              echo "⚠️ No changes produced by fix — continuing"',
@@ -322,21 +334,28 @@ const BUILD_WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
-function runSetup(): void {
+function runSetup(force: boolean): void {
   const cwd = process.cwd();
   const workflowDir = join(cwd, ".github", "workflows");
   const workflowPath = join(workflowDir, "codesentinel.yml");
   const buildWorkflowPath = join(workflowDir, "codesentinel-build.yml");
 
+  if (!force && (existsSync(workflowPath) || existsSync(buildWorkflowPath))) {
+    process.stdout.write("Existing workflow(s) found. Re-run with --force to overwrite (existing files are backed up to .bak).\n");
+    return;
+  }
+
   if (existsSync(workflowPath)) {
-    process.stdout.write(`Overwriting existing workflow...\n`);
+    writeFileSync(`${workflowPath}.bak`, readFileSync(workflowPath), "utf8");
+    process.stdout.write("Backed up existing workflow to codesentinel.yml.bak\n");
   }
   mkdirSync(workflowDir, { recursive: true });
   writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
   process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
 
   if (existsSync(buildWorkflowPath)) {
-    process.stdout.write(`Overwriting existing build-fix workflow...\n`);
+    writeFileSync(`${buildWorkflowPath}.bak`, readFileSync(buildWorkflowPath), "utf8");
+    process.stdout.write("Backed up existing build-fix workflow to codesentinel-build.yml.bak\n");
   }
   writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
   process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
@@ -387,7 +406,7 @@ Usage:
   codesentinel setup
 
 Commands:
-  setup               Create GitHub Actions workflow in current project
+  setup [--force]     Create GitHub Actions workflow (--force overwrites existing files)
   init-hook           Install git hook (add --type post-commit for build-fix loop)
   dashboard           Start web dashboard
   dismiss <finding>   Dismiss a false positive finding
@@ -475,7 +494,7 @@ async function main(): Promise<void> {
 
   // Handle top-level commands
   if (args[0] === "setup") {
-    runSetup();
+    runSetup(args.includes("--force"));
     return;
   }
 
