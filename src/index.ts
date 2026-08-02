@@ -10,6 +10,7 @@ import { logger, type LogLevel } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
+import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GATE_MIN_SCORE = 70;
@@ -121,7 +122,7 @@ const WORKFLOW_CONTENT = [
   "          script: |",
   "            const body = context.payload.comment.body.trim();",
   "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
-  "            if (!match) { core.setFailed('No valid command'); return; }",
+  "            if (!match) { console.log('Not a CodeSentinel command; skipping'); core.setOutput('mode', ''); return; }",
   "            const mode = match[1].toLowerCase();",
   "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
   "            core.setOutput('mode', mode);",
@@ -156,6 +157,8 @@ const WORKFLOW_CONTENT = [
   "          fetch-depth: 1",
   "",
   "      - name: Loading comment",
+  "        if: steps.cmd.outputs.mode != ''",
+  "        id: loading",
   "        id: loading",
   "        uses: actions/github-script@v7",
   "        with:",
@@ -170,6 +173,8 @@ const WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      - name: Get issue info (for plan/fix commands)",
+  "        if: steps.cmd.outputs.mode != ''",
+  "        id: issue_info",
   "        id: issue_info",
   "        uses: actions/github-script@v7",
   "        with:",
@@ -186,6 +191,8 @@ const WORKFLOW_CONTENT = [
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
   "      - name: Run CodeSentinel",
+  "        if: steps.cmd.outputs.mode != ''",
+  "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        env:",
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
@@ -197,6 +204,8 @@ const WORKFLOW_CONTENT = [
   "          use_opencode_cli: \"false\"",
   "",
   "      - name: Update comment",
+  "        if: steps.cmd.outputs.mode != ''",
+  "        uses: actions/github-script@v7",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
@@ -273,7 +282,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   "            if [ ! -d \"codesentinel\" ]; then",
   '              echo "Cloning CodeSentinel..."',
-  "              git clone --depth 1 https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git codesentinel",
+  "              git clone --depth 1 --branch ${{ env.CODESENTINEL_VERSION }} https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git codesentinel",
   '              cd codesentinel && npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>&1 && cd ..',
   "            fi",
   "",
@@ -283,7 +292,8 @@ const BUILD_WORKFLOW_CONTENT = [
   "            if git diff --cached --quiet; then",
   '              echo "⚠️ No changes produced by fix — continuing"',
   "              continue",
-  "            fi",
+  "              echo \"::endgroup::\"",
+  "              continue",
   "",
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
@@ -433,7 +443,7 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
   CODESENTINEL_LOG_LEVEL      Default log level
 
 Examples:
@@ -578,6 +588,7 @@ async function main(): Promise<void> {
       "max-iterations": { type: "string" },
       "auto-fix": { type: "boolean", default: false },
       scoring: { type: "boolean", default: true },
+      "no-scoring": { type: "boolean", default: false },
       "test-gen": { type: "boolean", default: false },
       provider: { type: "string" },
       ask: { type: "string" },
@@ -632,9 +643,16 @@ async function main(): Promise<void> {
 
   const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
-  if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
+  if (values["max-iterations"]) {
+    const maxIter = Number(values["max-iterations"]);
+    if (!Number.isFinite(maxIter)) {
+      process.stdout.write(`Invalid value for --max-iterations: ${values["max-iterations"]}\n`);
+      process.exit(1);
+    }
+    overrides.max_iterations = maxIter;
+  }
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
-  if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
+  overrides.enable_scoring = !values["no-scoring"];
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
   if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
@@ -646,13 +664,28 @@ async function main(): Promise<void> {
   if (issueBody) overrides.issue_body = issueBody;
 
   if (values["min-score"]) {
-    overrides.gate = mergeOverride(overrides.gate, { minScore: Number(values["min-score"]) });
+    const minScore = Number(values["min-score"]);
+    if (!Number.isFinite(minScore)) {
+      process.stdout.write(`Invalid value for --min-score: ${values["min-score"]}\n`);
+      process.exit(1);
+    }
+    overrides.gate = mergeOverride(overrides.gate, { minScore });
   }
   if (values["max-critical"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Number(values["max-critical"]) });
+    const maxCritical = Number(values["max-critical"]);
+    if (!Number.isFinite(maxCritical)) {
+      process.stdout.write(`Invalid value for --max-critical: ${values["max-critical"]}\n`);
+      process.exit(1);
+    }
+    overrides.gate = mergeOverride(overrides.gate, { maxCritical });
   }
   if (values["max-high"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Number(values["max-high"]) });
+    const maxHigh = Number(values["max-high"]);
+    if (!Number.isFinite(maxHigh)) {
+      process.stdout.write(`Invalid value for --max-high: ${values["max-high"]}\n`);
+      process.exit(1);
+    }
+    overrides.gate = mergeOverride(overrides.gate, { maxHigh });
   }
 
   if (values.provider) {
