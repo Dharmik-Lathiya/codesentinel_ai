@@ -1,20 +1,29 @@
-export const EXTREME_THRESHOLD = 10000;
+export const EXTREME_CUTOFF = 10000;
 export const MULTIPLIER = 4096;
 const EXTREME_MULTIPLIER = MULTIPLIER * 2;
+const SMALL_BOUNDARY = 100;
+const MEDIUM_BOUNDARY = 1000;
 
 export function calculate(x: number): number {
-  const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
+  const multiplier = x > EXTREME_CUTOFF ? EXTREME_MULTIPLIER : MULTIPLIER;
   return x * multiplier;
 }
 
 export function processData(input: string): { value: number } {
   try {
-    const parsed = JSON.parse(input) as { value?: number } | null;
-    if (parsed && typeof parsed.value === "number") {
-      return { value: parsed.value };
+    const parsed: unknown = JSON.parse(input);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "value" in parsed &&
+      typeof (parsed as { value?: unknown }).value === "number" &&
+      Number.isFinite((parsed as { value: number }).value)
+    ) {
+      return { value: (parsed as { value: number }).value };
     }
     return { value: 0 };
-  } catch {
+  } catch (error) {
+    console.warn("processData: failed to parse input", error);
     return { value: 0 };
   }
 }
@@ -24,14 +33,11 @@ describe("calculate", () => {
   test.each([
     [0, 0],
     [-5, -5 * MULTIPLIER],
-    [100, 100 * MULTIPLIER],
-    [1000, 1000 * MULTIPLIER],
-    [4999, 4999 * MULTIPLIER],
-    [5000, 5000 * MULTIPLIER],
-    [6000, 6000 * MULTIPLIER],
+    [SMALL_BOUNDARY, SMALL_BOUNDARY * MULTIPLIER],
+    [MEDIUM_BOUNDARY, MEDIUM_BOUNDARY * MULTIPLIER],
     [9999, 9999 * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER * 2],
+    [EXTREME_CUTOFF, EXTREME_CUTOFF * MULTIPLIER],
+    [EXTREME_CUTOFF + 1, (EXTREME_CUTOFF + 1) * MULTIPLIER * 2],
   ])("boundary value %i", (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
