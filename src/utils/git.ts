@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -8,6 +8,8 @@ const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER = 64 * MEGABYTE;
+const GIT_TIMEOUT_MS = 60_000;
+const MAX_CONTENT_BYTES = MEGABYTE;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -16,11 +18,23 @@ export async function git(
   options: { quiet?: boolean } = {},
 ): Promise<string> {
   try {
-    const { stdout } = await exec("git", args, { cwd, maxBuffer: MAX_BUFFER });
+    const { stdout } = await exec("git", args, {
+      cwd,
+      maxBuffer: MAX_BUFFER,
+      timeout: GIT_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    });
     return stdout;
   } catch (err) {
+    const timedOut = err instanceof Error && "killed" in err;
+    const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
-      logger.error(`git command failed: git ${args.join(' ')}`, err);
+      logger.error(
+        timedOut
+          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
+          : `git command failed: ${command}`,
+        err,
+      );
     }
     throw err;
   }
@@ -33,8 +47,8 @@ export interface DiffFile {
   diff: string;
   /** Full (post-change) content of the file, if it still exists. */
   content: string;
-  /** Status: added | modified | deleted | renamed. */
-  status: "added" | "modified" | "deleted" | "renamed";
+  /** Status: added | modified | deleted. */
+  status: "added" | "modified" | "deleted";
 }
 
 /**
@@ -46,17 +60,7 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  let baseRef: string;
-  if (base) {
-    baseRef = base;
-  } else {
-    try {
-      baseRef = await defaultBaseRef(cwd);
-    } catch (err) {
-      logger.error("Failed to determine default base ref", err);
-      throw err;
-    }
-  }
+  const baseRef = base ?? (await defaultBaseRef(cwd));
   let nameStatus: string;
   try {
     nameStatus = await git(
@@ -65,42 +69,75 @@ export async function collectDiff(
     );
   } catch (err) {
     logger.warn(`Failed to collect diff against "${baseRef}":`, err);
-    return [];
+    throw err;
   }
 
-  const lines = nameStatus
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
+  const workspaceRoot = resolve(cwd);
+
+  let diffText: string;
+  try {
+    diffText = await git(["diff", "--no-renames", baseRef + "..."], cwd);
+  } catch (err) {
+    logger.warn(`Failed to collect diff output against "${baseRef}":`, err);
+    throw err;
+  }
+  const diffByPath = splitDiffByPath(diffText);
 
   const files: DiffFile[] = [];
-  for (const line of lines) {
+  for (const line of nameStatus
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)) {
     const [statusCode, path] = line.split(/\t/);
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
-      const full = resolve(cwd, path);
-      if (!full.startsWith(resolve(cwd))) {
+      const full = resolve(workspaceRoot, path);
+      if (!full.startsWith(workspaceRoot)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
       try {
-        content = readFileSync(full, "utf8");
+        content = readContent(full);
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
     }
-    let diff = "";
-    try {
-      diff = await git(["diff", baseRef + "...", "--", path], cwd);
-    } catch {
-      logger.debug(`Could not collect diff for ${path}`);
+    const diff = diffByPath.get(path) ?? "";
+    if (!diff && status !== "deleted") {
+      logger.warn(`Could not collect diff for ${path}`);
     }
     files.push({ path, status, content, diff });
   }
   return files;
+}
+
+function splitDiffByPath(diffText: string): Map<string, string> {
+  const byPath = new Map<string, string>();
+  for (const part of diffText.split(/(?=^diff --git )/m)) {
+    if (!part.startsWith("diff --git ")) continue;
+    const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
+    const match = /^(?:a\/)?(.+?)\s+b\//.exec(firstLine);
+    if (!match) continue;
+    byPath.set(match[1], part);
+  }
+  return byPath;
+}
+
+function readContent(full: string): string {
+  const stat = statSync(full);
+  if (stat.size > MAX_CONTENT_BYTES) {
+    logger.debug(`Skipping oversized file content: ${full}`);
+    return "";
+  }
+  const buffer = readFileSync(full);
+  if (buffer.includes(0)) {
+    logger.debug(`Skipping binary file content: ${full}`);
+    return "";
+  }
+  return buffer.toString("utf8");
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
@@ -138,7 +175,6 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code.startsWith("R")) return "renamed";
   if (code === "M") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;

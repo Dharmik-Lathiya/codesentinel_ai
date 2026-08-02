@@ -18,12 +18,24 @@ const MAX_SCORE = 100;
 const MAX_ISSUE_BODY_LENGTH = 8000;
 const NODE_VERSION = 20;
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
+const VALID_MODES = new Set<string>(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"]);
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
 }
 function mergeOverride<T extends object>(current: T | undefined, patch: Partial<T>): T {
   return { ...(current as T), ...patch } as T;
+}
+
+function loadSecrets(): RuntimeSecrets {
+  return {
+    github_token: process.env.GITHUB_TOKEN,
+    openai_api_key: process.env.OPENAI_API_KEY,
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+    gemini_api_key: process.env.GEMINI_API_KEY,
+    opencode_api_key: process.env.OPENCODE_API_KEY,
+    opencode_base_url: process.env.OPENCODE_BASE_URL,
+  };
 }
 
 const WORKFLOW_CONTENT = [
@@ -511,24 +523,21 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dashboard") {
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-      opencode_base_url: process.env.OPENCODE_BASE_URL,
-    };
-    const engine = Engine.fromInputs({ secrets });
+    const engine = Engine.fromInputs({ secrets: loadSecrets() });
     const dash = engine.getDashboard();
-    if (dash) {
-      dash.start();
-      process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
-    } else {
-      process.stdout.write("Dashboard is not available.\n");
+    if (!dash) {
+      process.stderr.write("Dashboard is not available.\n");
+      process.exitCode = 1;
+      return;
     }
+    dash.start();
+    process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
     process.stdout.write("Press Ctrl+C to stop.\n");
-    await new Promise(() => {});
+    for (const signal of ["SIGINT", "SIGTERM"] as const) {
+      process.on(signal, () => {
+        dash.stop();
+      });
+    }
     return;
   }
 
@@ -541,15 +550,7 @@ async function main(): Promise<void> {
       showVersion();
       return;
     }
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-      opencode_base_url: process.env.OPENCODE_BASE_URL,
-    };
-    const engine = Engine.fromInputs({ secrets });
+    const engine = Engine.fromInputs({ secrets: loadSecrets() });
     const dismissArgs = args.slice(1);
     const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
     const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
@@ -633,6 +634,26 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (modeArg && !VALID_MODES.has(modeArg)) {
+    process.stderr.write(`Unknown mode: '${modeArg}'\n`);
+    showHelp();
+    return;
+  }
+
+  const numericFlags: Array<[string | undefined, string]> = [
+    [values["max-iterations"], "--max-iterations"],
+    [values["min-score"], "--min-score"],
+    [values["max-critical"], "--max-critical"],
+    [values["max-high"], "--max-high"],
+  ];
+  for (const [value, name] of numericFlags) {
+    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
+      showHelp();
+      return;
+    }
+  }
+
   if (values["log-level"]) {
     logger.level = values["log-level"] as LogLevel;
   }
@@ -640,14 +661,7 @@ async function main(): Promise<void> {
     logger.setJsonMode(true);
   }
 
-  const secrets: RuntimeSecrets = {
-    github_token: process.env.GITHUB_TOKEN,
-    openai_api_key: process.env.OPENAI_API_KEY,
-    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-    gemini_api_key: process.env.GEMINI_API_KEY,
-    opencode_api_key: process.env.OPENCODE_API_KEY,
-    opencode_base_url: process.env.OPENCODE_BASE_URL,
-  };
+  const secrets = loadSecrets();
 
   const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
@@ -748,7 +762,8 @@ async function main(): Promise<void> {
   if (values.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
-      throw new Error("Gate check failed");
+      process.stderr.write("Gate check failed\n");
+      process.exitCode = 1;
     }
     return;
   }
@@ -757,7 +772,8 @@ async function main(): Promise<void> {
   if (values.sarif) {
     process.stdout.write(renderSarif(report) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
-      throw new Error("Gate check failed");
+      process.stderr.write("Gate check failed\n");
+      process.exitCode = 1;
     }
     return;
   }
@@ -793,7 +809,8 @@ async function main(): Promise<void> {
 
   // Exit non-zero if gate fails
   if (report.mode === "gate" && report.gatePassed === false) {
-    throw new Error("Gate check failed");
+    process.stderr.write("Gate check failed\n");
+    process.exitCode = 1;
   }
 }
 
