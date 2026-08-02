@@ -1,13 +1,14 @@
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const MAX_BUFFER_MEGABYTES = 64;
+const MAX_BUFFER = MAX_BUFFER_MEGABYTES * MEGABYTE;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -46,7 +47,7 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  let baseRef: string;
+  let baseRef: string | null;
   if (base) {
     baseRef = base;
   } else {
@@ -56,6 +57,10 @@ export async function collectDiff(
       logger.error("Failed to determine default base ref", err);
       throw err;
     }
+  }
+  if (!baseRef) {
+    logger.info("No base ref resolved - falling back to working tree diff");
+    return collectWorkingTreeDiff(cwd);
   }
   let nameStatus: string;
   try {
@@ -82,7 +87,8 @@ export async function collectDiff(
     let content = "";
     if (status !== "deleted") {
       const full = resolve(cwd, path);
-      if (!full.startsWith(resolve(cwd))) {
+      const rel = relative(cwd, full);
+      if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -103,8 +109,8 @@ export async function collectDiff(
   return files;
 }
 
-/** Determine a sensible base ref (main/master/develop or upstream merge-base). */
-async function defaultBaseRef(cwd: string): Promise<string> {
+/** Determine a sensible base ref (main/master/develop), or null if none exists. */
+async function defaultBaseRef(cwd: string): Promise<string | null> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
@@ -119,10 +125,14 @@ async function defaultBaseRef(cwd: string): Promise<string> {
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch (err) {
+      logger.debug(`Could not check ref ${ref}`, err);
+    }
   }
-  // Fall back to merge-base with the default remote branch.
-  return "HEAD";
+  // No known base ref - signal the caller to fall back to the working tree.
+  return null;
 }
 
 async function refExists(ref: string, cwd: string): Promise<boolean> {
@@ -133,6 +143,74 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
     logger.debug(`Ref ${ref} does not exist`);
     return false;
   }
+}
+
+/**
+ * Collect changed files from the working tree: staged, unstaged, and
+ * untracked changes. Used when no base ref can be resolved.
+ */
+async function collectWorkingTreeDiff(cwd: string): Promise<DiffFile[]> {
+  let porcelain: string;
+  let unstaged: string;
+  let staged: string;
+  try {
+    [porcelain, unstaged, staged] = await Promise.all([
+      git(["status", "--porcelain"], cwd),
+      git(["diff", "--name-status", "--no-renames"], cwd),
+      git(["diff", "--cached", "--name-status", "--no-renames"], cwd),
+    ]);
+  } catch (err) {
+    logger.warn("Failed to collect working tree diff:", err);
+    return [];
+  }
+
+  const statuses = new Map<string, DiffFile["status"]>();
+  for (const line of unstaged.split("\n")) {
+    const [code, path] = line.split(/\t/);
+    const status = code ? mapStatus(code) : null;
+    if (status && path) statuses.set(path, status);
+  }
+  for (const line of staged.split("\n")) {
+    const [code, path] = line.split(/\t/);
+    const status = code ? mapStatus(code) : null;
+    if (status && path) statuses.set(path, status);
+  }
+  for (const line of porcelain.split("\n")) {
+    if (line.startsWith("?? ")) {
+      const path = line.slice(3).trim();
+      if (path) statuses.set(path, "added");
+    }
+  }
+
+  const files: DiffFile[] = [];
+  for (const [path, status] of statuses) {
+    let content = "";
+    if (status !== "deleted") {
+      const full = resolve(cwd, path);
+      const rel = relative(cwd, full);
+      if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
+        logger.warn(`Skipping path outside workspace: ${path}`);
+        continue;
+      }
+      try {
+        content = readFileSync(full, "utf8");
+      } catch {
+        logger.debug(`Could not read content for ${path}`);
+      }
+    }
+    let diff = "";
+    try {
+      const [unstagedDiff, stagedDiff] = await Promise.all([
+        git(["diff", "--", path], cwd),
+        git(["diff", "--cached", "--", path], cwd),
+      ]);
+      diff = [unstagedDiff, stagedDiff].filter(Boolean).join("\n");
+    } catch {
+      logger.debug(`Could not collect diff for ${path}`);
+    }
+    files.push({ path, status, content, diff });
+  }
+  return files;
 }
 
 function mapStatus(code: string): DiffFile["status"] | null {
