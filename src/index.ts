@@ -26,6 +26,13 @@ function stripAnsi(text: string): string {
 function mergeOverride<T extends object>(current: T | undefined, patch: Partial<T>): T {
   return { ...(current as T), ...patch } as T;
 }
+function requireNumber(value: string, flag: string): number {
+  const n = Number(value);
+  if (Number.isNaN(n)) {
+    throw new Error(`Invalid value for --${flag}: expected a number, got "${value}"`);
+  }
+  return n;
+}
 
 const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
@@ -511,7 +518,15 @@ async function main(): Promise<void> {
       return;
     }
     process.stdout.write("Press Ctrl+C to stop.\n");
-    await new Promise(() => {});
+    await new Promise<void>((resolve) => {
+      const shutdown = () => {
+        dash.stop();
+        resolve();
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+    });
+    process.stdout.write("Dashboard stopped.\n");
     return;
   }
 
@@ -644,9 +659,15 @@ async function main(): Promise<void> {
     opencode_base_url: process.env.OPENCODE_BASE_URL,
   };
 
+  const VALID_MODES = ["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"];
+
+  if (modeArg && !VALID_MODES.includes(modeArg)) {
+    throw new Error(`Unknown mode "${modeArg}". Valid modes: ${VALID_MODES.join(", ")}`);
+  }
+
   const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
-  if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
+  if (values["max-iterations"]) overrides.max_iterations = requireNumber(values["max-iterations"], "max-iterations");
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (args.some((a) => a === "--scoring" || a === "--no-scoring")) {
     overrides.enable_scoring = values.scoring;
@@ -662,13 +683,13 @@ async function main(): Promise<void> {
   if (issueBody) overrides.issue_body = issueBody;
 
   if (values["min-score"]) {
-    overrides.gate = mergeOverride(overrides.gate, { minScore: Number(values["min-score"]) });
+    overrides.gate = mergeOverride(overrides.gate, { minScore: requireNumber(values["min-score"], "min-score") });
   }
   if (values["max-critical"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Number(values["max-critical"]) });
+    overrides.gate = mergeOverride(overrides.gate, { maxCritical: requireNumber(values["max-critical"], "max-critical") });
   }
   if (values["max-high"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Number(values["max-high"]) });
+    overrides.gate = mergeOverride(overrides.gate, { maxHigh: requireNumber(values["max-high"], "max-high") });
   }
 
   if (values.provider) {
@@ -711,6 +732,10 @@ async function main(): Promise<void> {
 
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+
+  if (values["ask"] && modeArg && modeArg !== "chat") {
+    throw new Error(`--ask is only valid with chat mode; got mode "${modeArg}".`);
+  }
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     const answer = await engine.ask(values["ask"]);
