@@ -28,7 +28,10 @@ interface ReportingDescriptor {
   shortDescription: { text: string };
 }
 
-const PKG_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
+let PKG_VERSION = "0.0.0";
+try {
+  PKG_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
+} catch {}
 
 const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   critical: "error",
@@ -39,6 +42,13 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
 };
 
 const COMMENT_TRUNCATION_LENGTH = 40;
+const HASH_RADIX = 36;
+
+function truncateComment(comment: string): string {
+  return comment.length > COMMENT_TRUNCATION_LENGTH
+    ? `${comment.slice(0, COMMENT_TRUNCATION_LENGTH)}...`
+    : comment;
+}
 
 function simpleHash(s: string): string {
   let hash = 0;
@@ -47,7 +57,7 @@ function simpleHash(s: string): string {
     hash = ((hash << 5) - hash) + char;
     hash |= 0;
   }
-  return Math.abs(hash).toString(36);
+  return Math.abs(hash).toString(HASH_RADIX);
 }
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
@@ -84,13 +94,17 @@ function createSarifRun(
 export function renderSarif(report: EngineReport): string {
   const rules = new Map<string, ReportingDescriptor>();
   const results: SarifResult[] = [];
+  const ruleIdsByComment = new Map<string, string>();
 
   for (const f of report.findings) {
-    const ruleId = `${f.category}:${simpleHash(f.comment)}`;
-    if (!rules.has(ruleId)) {
+    const commentKey = `${f.category}:${f.comment}`;
+    let ruleId = ruleIdsByComment.get(commentKey);
+    if (!ruleId) {
+      ruleId = `${f.category}:${simpleHash(f.comment)}:${rules.size + 1}`;
+      ruleIdsByComment.set(commentKey, ruleId);
       rules.set(ruleId, {
         id: ruleId,
-        shortDescription: { text: f.comment },
+        shortDescription: { text: truncateComment(f.comment) },
       });
     }
     results.push({

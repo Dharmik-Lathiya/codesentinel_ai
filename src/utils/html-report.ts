@@ -46,11 +46,16 @@ tr:hover td { background: #f8fafc; }
  */
 export function renderHtmlReport(report: EngineReport): string {
   const categoryCounts: Record<string, number> = {};
-  const severityCounts: Record<string, number> = {};
+  const localSeverityCounts: Record<string, number> = {};
   for (const f of report.findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
-    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
+    localSeverityCounts[f.severity] = (localSeverityCounts[f.severity] ?? 0) + 1;
   }
+  const reportedSeverityCounts = report.metrics.findingsBySeverity;
+  const severityCounts =
+    reportedSeverityCounts && Object.keys(reportedSeverityCounts).length > 0
+      ? reportedSeverityCounts
+      : localSeverityCounts;
 
   const findingsRows = renderFindingRows(report.findings);
   const fixRows = renderFixRows(report.fixAttempts);

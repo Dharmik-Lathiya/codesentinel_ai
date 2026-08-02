@@ -28,7 +28,7 @@ export interface RetryOptions {
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
-    return (
+    if (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
       msg.includes(HTTP_STATUS_RATE_LIMIT) ||
@@ -37,6 +37,16 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
+    ) {
+      return true;
+    }
+  }
+  if (typeof err === "object" && err !== null && "status" in err) {
+    const status = String((err as { status: unknown }).status);
+    return (
+      status === HTTP_STATUS_RATE_LIMIT ||
+      status === HTTP_STATUS_SERVICE_UNAVAILABLE ||
+      status === HTTP_STATUS_BAD_GATEWAY
     );
   }
   return false;
@@ -51,7 +61,7 @@ export async function retry<T>(
   fn: () => Promise<T>,
   opts: RetryOptions = {},
 ): Promise<T> {
-  const maxAttempts = opts.maxAttempts ?? 3;
+  const maxAttempts = Math.max(opts.maxAttempts ?? 3, 1);
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
 
