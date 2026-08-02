@@ -65,7 +65,7 @@ function truncateComment(text: string): string {
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
+      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")).replace(/#/g, "%23").replace(/\?/g, "%3F") },
       ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
