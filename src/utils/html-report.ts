@@ -37,6 +37,7 @@ const REPORT_STYLES = `  <style>
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
     .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
     .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
+    .bar-body { display: flex; flex: 1; min-height: 0; width: 100%; align-items: end; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
   </style>`;
@@ -105,7 +106,7 @@ export function renderHtmlReport(report: EngineReport): string {
   <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
   <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
 
-  ${renderSummaryCards(report, severityCounts)}
+  ${renderSummaryCards(report)}
 
   ${severityChart}
 
@@ -124,13 +125,12 @@ export function renderHtmlReport(report: EngineReport): string {
 </html>`;
 }
 
-function renderSummaryCards(report: EngineReport, severityCounts: Record<string, number>): string {
+function renderSummaryCards(report: EngineReport): string {
   return `
   <div class="cards">
     <div class="card">
       <div class="label">Findings</div>
       <div class="value">${report.findings.length}</div>
-      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
     </div>
     ${renderScoreCard(report.score)}
     <div class="card">
@@ -152,7 +152,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -161,14 +161,15 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
 function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
   if (items.length === 0) return "";
   const maxCount = Math.max(...items.map((item) => item.value));
+  const summary = items.map((item) => `${item.key}: ${item.value}`).join(", ");
   return `<h2>${escapeHtml(title)}</h2>
-  <div class="bar-chart">
+  <div class="bar-chart" role="img" aria-label="${escapeHtml(`${title}: ${summary}`)}">
     ${items
       .map((item) => {
         const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
         return `<div class="bar">
         <div class="bar-value">${item.value}</div>
-        <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
+        <div class="bar-body"><div class="bar-fill" style="height:${height}%;background:${item.color}"></div></div>
         <div class="bar-label">${escapeHtml(item.key)}</div>
       </div>`;
       })
