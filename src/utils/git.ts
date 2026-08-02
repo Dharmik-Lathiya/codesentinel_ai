@@ -55,10 +55,11 @@ export async function collectDiff(
   } else {
     baseRef = await defaultBaseRef(cwd);
   }
+  const diffBase = baseRef === "HEAD" ? "HEAD" : baseRef + "...";
   let nameStatus: string;
   try {
     nameStatus = await git(
-      ["diff", "--name-status", "--no-renames", baseRef + "..."],
+      ["diff", "--name-status", "--no-renames", diffBase],
       cwd,
     );
   } catch (err) {
@@ -98,7 +99,7 @@ export async function collectDiff(
       }
       let diff = "";
       try {
-        diff = await git(["diff", baseRef + "...", "--", path], cwd);
+        diff = await git(["diff", diffBase, "--", path], cwd);
       } catch {
         logger.debug(`Could not collect diff for ${path}`);
       }
