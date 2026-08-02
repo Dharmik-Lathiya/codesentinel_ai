@@ -10,6 +10,7 @@ import { logger, type LogLevel } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
+import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GATE_MIN_SCORE = 70;
@@ -121,15 +122,16 @@ const WORKFLOW_CONTENT = [
   "          script: |",
   "            const body = context.payload.comment.body.trim();",
   "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
-  "            if (!match) { core.setFailed('No valid command'); return; }",
+  "            if (!match) { core.setOutput('mode', ''); return; }",
   "            const mode = match[1].toLowerCase();",
   "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
   "            core.setOutput('mode', mode);",
-  "            core.setOutput('question', question);",
+  "            const fs = require('fs');",
+  "            fs.appendFileSync(process.env.GITHUB_OUTPUT, `question<<CS_DELIM\\n${question}\\nCS_DELIM\\n`);",
   "",
   "      - name: Get PR info (PR comments only)",
   "        id: pr",
-  "        if: steps.is_pr.outputs.value === 'true'",
+  "        if: steps.cmd.outputs.mode != '' && steps.is_pr.outputs.value === 'true'",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
@@ -143,20 +145,21 @@ const WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      - name: Checkout PR (PR comments only)",
-  "        if: steps.is_pr.outputs.value === 'true'",
+  "        if: steps.cmd.outputs.mode != '' && steps.is_pr.outputs.value === 'true'",
   "        uses: actions/checkout@v4",
   "        with:",
   "          ref: ${{ steps.pr.outputs.head_sha }}",
   "          fetch-depth: 0",
   "",
   "      - name: Checkout default branch (issue comments)",
-  "        if: steps.is_pr.outputs.value != 'true'",
+  "        if: steps.cmd.outputs.mode != '' && steps.is_pr.outputs.value != 'true'",
   "        uses: actions/checkout@v4",
   "        with:",
   "          fetch-depth: 1",
   "",
   "      - name: Loading comment",
   "        id: loading",
+  "        if: steps.cmd.outputs.mode != ''",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
@@ -171,6 +174,7 @@ const WORKFLOW_CONTENT = [
   "",
   "      - name: Get issue info (for plan/fix commands)",
   "        id: issue_info",
+  "        if: steps.cmd.outputs.mode != ''",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
@@ -180,12 +184,15 @@ const WORKFLOW_CONTENT = [
   "                issue_number: context.issue.number",
   "              });",
   "              core.setOutput('title', issue.title);",
-  "              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));",
+  "              const fs = require('fs');",
+  "              const body = (issue.body || '').slice(0, " + MAX_ISSUE_BODY_LENGTH + ");",
+  "              fs.appendFileSync(process.env.GITHUB_OUTPUT, `body<<CS_DELIM\\n${body}\\nCS_DELIM\\n`);",
   "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
   "      - name: Run CodeSentinel",
+  "        if: steps.cmd.outputs.mode != ''",
   "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        env:",
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
@@ -197,6 +204,7 @@ const WORKFLOW_CONTENT = [
   "          use_opencode_cli: \"false\"",
   "",
   "      - name: Update comment",
+  "        if: steps.cmd.outputs.mode != ''",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
@@ -212,6 +220,19 @@ const WORKFLOW_CONTENT = [
   "                body: body",
   "              });",
   "            } catch (err) { core.setFailed(err.message); }",
+  "",
+  "      - name: Update loading comment on failure",
+  "        if: failure() && steps.loading.outputs.comment_id != ''",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            try {",
+  "              await github.rest.issues.updateComment({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                comment_id: ${{ steps.loading.outputs.comment_id }},",
+  "                body: '❌ **CodeSentinel** failed. See the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).'",
+  "              });",
+  "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
 const BUILD_WORKFLOW_CONTENT = [
@@ -225,6 +246,9 @@ const BUILD_WORKFLOW_CONTENT = [
   "permissions:",
   "  contents: write",
   "  pull-requests: write",
+  "",
+  "env:",
+  "  CODESENTINEL_VERSION: v0.8.0",
   "",
   "jobs:",
   "  build-fix:",
@@ -273,7 +297,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   "            if [ ! -d \"codesentinel\" ]; then",
   '              echo "Cloning CodeSentinel..."',
-  "              git clone --depth 1 https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git codesentinel",
+  "            git clone --depth 1 --branch ${{ env.CODESENTINEL_VERSION }} https://github.com/Dharmik-Lathiya/CodeSentinel_AI.git codesentinel",
   '              cd codesentinel && npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>&1 && cd ..',
   "            fi",
   "",
@@ -288,10 +312,13 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
-  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
+  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || { echo \"::error::rebase failed — aborting\"; git rebase --abort 2>/dev/null; exit 1; }",
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            if ! git push origin \"HEAD:${{ github.ref_name }}\" 2>&1; then",
+  '              echo "::error::push failed"',
+  "              exit 1",
+  "            fi",
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
@@ -433,7 +460,7 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
   CODESENTINEL_LOG_LEVEL      Default log level
 
 Examples:
