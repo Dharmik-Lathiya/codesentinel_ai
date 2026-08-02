@@ -10,6 +10,7 @@ import { logger, type LogLevel } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
+import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GATE_MIN_SCORE = 70;
@@ -433,7 +434,7 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
   CODESENTINEL_LOG_LEVEL      Default log level
 
 Examples:
@@ -507,6 +508,7 @@ async function main(): Promise<void> {
       process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
     } else {
       process.stdout.write("Dashboard is not available.\n");
+      return;
     }
     process.stdout.write("Press Ctrl+C to stop.\n");
     await new Promise(() => {});
@@ -537,7 +539,7 @@ async function main(): Promise<void> {
 
     if (dismissArgs.includes("--rule") && dismissArgs.includes("--file")) {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [--rule-id <id>] [reason]\n");
       process.stdout.write("Options --rule and --file are mutually exclusive.\n");
       return;
     }
@@ -556,17 +558,29 @@ async function main(): Promise<void> {
       const filePath = dismissArgs[fileIdx + 1];
       const lineIdx = dismissArgs.indexOf("--line");
       const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-      const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
-      if (!filePath) {
+      if (rawLine !== undefined && (!/^\d+$/.test(rawLine.trim()) || parseInt(rawLine, PARSE_INT_RADIX) === 0)) {
+        process.stdout.write("Error: --line must be a positive integer.\n");
+        return;
+      }
+      const lineNum = rawLine !== undefined ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+      if (!filePath || filePath.startsWith("--")) {
         process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
         return;
       }
-      const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
+      let ruleIdArg = `${filePath}:${lineNum ?? "all"}`;
+      if (dismissArgs.includes("--rule-id")) {
+        const ruleIdValue = dismissArgs[dismissArgs.indexOf("--rule-id") + 1];
+        if (!ruleIdValue || ruleIdValue.startsWith("--")) {
+          process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> --rule-id <id> [reason]\n");
+          return;
+        }
+        ruleIdArg = ruleIdValue;
+      }
       await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
       process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [--rule-id <id>] [reason]\n");
     }
     return;
   }
@@ -634,7 +648,9 @@ async function main(): Promise<void> {
   if (modeArg) overrides.mode = modeArg as Mode;
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
-  if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
+  if (args.some((a) => a === "--scoring" || a === "--no-scoring")) {
+    overrides.enable_scoring = values.scoring;
+  }
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
   if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
