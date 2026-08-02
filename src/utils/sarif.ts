@@ -26,11 +26,19 @@ interface SarifLog {
 interface ReportingDescriptor {
   id: string;
   shortDescription: { text: string };
+  fullDescription?: { text: string };
+  helpUri?: string;
 }
 
 let PKG_VERSION = "0.0.0";
+let REPO_URL = "";
 try {
-  PKG_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
+  const pkg = createRequire(import.meta.url)("../../package.json") as {
+    version: string;
+    repository?: { url?: string };
+  };
+  PKG_VERSION = pkg.version;
+  REPO_URL = pkg.repository?.url?.replace(/\.git$/, "").replace(/^git\+/, "") ?? "";
 } catch {}
 
 const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
@@ -63,7 +71,7 @@ function simpleHash(s: string): string {
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
+      artifactLocation: { uri: file.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/") },
       ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
@@ -105,6 +113,8 @@ export function renderSarif(report: EngineReport): string {
       rules.set(ruleId, {
         id: ruleId,
         shortDescription: { text: truncateComment(f.comment) },
+        fullDescription: { text: f.comment },
+        helpUri: REPO_URL ? `${REPO_URL}/blob/main/README.md` : undefined,
       });
     }
     results.push({
