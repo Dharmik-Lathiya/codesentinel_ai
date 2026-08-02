@@ -31,8 +31,12 @@ export interface DiffFile {
   path: string;
   /** Unified diff text for this file. */
   diff: string;
-  /** Full (post-change) content of the file, if it still exists. */
-  content: string;
+/**
+ * Full (post-change) content of the file, if it still exists.
+ * Caveat: read from the working tree, which may include uncommitted local
+ * changes; it matches the base...HEAD state only in a clean CI checkout.
+ */
+content: string;
   /** Status: added | modified | deleted | renamed. */
   status: "added" | "modified" | "deleted" | "renamed";
 }
@@ -139,7 +143,11 @@ function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
   if (code.startsWith("R")) return "renamed";
-  if (code === "M") return "modified";
+  if (code === "M" || code.startsWith("T")) return "modified";
+  if (code.startsWith("U")) {
+    logger.warn(`Skipping unmerged file (status ${code})`);
+    return null;
+  }
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
