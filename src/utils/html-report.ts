@@ -24,10 +24,14 @@ const TABLE_WIDTH_PERCENT = "100%";
  */
 export function renderHtmlReport(report: EngineReport): string {
   const categoryCounts: Record<string, number> = {};
-  const severityCounts: Record<string, number> = {};
   for (const f of report.findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
-    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
+  }
+  const severityCounts: Record<string, number> = { ...report.metrics.findingsBySeverity };
+  if (Object.keys(severityCounts).length === 0) {
+    for (const f of report.findings) {
+      severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
+    }
   }
 
   const findingsRows = report.findings
@@ -88,7 +92,7 @@ export function renderHtmlReport(report: EngineReport): string {
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
     .score-ring { width: 80px; height: 80px; border-radius: ${SCORE_RING_BORDER_RADIUS}; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: ${BOLD_FONT_WEIGHT}; color: #fff; }
-    table { width: ${TABLE_WIDTH_PERCENT}; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    table { width: ${TABLE_WIDTH_PERCENT}; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
@@ -147,83 +151,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
-
-  it("renders severity bar heights proportional to the max count", () => {
-    const report = {
-      ...baseReport,
-      findings: [
-        { severity: "high", category: "security", file: "a.ts", line: 1, comment: "c", source: "static" },
-        { severity: "high", category: "security", file: "b.ts", line: 2, comment: "c", source: "static" },
-        { severity: "low", category: "smell", file: "c.ts", line: null, comment: "c", source: "static" },
-      ],
-      metrics: { ...baseReport.metrics, findingsBySeverity: { high: 2, low: 1 } },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain('class="bar-fill" style="height:100%;background:#ea580c"');
-    expect(html).toContain('class="bar-fill" style="height:50%;background:#2563eb"');
-  });
-
-  it("tallies severity counts locally when findingsBySeverity is empty", () => {
-    const report = {
-      ...baseReport,
-      metrics: { ...baseReport.metrics, findingsBySeverity: {} },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain("Severity Distribution");
-    expect(html).toContain("1 high");
-    expect(html).toContain("1 medium");
-    expect(html).toContain("1 low");
-    expect(html).not.toContain(">none</div>");
-  });
-
-  it("renders file:line suffix for a finding at line 0", () => {
-    const report = {
-      ...baseReport,
-      findings: [{ severity: "high", category: "bug", file: "x.ts", line: 0, comment: "c", source: "static" }],
-      metrics: { ...baseReport.metrics, findingsBySeverity: { high: 1 } },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain("x.ts:0");
-  });
-
-  it("renders skipped and applied fix statuses", () => {
-    const report = {
-      ...baseReport,
-      fixAttempts: [
-        { iteration: 1, file: "a.ts", fixed: false, explanation: "e" },
-        { iteration: 2, file: "b.ts", fixed: true, verified: false, explanation: "e" },
-      ],
-    };
-    const html = renderHtmlReport(report);
-    expect(html).toContain("skipped");
-    expect(html).toContain("applied");
-  });
-
-  it("escapes AI-derived severity, category, and mode values plus single quotes", () => {
-    const report = {
-      ...baseReport,
-      mode: "<script>evil</script>" as unknown as typeof baseReport.mode,
-      findings: [{
-        severity: "<b>high</b>" as unknown as typeof baseReport.findings[number]["severity"],
-        category: "<i>smell</i>" as unknown as typeof baseReport.findings[number]["category"],
-        file: "x.ts",
-        line: 1,
-        comment: "it's fine",
-        source: "static" as const,
-      }],
-      metrics: { ...baseReport.metrics, findingsBySeverity: {} },
-    };
-    const html = renderHtmlReport(report);
-    expect(html).not.toContain("<script>evil");
-    expect(html).not.toContain("<b>high</b>");
-    expect(html).not.toContain("<i>smell</i>");
-    expect(html).toContain("&lt;script&gt;evil");
-    expect(html).toContain("&lt;b&gt;high&lt;/b&gt;");
-    expect(html).toContain("&lt;i&gt;smell&lt;/i&gt;");
-    expect(html).toContain("it&#39;s fine");
-  });
-});
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
       </div>
     </div>`;
 }
