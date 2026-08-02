@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import type { Finding } from "../analyzer/index.js";
+import type { Severity } from "../config/types.js";
 import { logger } from "../utils/logger.js";
 
 interface ScannerTool {
@@ -17,7 +18,7 @@ const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
 const SNIPPET_MAX_CHAR_LENGTH = 80;
 const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
 
-function parseTrufflehogLine(line: string): Finding | null {
+export function parseTrufflehogLine(line: string): Finding | null {
   try {
     const r = JSON.parse(line);
     return {
@@ -33,6 +34,34 @@ function parseTrufflehogLine(line: string): Finding | null {
     logger.warn("Failed to parse trufflehog JSON line");
     return null;
   }
+}
+
+interface GitleaksResult {
+  File: string;
+  StartLine: number;
+  RuleID: string;
+  Description: string;
+  Match: string;
+  Severity: string;
+}
+
+const GITLEAKS_SEVERITY: Record<string, Severity> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+};
+
+export function parseGitleaksFindings(results: GitleaksResult[]): Finding[] {
+  return results.map((r) => ({
+    file: r.File,
+    line: r.StartLine || null,
+    severity: GITLEAKS_SEVERITY[r.Severity?.toLowerCase() ?? ""] ?? "medium",
+    category: "security" as const,
+    comment: `[gitleaks] ${r.Description}`,
+    suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
+    source: "scanner" as const,
+  }));
 }
 
 const gitleaks: ScannerTool = {
@@ -53,22 +82,12 @@ const gitleaks: ScannerTool = {
         { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
-      let results: { File: string; StartLine: number; RuleID: string; Description: string; Match: string; Severity: string }[];
       try {
-        results = JSON.parse(out);
+        return parseGitleaksFindings(JSON.parse(out));
       } catch {
         logger.warn("gitleaks JSON parse failed");
         return [];
       }
-      return results.map((r) => ({
-        file: r.File,
-        line: r.StartLine || null,
-        severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
-        category: "security" as const,
-        comment: `[gitleaks] ${r.Description}`,
-        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
-        source: "scanner" as const,
-      }));
     } catch (e) {
       logger.warn(`gitleaks run failed: ${e}`);
       return [];
