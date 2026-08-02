@@ -23,15 +23,19 @@ const SCORE_RED_THRESHOLD = 40;
  */
 export function renderHtmlReport(report: EngineReport): string {
   const categoryCounts: Record<string, number> = {};
-  const severityCounts: Record<string, number> = {};
+  const severityCounts: Record<string, number> = report.metrics.findingsBySeverity ?? {};
   for (const f of report.findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
-    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
+  }
+  if (Object.keys(severityCounts).length === 0) {
+    for (const f of report.findings) {
+      severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
+    }
   }
 
   const findingsRows = report.findings
     .map((f) => {
-      const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
+      const color = SEVERITY_COLORS[f.severity] ?? SEVERITY_COLORS.info;
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
@@ -45,7 +49,7 @@ export function renderHtmlReport(report: EngineReport): string {
   const fixRows = report.fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
+      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : SEVERITY_COLORS.info;
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
@@ -61,7 +65,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? SEVERITY_COLORS.info })),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -81,7 +85,7 @@ ${renderStyles()}
 <body>
 <div class="container">
   <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
-  <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
+  <p class="meta">Generated in ${report.metrics.durationMs ?? 0}ms &middot; ${report.metrics.filesAnalyzed ?? 0} file(s) analyzed</p>
 
 ${renderSummaryCards(report, severityCounts)}
 
@@ -163,7 +167,7 @@ function renderBarChart(title: string, items: { key: string; value: number; colo
   if (items.length === 0) return "";
   const maxCount = Math.max(...items.map((item) => item.value));
   return `<h2>${escapeHtml(title)}</h2>
-  <div class="bar-chart">
+  <div class="bar-chart" role="img" aria-label="${escapeHtml(title)}: ${items.map((i) => `${escapeHtml(i.key)} ${i.value}`).join(", ")}">
     ${items
       .map((item) => {
         const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
@@ -180,7 +184,7 @@ function renderBarChart(title: string, items: { key: string; value: number; colo
 function renderFindingsTable(count: number, rows: string): string {
   if (count === 0) return `<div class="empty">No findings detected.</div>`;
   return `<table>
-    <thead><tr><th>Severity</th><th>Category</th><th>File</th><th>Comment</th><th>Suggestion</th></tr></thead>
+    <thead><tr><th scope="col">Severity</th><th scope="col">Category</th><th scope="col">File</th><th scope="col">Comment</th><th scope="col">Suggestion</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
@@ -189,7 +193,7 @@ function renderFixTable(count: number, rows: string): string {
   if (count === 0) return "";
   return `<h2>Fix Attempts</h2>
   <table>
-    <thead><tr><th>#</th><th>File</th><th>Status</th><th>Explanation</th></tr></thead>
+    <thead><tr><th scope="col">#</th><th scope="col">File</th><th scope="col">Status</th><th scope="col">Explanation</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
@@ -198,7 +202,7 @@ function renderTestsTable(count: number, rows: string): string {
   if (count === 0) return "";
   return `<h2>Generated Tests</h2>
   <table>
-    <thead><tr><th>Source</th><th>Test File</th></tr></thead>
+    <thead><tr><th scope="col">Source</th><th scope="col">Test File</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
