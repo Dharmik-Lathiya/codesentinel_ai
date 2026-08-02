@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import type { EngineReport } from "../engine/index.js";
 
@@ -28,7 +29,20 @@ interface ReportingDescriptor {
   shortDescription: { text: string };
 }
 
-const PKG_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
+const FALLBACK_VERSION = "0.0.0";
+
+let pkgVersion: string | null = null;
+
+function getPkgVersion(): string {
+  if (pkgVersion === null) {
+    try {
+      pkgVersion = (createRequire(import.meta.url)("../../package.json") as { version?: string }).version ?? FALLBACK_VERSION;
+    } catch {
+      pkgVersion = FALLBACK_VERSION;
+    }
+  }
+  return pkgVersion;
+}
 
 const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   critical: "error",
@@ -38,16 +52,8 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
-const HASH_RADIX = 36;
-
-function simpleHash(s: string): string {
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) {
-    const char = s.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(HASH_RADIX);
+function commentHash(s: string): string {
+  return createHash("sha1").update(s).digest("hex").slice(0, 12);
 }
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
@@ -64,7 +70,7 @@ function createToolDriver(
 ): { name: string; version: string; rules: ReportingDescriptor[] } {
   return {
     name: "CodeSentinel AI",
-    version: PKG_VERSION,
+    version: getPkgVersion(),
     rules: Array.from(rules.values()),
   };
 }
@@ -86,7 +92,7 @@ export function renderSarif(report: EngineReport): string {
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
-    const ruleId = `${f.category}:${simpleHash(f.comment)}`;
+    const ruleId = `${f.category}:${commentHash(f.comment)}`;
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
