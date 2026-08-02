@@ -34,8 +34,8 @@ export interface DiffFile {
   diff: string;
   /** Full (post-change) content of the file, if it still exists. */
   content: string;
-  /** Status: added | modified | deleted | renamed. */
-  status: "added" | "modified" | "deleted" | "renamed";
+  /** Status: added | modified | deleted. */
+  status: "added" | "modified" | "deleted";
 }
 
 /**
@@ -66,7 +66,7 @@ export async function collectDiff(
     );
   } catch (err) {
     logger.warn(`Failed to collect diff against "${baseRef}":`, err);
-    return [];
+    throw err;
   }
 
   const lines = nameStatus
@@ -74,7 +74,7 @@ export async function collectDiff(
     .map((l) => l.trim())
     .filter(Boolean);
 
-  const files: DiffFile[] = [];
+  const entries: { path: string; status: DiffFile["status"]; content: string }[] = [];
   for (const line of lines) {
     const [statusCode, path] = line.split(/\t/);
     if (!statusCode || !path) continue;
@@ -94,15 +94,20 @@ export async function collectDiff(
         logger.debug(`Could not read content for ${path}`);
       }
     }
-    let diff = "";
-    try {
-      diff = await git(["diff", baseRef === "HEAD" ? "HEAD" : baseRef + "...", "--", path], cwd);
-    } catch {
-      logger.debug(`Could not collect diff for ${path}`);
-    }
-    files.push({ path, status, content, diff });
+    entries.push({ path, status, content });
   }
-  return files;
+
+  return Promise.all(
+    entries.map(async ({ path, status, content }) => {
+      let diff = "";
+      try {
+        diff = await git(["diff", baseRef === "HEAD" ? "HEAD" : baseRef + "...", "--", path], cwd);
+      } catch {
+        logger.debug(`Could not collect diff for ${path}`);
+      }
+      return { path, status, content, diff };
+    }),
+  );
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
@@ -111,12 +116,8 @@ async function defaultBaseRef(cwd: string): Promise<string> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-    try {
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
-    } catch {
-      logger.debug(`Could not resolve base ref ${githubBaseRef}`);
-    }
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
@@ -127,7 +128,7 @@ async function defaultBaseRef(cwd: string): Promise<string> {
   } catch (err) {
     logger.debug(`Could not resolve default base ref`, err);
   }
-  // Fall back to merge-base with the default remote branch.
+  // Fall back to a working-tree diff against HEAD when no base ref is available.
   return "HEAD";
 }
 
@@ -142,9 +143,8 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 }
 
 function mapStatus(code: string): DiffFile["status"] | null {
-  if (code.startsWith("A")) return "added";
-  if (code.startsWith("D")) return "deleted";
-  if (code.startsWith("R")) return "renamed";
+  if (code === "A") return "added";
+  if (code === "D") return "deleted";
   if (code === "M") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
