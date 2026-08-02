@@ -11,22 +11,31 @@ export function buildSuggestionsComment(
   fileContents: Map<string,string>,
 ): string {
   const parts: string[] = ["### CodeSentinel — Suggested Fixes\n"];
-  for (const f of findings.slice(0, MAX_FINDINGS)) {
-    const content = fileContents.get(f.file) ?? "";
-    const lines = content.split("\n");
+  const lineCache = new Map<string, string[]>();
+  const shown = findings.slice(0, MAX_FINDINGS);
+  for (const f of shown) {
+    let lines = lineCache.get(f.file);
+    if (!lines) {
+      lines = (fileContents.get(f.file) ?? "").split("\n");
+      lineCache.set(f.file, lines);
+    }
+    const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
+    const singleLineComment = f.comment.replace(/\s+/g, " ").trim();
     if (f.line && f.line > 0 && f.line <= lines.length) {
       const ctxBefore = lines.slice(Math.max(0, f.line - 1 - CONTEXT_BEFORE), f.line - 1).join("\n");
       const ctxAfter = lines.slice(f.line, Math.min(lines.length, f.line + CONTEXT_AFTER)).join("\n");
       const context = ctxBefore ? ctxBefore + "\n" : "";
       const after = ctxAfter ? ctxAfter : "";
-      const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
       const original = lines[f.line - 1];
-      const code = suggested || `${context}  // ${f.comment}\n${original}\n${after}`;
+      const code = suggested || `${context}  // ${singleLineComment}\n${original}\n${after}`;
       parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
     } else {
-      const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
-      parts.push(`**${f.file}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${suggested || "// " + f.comment}\n\`\`\`\n`);
+      parts.push(`**${f.file}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${suggested || "// " + singleLineComment}\n\`\`\`\n`);
     }
+  }
+  if (shown.length < findings.length) {
+    const remaining = findings.length - shown.length;
+    parts.push(`_...and ${remaining} more finding${remaining === 1 ? "" : "s"} not shown._`);
   }
   return parts.join("\n---\n");
 }
