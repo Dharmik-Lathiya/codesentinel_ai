@@ -1,13 +1,14 @@
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const MAX_BUFFER_MB = 64;
+const MAX_BUFFER = MAX_BUFFER_MB * MEGABYTE;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -46,7 +47,7 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  let baseRef: string;
+  let baseRef: string | null;
   if (base) {
     baseRef = base;
   } else {
@@ -59,12 +60,20 @@ export async function collectDiff(
   }
   let nameStatus: string;
   try {
-    nameStatus = await git(
-      ["diff", "--name-status", "--no-renames", baseRef + "..."],
-      cwd,
-    );
+    if (baseRef) {
+      nameStatus = await git(
+        ["diff", "--name-status", "--no-renames", baseRef + "..."],
+        cwd,
+      );
+    } else {
+      const [tracked, staged] = await Promise.all([
+        git(["diff", "--name-status", "--no-renames"], cwd),
+        git(["diff", "--cached", "--name-status", "--no-renames"], cwd),
+      ]);
+      nameStatus = [tracked, staged].filter(Boolean).join("\n");
+    }
   } catch (err) {
-    logger.warn(`Failed to collect diff against "${baseRef}":`, err);
+    logger.warn(`Failed to collect diff against "${baseRef ?? "working tree"}":`, err);
     return [];
   }
 
@@ -74,6 +83,7 @@ export async function collectDiff(
     .filter(Boolean);
 
   const files: DiffFile[] = [];
+  const root = resolve(cwd);
   for (const line of lines) {
     const [statusCode, path] = line.split(/\t/);
     if (!statusCode || !path) continue;
@@ -82,7 +92,7 @@ export async function collectDiff(
     let content = "";
     if (status !== "deleted") {
       const full = resolve(cwd, path);
-      if (!full.startsWith(resolve(cwd))) {
+      if (full !== root && !full.startsWith(root + sep)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -94,7 +104,11 @@ export async function collectDiff(
     }
     let diff = "";
     try {
-      diff = await git(["diff", baseRef + "...", "--", path], cwd);
+      if (baseRef) {
+        diff = await git(["diff", baseRef + "...", "--", path], cwd);
+      } else {
+        diff = await git(["diff", "--", path], cwd);
+      }
     } catch {
       logger.debug(`Could not collect diff for ${path}`);
     }
@@ -104,7 +118,7 @@ export async function collectDiff(
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
-async function defaultBaseRef(cwd: string): Promise<string> {
+async function defaultBaseRef(cwd: string): Promise<string | null> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
@@ -119,10 +133,14 @@ async function defaultBaseRef(cwd: string): Promise<string> {
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch {
+      logger.debug(`Could not resolve base ref ${ref}`);
+    }
   }
-  // Fall back to merge-base with the default remote branch.
-  return "HEAD";
+  // No base ref resolves; collectDiff falls back to the working tree.
+  return null;
 }
 
 async function refExists(ref: string, cwd: string): Promise<boolean> {

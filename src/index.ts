@@ -228,7 +228,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  build-fix:",
-  "    if: ${{ github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
+  "    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}",
   "    runs-on: ubuntu-latest",
   "    steps:",
   "      - uses: actions/checkout@v4",
@@ -254,7 +254,7 @@ const BUILD_WORKFLOW_CONTENT = [
 '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
 '          CODESENTINEL_GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN }}',
   "        run: |",
-  "          MAX_ITER=${MAX_ITERATIONS:-5}",
+  "          MAX_ITER=5",
   '          echo "::group::Build-Fix Loop"',
   "          for i in $(seq 1 $MAX_ITER); do",
   '            echo "=== Iteration $i/$MAX_ITER ==="',
@@ -290,8 +290,7 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            git push \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" HEAD:${{ github.ref_name }} 2>&1",
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
@@ -577,7 +576,7 @@ async function main(): Promise<void> {
       config: { type: "string", short: "c" },
       "max-iterations": { type: "string" },
       "auto-fix": { type: "boolean", default: false },
-      scoring: { type: "boolean", default: true },
+      scoring: { type: "boolean" },
       "test-gen": { type: "boolean", default: false },
       provider: { type: "string" },
       ask: { type: "string" },
@@ -615,7 +614,12 @@ async function main(): Promise<void> {
   }
 
   if (values["log-level"]) {
-    logger.level = values["log-level"] as LogLevel;
+    const level = values["log-level"] as LogLevel;
+    if (!["debug", "info", "warn", "error"].includes(level)) {
+      process.stderr.write(`Invalid --log-level: ${level}. Allowed: debug | info | warn | error\n`);
+      process.exit(1);
+    }
+    logger.level = level;
   }
   if (values.json) {
     logger.setJsonMode(true);
@@ -637,7 +641,14 @@ async function main(): Promise<void> {
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
-  if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
+  if (values["improve-type"]) {
+    const improveType = values["improve-type"] as "test" | "util" | "doc";
+    if (!["test", "util", "doc"].includes(improveType)) {
+      process.stderr.write(`Invalid --improve-type: ${improveType}. Allowed: test | util | doc\n`);
+      process.exit(1);
+    }
+    overrides.improve_type = improveType;
+  }
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
   const issueTitle = process.env.INPUT_ISSUE_TITLE;
