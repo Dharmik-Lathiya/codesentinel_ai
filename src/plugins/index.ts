@@ -1,6 +1,14 @@
 import type { CodeSentinelConfig } from "../config/types.js";
 import type { Finding } from "../analyzer/index.js";
 import type { ScoreBreakdown } from "../scorer/index.js";
+/**
+ * A source file passed to plugin hooks.
+ */
+export interface AnalyzedFile {
+  path: string;
+  content: string;
+}
+
 
 /**
  * Plugins extend CodeSentinel without modifying core code. Each plugin may hook
@@ -18,12 +26,12 @@ export interface CodeSentinelPlugin {
   init?(ctx: PluginContext): void | Promise<void>;
   /** Add findings based on the analyzed files. */
   analyze?(
-    files: { path: string; content: string }[],
+    files: AnalyzedFile[],
   ): Finding[] | Promise<Finding[]>;
   /** Adjust the final score breakdown. */
   score?(
     breakdown: ScoreBreakdown,
-    files: { path: string; content: string }[],
+    files: AnalyzedFile[],
   ): ScoreBreakdown | Promise<ScoreBreakdown>;
 }
 
@@ -42,6 +50,7 @@ export class PluginManager {
       try {
         const plugin = await this.loadPlugin(p);
         if (plugin) {
+          if (this.plugins.some((p) => p.name === plugin.name)) continue;
           this.plugins.push(plugin);
           await plugin.init?.(this.ctx);
           this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
@@ -81,7 +90,7 @@ export class PluginManager {
 
   /** Run all plugins' analyze hooks and merge their findings. */
   async runAnalyze(
-    files: { path: string; content: string }[],
+    files: AnalyzedFile[],
   ): Promise<Finding[]> {
     try {
       const results = await Promise.all(
@@ -107,7 +116,7 @@ export class PluginManager {
   /** Run all plugins' score hooks sequentially. */
   async runScore(
     breakdown: ScoreBreakdown,
-    files: { path: string; content: string }[],
+    files: AnalyzedFile[],
   ): Promise<ScoreBreakdown> {
     let b = breakdown;
     for (const p of this.plugins) {
