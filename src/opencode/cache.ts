@@ -26,6 +26,7 @@ export interface CacheBackend {
 }
 
 export function buildCacheKey(filePath: string, pattern: string): string {
+  // Deliberate truncation to 64 bits (16 hex chars): collision risk begins near ~4B keys.
   return createHash("sha256")
     .update(filePath + "::" + pattern)
     .digest("hex")
@@ -98,19 +99,16 @@ export class LearningCache {
 
   private withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(key) ?? Promise.resolve();
-    const timedFn = () => {
-      let timer: ReturnType<typeof setTimeout>;
-      const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Lock timeout for key: ${key}`)), LearningCache.LOCK_TIMEOUT);
-      });
-      return Promise.race([fn(), timeout]).finally(() => clearTimeout(timer));
-    };
-    const next = prev.then(timedFn, timedFn);
-    this.locks.set(key, next);
-    next.finally(() => {
-      if (this.locks.get(key) === next) this.locks.delete(key);
+    const run = prev.then(() => fn(), () => fn());
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Lock timeout for key: ${key}`)), LearningCache.LOCK_TIMEOUT);
     });
-    return next;
+    this.locks.set(key, run);
+    run.finally(() => {
+      if (this.locks.get(key) === run) this.locks.delete(key);
+    });
+    return Promise.race([run, timeout]).finally(() => clearTimeout(timer));
   }
 
   async get(key: string): Promise<Lesson[]> {
@@ -132,19 +130,19 @@ export class LearningCache {
           existing.lessons.push(lesson);
         }
         existing.updatedAt = new Date().toISOString();
-        try { await this.backend.set(key, existing); } catch { /* ignore */ }
+        try { await this.backend.set(key, existing); } catch (err) { logger.warn(`Failed to persist cache entry ${key}:`, err); }
       } else {
         const entry: CacheEntry = {
           key,
           lessons: [lesson],
           updatedAt: new Date().toISOString(),
         };
-        try { await this.backend.set(key, entry); } catch { /* ignore */ }
+        try { await this.backend.set(key, entry); } catch (err) { logger.warn(`Failed to persist cache entry ${key}:`, err); }
       }
     });
   }
 
-  async getAll(): Promise<Lesson[]> {
+  private async readAllEntries(): Promise<{ totalFiles: number; entries: (CacheEntry | null)[] }> {
     const files: string[] = await this.backend.list().catch(() => []);
     const entries = await Promise.all(
       files.map(async (file) => {
@@ -156,6 +154,11 @@ export class LearningCache {
         }
       })
     );
+    return { totalFiles: files.length, entries };
+  }
+
+  async getAll(): Promise<Lesson[]> {
+    const { entries } = await this.readAllEntries();
     const lessons: Lesson[] = [];
     for (const entry of entries) {
       if (entry) lessons.push(...entry.lessons.map((l) => ({ ...l })));
@@ -172,21 +175,11 @@ export class LearningCache {
   }
 
   async getStats(): Promise<{ totalEntries: number; totalLessons: number }> {
-    const files = await this.backend.list();
-    const entries = await Promise.all(
-      files.map(async (file) => {
-        const key = file.replace(/\.json$/, "");
-        try {
-          return await this.backend.get(key);
-        } catch {
-          return null;
-        }
-      })
-    );
+    const { totalFiles, entries } = await this.readAllEntries();
     let totalLessons = 0;
     for (const entry of entries) {
       if (entry) totalLessons += entry.lessons.length;
     }
-    return { totalEntries: files.length, totalLessons };
+    return { totalEntries: totalFiles, totalLessons };
   }
 }

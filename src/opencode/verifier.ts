@@ -9,6 +9,13 @@ const VAGUE_PHRASES = [
   "consider refactoring",
 ];
 
+const KNOWN_GOOD_PHRASES = [
+  "memory leak",
+  "unsafe eval",
+  "sql injection",
+  "xss",
+];
+
 const MIN_MESSAGE_LENGTH = 15;
 
 export interface VerifyOptions {
@@ -21,8 +28,9 @@ function isExcludedDir(file: string): boolean {
 }
 
 function isVagueMessage(message: string): boolean {
-  if (message.length < MIN_MESSAGE_LENGTH) return true;
   const lower = message.toLowerCase();
+  if (KNOWN_GOOD_PHRASES.some((phrase) => lower.includes(phrase))) return false;
+  if (message.length < MIN_MESSAGE_LENGTH) return true;
   return VAGUE_PHRASES.some((phrase) => lower.includes(phrase));
 }
 
@@ -50,34 +58,34 @@ function buildAiPrompt(findings: Issue[]): string {
   ].join("\n");
 }
 
+function validIndices(parsed: unknown, maxIndex: number): number[] | null {
+  if (!Array.isArray(parsed)) return null;
+  const indices = [...new Set(parsed)].filter(
+    (i): i is number =>
+      typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
+  );
+  return indices.length > 0 ? indices : null;
+}
+
 function parseAiResponse(
   content: string,
   maxIndex: number,
 ): number[] | null {
+  const trimmed = content.trim();
+
   try {
-    const parsed = JSON.parse(content);
-    if (Array.isArray(parsed)) {
-      const indices = parsed.filter(
-        (i): i is number =>
-          typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-      );
-      return indices.length > 0 ? indices : null;
-    }
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed) && parsed.length === 0) return [];
+    if (Array.isArray(parsed)) return validIndices(parsed, maxIndex);
   } catch {
     // fall through
   }
 
-  const extracted = content.match(/\[[\d\s,]*\]/);
+  const extracted = trimmed.match(/\[[\d\s,]*\]/);
   if (extracted) {
     try {
       const parsed = JSON.parse(extracted[0]);
-      if (Array.isArray(parsed)) {
-        const indices = parsed.filter(
-          (i): i is number =>
-            typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-        );
-        return indices.length > 0 ? indices : null;
-      }
+      if (Array.isArray(parsed)) return validIndices(parsed, maxIndex);
     } catch {
       // fall through
     }
