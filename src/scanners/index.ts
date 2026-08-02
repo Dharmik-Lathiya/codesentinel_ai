@@ -61,8 +61,8 @@ const gitleaks: ScannerTool = {
         return [];
       }
       return results.map((r) => ({
-        file: r.File,
-        line: r.StartLine || null,
+        file: r.File ?? "unknown",
+        line: r.StartLine ?? null,
         severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
         category: "security" as const,
         comment: `[gitleaks] ${r.Description}`,
