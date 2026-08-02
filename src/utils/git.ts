@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { resolve, sep } from "node:path";
 import { logger } from "./logger.js";
@@ -9,6 +9,7 @@ const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER_MB = 64;
 const MAX_BUFFER = MAX_BUFFER_MB * MEGABYTE;
+const DIFF_CONCURRENCY = 8;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -38,6 +39,27 @@ export interface DiffFile {
   status: "added" | "modified" | "deleted" | "renamed";
 }
 
+/** Map async work over an array with bounded concurrency. */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let i = 0;
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (i < items.length) {
+        const idx = i++;
+        results[idx] = await fn(items[idx]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 /**
  * Collect the changed files for the current PR/branch relative to a base ref.
  * Falls back to the working tree diff when no base ref is supplied and no
@@ -47,45 +69,32 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  let baseRef: string | null;
-  if (base) {
-    baseRef = base;
-  } else {
-    try {
-      baseRef = await defaultBaseRef(cwd);
-    } catch (err) {
-      logger.error("Failed to determine default base ref", err);
-      throw err;
-    }
-  }
+  const baseRef = base ?? (await defaultBaseRef(cwd));
   let nameStatus: string;
   try {
     if (baseRef) {
       nameStatus = await git(
-        ["diff", "--name-status", "--no-renames", baseRef + "..."],
+        ["diff", "--name-status", "-z", "--no-renames", baseRef + "..."],
         cwd,
       );
     } else {
       const [tracked, staged] = await Promise.all([
-        git(["diff", "--name-status", "--no-renames"], cwd),
-        git(["diff", "--cached", "--name-status", "--no-renames"], cwd),
+        git(["diff", "--name-status", "-z", "--no-renames"], cwd),
+        git(["diff", "--cached", "--name-status", "-z", "--no-renames"], cwd),
       ]);
-      nameStatus = [tracked, staged].filter(Boolean).join("\n");
+      nameStatus = [tracked, staged].filter(Boolean).join("");
     }
   } catch (err) {
     logger.warn(`Failed to collect diff against "${baseRef ?? "working tree"}":`, err);
     return [];
   }
 
-  const lines = nameStatus
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-
+  const records = nameStatus.split("\0").filter(Boolean);
   const files: DiffFile[] = [];
   const root = resolve(cwd);
-  for (const line of lines) {
-    const [statusCode, path] = line.split(/\t/);
+  for (let i = 0; i < records.length; i += 2) {
+    const statusCode = records[i];
+    const path = records[i + 1];
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
@@ -97,22 +106,27 @@ export async function collectDiff(
         continue;
       }
       try {
-        content = readFileSync(full, "utf8");
+        content = await readFile(full, "utf8");
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
     }
-    let diff = "";
+    files.push({ path, status, content, diff: "" });
+  }
+
+  const diffs = await mapLimit(files, DIFF_CONCURRENCY, async (file) => {
     try {
       if (baseRef) {
-        diff = await git(["diff", baseRef + "...", "--", path], cwd);
-      } else {
-        diff = await git(["diff", "--", path], cwd);
+        return await git(["diff", baseRef + "...", "--", file.path], cwd);
       }
+      return await git(["diff", "--", file.path], cwd);
     } catch {
-      logger.debug(`Could not collect diff for ${path}`);
+      logger.debug(`Could not collect diff for ${file.path}`);
+      return "";
     }
-    files.push({ path, status, content, diff });
+  });
+  for (let i = 0; i < files.length; i++) {
+    files[i].diff = diffs[i];
   }
   return files;
 }
@@ -154,10 +168,20 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 }
 
 function mapStatus(code: string): DiffFile["status"] | null {
-  if (code.startsWith("A")) return "added";
-  if (code.startsWith("D")) return "deleted";
-  if (code.startsWith("R")) return "renamed";
-  if (code === "M") return "modified";
-  logger.warn(`Unknown git status code: ${code}`);
-  return null;
+  // collectDiff always passes --no-renames, so rename detection is off and
+  // renames surface as delete+add pairs; "renamed" is unreachable here.
+  switch (code) {
+    case "A":
+      return "added";
+    case "D":
+      return "deleted";
+    case "R":
+      return "renamed";
+    case "M":
+    case "T":
+      return "modified";
+    default:
+      logger.warn(`Unknown git status code: ${code}`);
+      return null;
+  }
 }
