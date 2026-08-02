@@ -10,6 +10,7 @@ import { logger, type LogLevel } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
+import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GATE_MIN_SCORE = 70;
@@ -433,7 +434,7 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
   CODESENTINEL_LOG_LEVEL      Default log level
 
 Examples:
@@ -532,8 +533,15 @@ async function main(): Promise<void> {
     };
     const engine = Engine.fromInputs({ secrets });
     const dismissArgs = args.slice(1);
-    const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
-    const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
+    const consumedLen = dismissArgs.includes("--rule")
+      ? dismissArgs.indexOf("--rule") + 2
+      : dismissArgs.includes("--file")
+        ? Math.max(
+            dismissArgs.indexOf("--file") + 2,
+            dismissArgs.includes("--line") ? dismissArgs.indexOf("--line") + 2 : 0,
+          )
+        : 0;
+    const reason = dismissArgs.slice(consumedLen).join(" ") || "dismissed by user";
 
     if (dismissArgs.includes("--rule") && dismissArgs.includes("--file")) {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
@@ -557,11 +565,20 @@ async function main(): Promise<void> {
       const lineIdx = dismissArgs.indexOf("--line");
       const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
       const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
-      if (!filePath) {
+      if (!filePath || filePath.startsWith("--")) {
         process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
         return;
       }
-      const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
+      let ruleIdArg = `${filePath}:${lineNum ?? "all"}`;
+      const ruleIdIdx = dismissArgs.indexOf("--rule-id");
+      if (ruleIdIdx >= 0) {
+        const ruleIdValue = dismissArgs[ruleIdIdx + 1];
+        if (!ruleIdValue || ruleIdValue.startsWith("--")) {
+          process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [--rule-id <ruleId>] [reason]\n");
+          return;
+        }
+        ruleIdArg = ruleIdValue;
+      }
       await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
       process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
@@ -571,36 +588,46 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { values, positionals } = parseArgs({
-    options: {
-      mode: { type: "string", short: "m" },
-      config: { type: "string", short: "c" },
-      "max-iterations": { type: "string" },
-      "auto-fix": { type: "boolean", default: false },
-      scoring: { type: "boolean", default: true },
-      "test-gen": { type: "boolean", default: false },
-      provider: { type: "string" },
-      ask: { type: "string" },
-      context: { type: "string" },
-      "log-level": { type: "string" },
-      "dry-run": { type: "boolean", default: false },
-      json: { type: "boolean", default: false },
-      sarif: { type: "boolean", default: false },
-      "min-score": { type: "string" },
-      "max-critical": { type: "string" },
-      "max-high": { type: "string" },
-      help: { type: "boolean", default: false },
-      version: { type: "boolean", default: false },
-      "jsonl": { type: "boolean", default: false },
-      "mcp": { type: "boolean", default: false },
-      "learning-db": { type: "string" },
-      "yaml-config": { type: "boolean", default: false },
-      "improve-type": { type: "string" },
-      "use-opencode-cli": { type: "boolean", default: false },
-    },
-    args: process.argv.slice(2),
-    allowPositionals: true,
-  });
+  const parsed = (() => {
+    try {
+      return parseArgs({
+        options: {
+          mode: { type: "string", short: "m" },
+          config: { type: "string", short: "c" },
+          "max-iterations": { type: "string" },
+          "auto-fix": { type: "boolean", default: false },
+          scoring: { type: "boolean", default: true },
+          "test-gen": { type: "boolean", default: false },
+          provider: { type: "string" },
+          ask: { type: "string" },
+          context: { type: "string" },
+          "log-level": { type: "string" },
+          "dry-run": { type: "boolean", default: false },
+          json: { type: "boolean", default: false },
+          sarif: { type: "boolean", default: false },
+          "min-score": { type: "string" },
+          "max-critical": { type: "string" },
+          "max-high": { type: "string" },
+          help: { type: "boolean", default: false },
+          version: { type: "boolean", default: false },
+          "jsonl": { type: "boolean", default: false },
+          "mcp": { type: "boolean", default: false },
+          "learning-db": { type: "string" },
+          "yaml-config": { type: "boolean", default: false },
+          "improve-type": { type: "string" },
+          "use-opencode-cli": { type: "boolean", default: false },
+        },
+        args: process.argv.slice(2),
+        allowPositionals: true,
+      });
+    } catch (err) {
+      process.stdout.write(`Error parsing arguments: ${(err as Error).message}\n`);
+      showHelp();
+      return null;
+    }
+  })();
+  if (parsed === null) return;
+  const { values, positionals } = parsed;
 
   // Use positional arg as mode if --mode not provided
   const modeArg = values.mode || positionals[0];
@@ -632,7 +659,15 @@ async function main(): Promise<void> {
 
   const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
-  if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
+  if (values["max-iterations"]) {
+    const maxIterations = Number(values["max-iterations"]);
+    if (!Number.isFinite(maxIterations)) {
+      process.stdout.write(`Invalid value for --max-iterations: "${values["max-iterations"]}"\n`);
+      showHelp();
+      return;
+    }
+    overrides.max_iterations = maxIterations;
+  }
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
@@ -646,13 +681,31 @@ async function main(): Promise<void> {
   if (issueBody) overrides.issue_body = issueBody;
 
   if (values["min-score"]) {
-    overrides.gate = mergeOverride(overrides.gate, { minScore: Number(values["min-score"]) });
+    const minScore = Number(values["min-score"]);
+    if (!Number.isFinite(minScore)) {
+      process.stdout.write(`Invalid value for --min-score: "${values["min-score"]}"\n`);
+      showHelp();
+      return;
+    }
+    overrides.gate = mergeOverride(overrides.gate, { minScore });
   }
   if (values["max-critical"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Number(values["max-critical"]) });
+    const maxCritical = Number(values["max-critical"]);
+    if (!Number.isFinite(maxCritical)) {
+      process.stdout.write(`Invalid value for --max-critical: "${values["max-critical"]}"\n`);
+      showHelp();
+      return;
+    }
+    overrides.gate = mergeOverride(overrides.gate, { maxCritical });
   }
   if (values["max-high"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Number(values["max-high"]) });
+    const maxHigh = Number(values["max-high"]);
+    if (!Number.isFinite(maxHigh)) {
+      process.stdout.write(`Invalid value for --max-high: "${values["max-high"]}"\n`);
+      showHelp();
+      return;
+    }
+    overrides.gate = mergeOverride(overrides.gate, { maxHigh });
   }
 
   if (values.provider) {
