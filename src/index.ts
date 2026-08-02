@@ -68,7 +68,7 @@ const WORKFLOW_CONTENT = [
 "              const { data: comment } = await github.rest.issues.createComment({",
 "                owner: context.repo.owner, repo: context.repo.repo,",
 "                issue_number: context.issue.number,",
-"                body: '\u{1F504} **CodeSentinel** is analyzing this issue and generating an implementation plan...'",
+"                body: '\\u{1F504} **CodeSentinel** is analyzing this issue and generating an implementation plan...'",
 "              });",
 "              core.setOutput('comment_id', comment.id);",
 "            } catch (err) {",
@@ -167,7 +167,7 @@ const WORKFLOW_CONTENT = [
   "              const { data: comment } = await github.rest.issues.createComment({",
   "                owner: context.repo.owner, repo: context.repo.repo,",
   "                issue_number: context.issue.number,",
-  "                body: '\u{1F504} **CodeSentinel** is processing... please wait.'",
+"                body: '\\u{1F504} **CodeSentinel** is processing... please wait.'",
   "              });",
   "              core.setOutput('comment_id', comment.id);",
   "            } catch (err) { core.setFailed(err.message); }",
@@ -262,6 +262,7 @@ const BUILD_WORKFLOW_CONTENT = [
 '          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}',
 '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
 '          CODESENTINEL_GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN }}',
+'          MAX_ITERATIONS: ${{ vars.MAX_ITERATIONS || 5 }}',
   "        run: |",
   "          MAX_ITER=${MAX_ITERATIONS:-5}",
   '          echo "::group::Build-Fix Loop"',
@@ -301,7 +302,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+"            git push origin HEAD:${{ github.ref_name }} 2>&1 || echo 'push failed, retrying'",
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
@@ -374,7 +375,7 @@ function runSetup(): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
@@ -542,8 +543,14 @@ async function main(): Promise<void> {
     };
     const engine = Engine.fromInputs({ secrets });
     const dismissArgs = args.slice(1);
-    const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
-    const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
+    const flagValueTokens = new Set<number>();
+    for (const flag of ["--rule", "--file", "--line", "--rule-id"]) {
+      const idx = dismissArgs.indexOf(flag);
+      if (idx >= 0 && idx + 1 < dismissArgs.length) flagValueTokens.add(idx + 1);
+    }
+    const reason =
+      dismissArgs.filter((a, i) => !a.startsWith("--") && !flagValueTokens.has(i)).join(" ").trim() ||
+      "dismissed by user";
 
     if (dismissArgs.includes("--rule") && dismissArgs.includes("--file")) {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
