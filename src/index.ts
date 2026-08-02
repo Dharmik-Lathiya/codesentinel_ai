@@ -50,7 +50,7 @@ const WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  plan-on-issue:",
-  "    if: github.event_name == 'issues' && github.event.action == 'opened'",
+  "    if: github.event_name === 'issues' && github.event.action === 'opened'",
   "    runs-on: ubuntu-latest",
   "    steps:",
   "      - name: Checkout repository",
@@ -104,7 +104,7 @@ const WORKFLOW_CONTENT = [
 "            }",
   "",
   "  slash-command:",
-  "    if: github.event_name == 'issue_comment' && github.event.action == 'created'",
+  "    if: github.event_name === 'issue_comment' && github.event.action === 'created'",
   "    runs-on: ubuntu-latest",
   "    steps:",
   "      - name: Is PR comment?",
@@ -180,7 +180,7 @@ const WORKFLOW_CONTENT = [
   "                issue_number: context.issue.number",
   "              });",
   "              core.setOutput('title', issue.title);",
-  "              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));",
+  `              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));`,
   "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
@@ -401,7 +401,12 @@ Modes:
   chat        Ask questions about the codebase (--ask required)
   gate        Run quality gate (exit non-zero on threshold breach)
   deadcode    Detect unused exports across files
+`);
+  printHelpDetails();
+}
 
+function printHelpDetails(): void {
+  process.stdout.write(`
 Options:
   -m, --mode <mode>           Operational mode
   -c, --config <path>         Path to codesentinel.config.json
@@ -464,6 +469,178 @@ function showVersion(): void {
   process.stdout.write(`${pkg.version}\n`);
 }
 
+function runInitHook(args: string[]): void {
+  const root = process.cwd();
+  const typeIdx = args.indexOf("--type");
+  const hookType = typeIdx >= 0 && args[typeIdx + 1] === "post-commit" ? "post-commit" : "pre-commit";
+  const hookPath = installHook(root, hookType);
+  process.stdout.write(`✅ ${hookType} hook installed at ${hookPath}\n`);
+  if (hookType === "post-commit") {
+    process.stdout.write("This hook will run build + typecheck after every commit and auto-fix failures.\n");
+  }
+}
+
+async function runDashboard(): Promise<void> {
+  const secrets: RuntimeSecrets = {
+    github_token: process.env.GITHUB_TOKEN,
+    openai_api_key: process.env.OPENAI_API_KEY,
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+    gemini_api_key: process.env.GEMINI_API_KEY,
+    opencode_api_key: process.env.OPENCODE_API_KEY,
+    opencode_base_url: process.env.OPENCODE_BASE_URL,
+  };
+  const engine = Engine.fromInputs({ secrets });
+  const dash = engine.getDashboard();
+  if (dash) {
+    dash.start();
+    process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
+  } else {
+    process.stdout.write("Dashboard is not available.\n");
+  }
+  process.stdout.write("Press Ctrl+C to stop.\n");
+  try {
+    await new Promise(() => {});
+  } catch {}
+}
+
+async function runDismiss(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    showHelp();
+    return;
+  }
+  if (args.includes("--version")) {
+    showVersion();
+    return;
+  }
+  const secrets: RuntimeSecrets = {
+    github_token: process.env.GITHUB_TOKEN,
+    openai_api_key: process.env.OPENAI_API_KEY,
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+    gemini_api_key: process.env.GEMINI_API_KEY,
+    opencode_api_key: process.env.OPENCODE_API_KEY,
+    opencode_base_url: process.env.OPENCODE_BASE_URL,
+  };
+  const engine = Engine.fromInputs({ secrets });
+  const dismissArgs = args.slice(1);
+  const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
+  const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
+
+  if (dismissArgs.includes("--rule") && dismissArgs.includes("--file")) {
+    process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+    process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+    process.stdout.write("Options --rule and --file are mutually exclusive.\n");
+    return;
+  }
+
+  if (dismissArgs.includes("--rule")) {
+    const ruleIdx = dismissArgs.indexOf("--rule");
+    const ruleId = dismissArgs[ruleIdx + 1];
+    if (!ruleId || ruleId.startsWith("--")) {
+      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+      return;
+    }
+    try {
+      await engine.dismissByRule(ruleId, reason);
+      process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
+    } catch (err) {
+      process.stdout.write(`❌ Failed to dismiss rule: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+    return;
+  }
+
+  if (dismissArgs.includes("--file")) {
+    const fileIdx = dismissArgs.indexOf("--file");
+    const filePath = dismissArgs[fileIdx + 1];
+    const lineIdx = dismissArgs.indexOf("--line");
+    const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
+    const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+    if (!filePath) {
+      process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
+      return;
+    }
+    const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
+    try {
+      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+      process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
+    } catch (err) {
+      process.stdout.write(`❌ Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+    return;
+  }
+
+  process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+  process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+}
+
+function buildOverrides(values: {
+  config?: string;
+  "max-iterations"?: string;
+  "auto-fix"?: boolean;
+  scoring?: boolean;
+  "test-gen"?: boolean;
+  context?: string;
+  "improve-type"?: string;
+  provider?: string;
+  "min-score"?: string;
+  "max-critical"?: string;
+  "max-high"?: string;
+  "dry-run"?: boolean;
+  jsonl?: boolean;
+  mcp?: boolean;
+  "learning-db"?: string;
+  "use-opencode-cli"?: boolean;
+  "yaml-config"?: boolean;
+}): Partial<CodeSentinelConfig> {
+  const overrides: Partial<CodeSentinelConfig> = {};
+  if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
+  if (values["auto-fix"]) overrides.enable_auto_fix = true;
+  if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
+  if (values["test-gen"]) overrides.enable_test_generation = true;
+  if (values.context) overrides.project_context = values.context;
+  if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
+  if (values["min-score"]) {
+    overrides.gate = mergeOverride(overrides.gate, { minScore: Number(values["min-score"]) });
+  }
+  if (values["max-critical"]) {
+    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Number(values["max-critical"]) });
+  }
+  if (values["max-high"]) {
+    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Number(values["max-high"]) });
+  }
+  if (values.provider) {
+    const providerModel: ModelConfig = { provider: values.provider as Provider, model: "default" };
+    overrides.default_model = providerModel;
+    overrides.models = {
+      review: providerModel,
+      fix: providerModel,
+      audit: providerModel,
+      score: providerModel,
+      testgen: providerModel,
+      chat: providerModel,
+      describe: providerModel,
+    };
+  }
+  if (values["dry-run"]) overrides.enable_auto_fix = false;
+  if (values.jsonl) overrides.jsonl_output = true;
+  if (values.mcp) overrides.mcp = mergeOverride(overrides.mcp, { enabled: true });
+  if (values["learning-db"]) {
+    overrides.learning = mergeOverride(overrides.learning, { enabled: true, dbPath: values["learning-db"] });
+  }
+  if (values["use-opencode-cli"]) {
+    overrides.use_opencode_cli = true;
+  }
+  if (values["yaml-config"] && !values.config) {
+    const searchPaths = [".opencode-reviewer.yml", ".codesentinel.yml", "codesentinel.config.yml"];
+    for (const p of searchPaths) {
+      if (existsSync(resolve(process.cwd(), p))) {
+        overrides.configFile = p;
+        break;
+      }
+    }
+  }
+  return overrides;
+}
+
 /**
  * Command-line interface. Usage:
  *   codesentinel --mode review --config ./codesentinel.config.json
@@ -480,94 +657,17 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "init-hook") {
-    const root = process.cwd();
-    const typeIdx = args.indexOf("--type");
-    const hookType = typeIdx >= 0 && args[typeIdx + 1] === "post-commit" ? "post-commit" : "pre-commit";
-    const hookPath = installHook(root, hookType);
-    process.stdout.write(`✅ ${hookType} hook installed at ${hookPath}\n`);
-    if (hookType === "post-commit") {
-      process.stdout.write("This hook will run build + typecheck after every commit and auto-fix failures.\n");
-    }
+    runInitHook(args);
     return;
   }
 
   if (args[0] === "dashboard") {
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-      opencode_base_url: process.env.OPENCODE_BASE_URL,
-    };
-    const engine = Engine.fromInputs({ secrets });
-    const dash = engine.getDashboard();
-    if (dash) {
-      dash.start();
-      process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
-    } else {
-      process.stdout.write("Dashboard is not available.\n");
-    }
-    process.stdout.write("Press Ctrl+C to stop.\n");
-    await new Promise(() => {});
+    await runDashboard();
     return;
   }
 
   if (args[0] === "dismiss") {
-    if (args.includes("--help") || args.includes("-h")) {
-      showHelp();
-      return;
-    }
-    if (args.includes("--version")) {
-      showVersion();
-      return;
-    }
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-      opencode_base_url: process.env.OPENCODE_BASE_URL,
-    };
-    const engine = Engine.fromInputs({ secrets });
-    const dismissArgs = args.slice(1);
-    const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
-    const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
-
-    if (dismissArgs.includes("--rule") && dismissArgs.includes("--file")) {
-      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
-      process.stdout.write("Options --rule and --file are mutually exclusive.\n");
-      return;
-    }
-
-    if (dismissArgs.includes("--rule")) {
-      const ruleIdx = dismissArgs.indexOf("--rule");
-      const ruleId = dismissArgs[ruleIdx + 1];
-      if (!ruleId || ruleId.startsWith("--")) {
-        process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-        return;
-      }
-      await engine.dismissByRule(ruleId, reason);
-      process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
-    } else if (dismissArgs.includes("--file")) {
-      const fileIdx = dismissArgs.indexOf("--file");
-      const filePath = dismissArgs[fileIdx + 1];
-      const lineIdx = dismissArgs.indexOf("--line");
-      const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-      const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
-      if (!filePath) {
-        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
-        return;
-      }
-      const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
-      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
-      process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
-    } else {
-      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
-    }
+    await runDismiss(args);
     return;
   }
 
@@ -630,62 +730,14 @@ async function main(): Promise<void> {
     opencode_base_url: process.env.OPENCODE_BASE_URL,
   };
 
-  const overrides: Partial<CodeSentinelConfig> = {};
+  const overrides = buildOverrides(values);
   if (modeArg) overrides.mode = modeArg as Mode;
-  if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
-  if (values["auto-fix"]) overrides.enable_auto_fix = true;
-  if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
-  if (values["test-gen"]) overrides.enable_test_generation = true;
-  if (values.context) overrides.project_context = values.context;
-  if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
   const issueTitle = process.env.INPUT_ISSUE_TITLE;
   const issueBody = process.env.INPUT_ISSUE_BODY;
   if (issueTitle) overrides.issue_title = issueTitle;
   if (issueBody) overrides.issue_body = issueBody;
-
-  if (values["min-score"]) {
-    overrides.gate = mergeOverride(overrides.gate, { minScore: Number(values["min-score"]) });
-  }
-  if (values["max-critical"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Number(values["max-critical"]) });
-  }
-  if (values["max-high"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Number(values["max-high"]) });
-  }
-
-  if (values.provider) {
-    const providerModel: ModelConfig = { provider: values.provider as Provider, model: "default" };
-    overrides.default_model = providerModel;
-    overrides.models = {
-      review: providerModel,
-      fix: providerModel,
-      audit: providerModel,
-      score: providerModel,
-      testgen: providerModel,
-      chat: providerModel,
-      describe: providerModel,
-    };
-  }
-  if (values["dry-run"]) overrides.enable_auto_fix = false;
-  if (values.jsonl) overrides.jsonl_output = true;
-  if (values.mcp) overrides.mcp = mergeOverride(overrides.mcp, { enabled: true });
-  if (values["learning-db"]) {
-    overrides.learning = mergeOverride(overrides.learning, { enabled: true, dbPath: values["learning-db"] });
-  }
-  if (values["use-opencode-cli"]) {
-    overrides.use_opencode_cli = true;
-  }
-  if (values["yaml-config"] && !values.config) {
-    const searchPaths = [".opencode-reviewer.yml", ".codesentinel.yml", "codesentinel.config.yml"];
-    for (const p of searchPaths) {
-      if (existsSync(resolve(process.cwd(), p))) {
-        overrides.configFile = p;
-        break;
-      }
-    }
-  }
 
   const engine = Engine.fromInputs({
     configPath: values.config,
@@ -697,9 +749,12 @@ async function main(): Promise<void> {
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    const answer = await engine.ask(values["ask"]);
-    process.stdout.write(answer + "\n");
-    return;
+    try {
+      const answer = await engine.ask(values["ask"]);
+      process.stdout.write(answer + "\n");
+    } catch (err) {
+      process.stdout.write(`❌ Failed to get answer: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
   }
 
   // Special handling for deadcode mode — run in-process without AI
@@ -710,15 +765,19 @@ async function main(): Promise<void> {
       path,
       content: readText(resolve(root, path)),
     }));
-    const findings = await engine.runDeadCode(files);
-    if (findings.length === 0) {
-      process.stdout.write("✅ No unused exports detected.\n");
-    } else {
-      process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
-      process.stdout.write(`Unused exports (${findings.length}):\n`);
-      for (const f of findings) {
-        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
+    try {
+      const findings = await engine.runDeadCode(files);
+      if (findings.length === 0) {
+        process.stdout.write("✅ No unused exports detected.\n");
+      } else {
+        process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
+        process.stdout.write(`Unused exports (${findings.length}):\n`);
+        for (const f of findings) {
+          process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
+        }
       }
+    } catch (err) {
+      process.stdout.write(`❌ Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
     }
     return;
   }
