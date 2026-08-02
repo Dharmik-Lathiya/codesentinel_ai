@@ -104,7 +104,7 @@ const WORKFLOW_CONTENT = [
 "            }",
   "",
   "  slash-command:",
-  "    if: github.event_name == 'issue_comment' && github.event.action == 'created'",
+  "    if: github.event_name == 'issue_comment' && github.event.action == 'created' && github.actor != 'github-actions[bot]'",
   "    runs-on: ubuntu-latest",
   "    steps:",
   "      - name: Is PR comment?",
@@ -279,7 +279,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   '            node codesentinel/dist/index.js fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
   "",
-  "            git add -A",
+  "            git add -A -- ':!node_modules' ':!dist'",
   "            if git diff --cached --quiet; then",
   '              echo "⚠️ No changes produced by fix — continuing"',
   "              continue",
@@ -287,12 +287,26 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
-  '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
-  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
+  '            if ! git commit -m "CodeSentinel: auto-fix build errors [skip ci]" 2>&1; then',
+  '              echo "❌ git commit failed"',
+  "              exit 1",
+  "            fi",
+  "            if ! git pull --rebase origin ${{ github.ref_name }} 2>&1; then",
+  '              echo "❌ git pull --rebase failed — aborting"',
+  "              git rebase --abort 2>&1 || true",
+  "              exit 1",
+  "            fi",
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
+  '            if [ -z "$GIT_PUSH_TOKEN" ]; then',
+  '              echo "❌ No push token available (CODESENTINEL_GITHUB_TOKEN or GITHUB_TOKEN unset)"',
+  "              exit 1",
+  "            fi",
+  "            if git -c http.extraheader=\"AUTHORIZATION: basic $(echo -n \"x-access-token:$GIT_PUSH_TOKEN\" | base64)\" push origin HEAD:${{ github.ref_name }} 2>&1; then",
+  '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
+  "            else",
+  '              echo "❌ git push failed"',
+  "              exit 1",
+  "            fi",
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
@@ -364,7 +378,7 @@ function runSetup(): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
