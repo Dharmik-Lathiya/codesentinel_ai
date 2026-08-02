@@ -17,7 +17,7 @@ const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
 const SNIPPET_MAX_CHAR_LENGTH = 80;
 const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
 
-function parseTrufflehogLine(line: string): Finding | null {
+function parseTrufflehogLine(line: string, failures: { count: number }): Finding | null {
   try {
     const r = JSON.parse(line);
     return {
@@ -30,7 +30,7 @@ function parseTrufflehogLine(line: string): Finding | null {
       source: "scanner" as const,
     } as Finding;
   } catch {
-    logger.warn("Failed to parse trufflehog JSON line");
+    failures.count++;
     return null;
   }
 }
@@ -102,7 +102,14 @@ const trufflehog: ScannerTool = {
       );
       if (!out.trim()) return [];
       const lines = out.trim().split("\n").filter(Boolean);
-      return lines.map(parseTrufflehogLine).filter((f): f is Finding => f !== null);
+      const failures = { count: 0 };
+      const findings = lines
+        .map((line) => parseTrufflehogLine(line, failures))
+        .filter((f): f is Finding => f !== null);
+      if (failures.count > 0) {
+        logger.warn(`trufflehog: failed to parse ${failures.count} JSON line(s)`);
+      }
+      return findings;
     } catch (e) {
       if (e instanceof RangeError) {
         logger.warn("trufflehog output exceeded 10MB, no findings reported");

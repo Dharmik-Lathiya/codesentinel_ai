@@ -38,17 +38,28 @@ export class PluginManager {
 
   /** Dynamically import and register plugins listed in config. */
   async load(paths: string[]): Promise<void> {
+    const seen = new Set<string>();
     for (const p of paths) {
-      try {
-        const plugin = await this.loadPlugin(p);
-        if (plugin) {
-          this.plugins.push(plugin);
-          await plugin.init?.(this.ctx);
-          this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
-        }
-      } catch (err) {
-        this.ctx.logger.warn(`Failed to load plugin "${p}":`, err);
+      if (seen.has(p)) {
+        this.ctx.logger.warn(`Skipping duplicate plugin path "${p}".`);
+        continue;
       }
+      const plugin = await this.loadPlugin(p);
+      if (!plugin) continue;
+      if (seen.has(plugin.name)) {
+        this.ctx.logger.warn(`Skipping duplicate plugin "${plugin.name}".`);
+        continue;
+      }
+      seen.add(p);
+      seen.add(plugin.name);
+      this.plugins.push(plugin);
+      try {
+        await plugin.init?.(this.ctx);
+      } catch (err) {
+        this.ctx.logger.warn(`Failed to init plugin "${p}":`, err);
+        continue;
+      }
+      this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
     }
   }
 
@@ -68,6 +79,18 @@ export class PluginManager {
         );
         return null;
       }
+      if (plugin.analyze !== undefined && typeof plugin.analyze !== "function") {
+        this.ctx.logger.warn(
+          `Plugin "${path}" has a non-function "analyze" hook.`,
+        );
+        return null;
+      }
+      if (plugin.score !== undefined && typeof plugin.score !== "function") {
+        this.ctx.logger.warn(
+          `Plugin "${path}" has a non-function "score" hook.`,
+        );
+        return null;
+      }
       return plugin;
     } catch (err) {
       this.ctx.logger.warn(`Failed to load plugin "${path}":`, err);
@@ -83,25 +106,20 @@ export class PluginManager {
   async runAnalyze(
     files: { path: string; content: string }[],
   ): Promise<Finding[]> {
-    try {
-      const results = await Promise.all(
-        this.plugins.map(async (p) => {
-          try {
-            return (await p.analyze?.(files)) ?? [];
-          } catch (err) {
-            this.ctx.logger.warn(
-              `Analyze hook failed for plugin "${p.name}":`,
-              err,
-            );
-            return [];
-          }
-        }),
-      );
-      return results.flat();
-    } catch (err) {
-      this.ctx.logger.warn(`Analyze phase failed:`, err);
-      return [];
-    }
+    const results = await Promise.all(
+      this.plugins.map(async (p) => {
+        try {
+          return (await p.analyze?.(files)) ?? [];
+        } catch (err) {
+          this.ctx.logger.warn(
+            `Analyze hook failed for plugin "${p.name}":`,
+            err,
+          );
+          return [];
+        }
+      }),
+    );
+    return results.flat();
   }
 
   /** Run all plugins' score hooks sequentially. */
