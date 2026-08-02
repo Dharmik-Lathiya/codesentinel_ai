@@ -1,13 +1,14 @@
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const MAX_BUFFER_MEGABYTES = 64;
+const MAX_BUFFER = MAX_BUFFER_MEGABYTES * MEGABYTE;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -60,7 +61,7 @@ export async function collectDiff(
   let nameStatus: string;
   try {
     nameStatus = await git(
-      ["diff", "--name-status", "--no-renames", baseRef + "..."],
+      ["diff", "--name-status", "--no-renames", baseRef === "HEAD" ? "HEAD" : baseRef + "..."],
       cwd,
     );
   } catch (err) {
@@ -81,8 +82,9 @@ export async function collectDiff(
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
+      const root = resolve(cwd) + sep;
       const full = resolve(cwd, path);
-      if (!full.startsWith(resolve(cwd))) {
+      if (!full.startsWith(root)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -94,7 +96,7 @@ export async function collectDiff(
     }
     let diff = "";
     try {
-      diff = await git(["diff", baseRef + "...", "--", path], cwd);
+      diff = await git(["diff", baseRef === "HEAD" ? "HEAD" : baseRef + "...", "--", path], cwd);
     } catch {
       logger.debug(`Could not collect diff for ${path}`);
     }
@@ -118,8 +120,12 @@ async function defaultBaseRef(cwd: string): Promise<string> {
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
-  for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+  try {
+    for (const ref of candidates) {
+      if (await refExists(ref, cwd)) return ref;
+    }
+  } catch (err) {
+    logger.debug(`Could not resolve default base ref`, err);
   }
   // Fall back to merge-base with the default remote branch.
   return "HEAD";
