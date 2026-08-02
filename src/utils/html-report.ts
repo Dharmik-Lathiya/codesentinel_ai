@@ -7,11 +7,16 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: "#2563eb",
   info: "#6b7280",
 };
+const DEFAULT_SEVERITY_COLOR = "#6b7280";
+const STATUS_COLORS: Record<string, string> = {
+  verified: "#16a34a",
+  applied: "#d97706",
+  skipped: DEFAULT_SEVERITY_COLOR,
+};
 
 const BOLD_FONT_WEIGHT = "700";
 const H2_COLOR = "#334155";
 const SHADOW_ALPHA = "0.08";
-const BAR_HEIGHT_PERCENT = 100;
 const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
 const SCORE_RED_THRESHOLD = 40;
@@ -23,15 +28,14 @@ const APOSTROPHE_ENTITY = "&#39;";
  */
 export function renderHtmlReport(report: EngineReport): string {
   const categoryCounts: Record<string, number> = {};
-  const severityCounts: Record<string, number> = {};
   for (const f of report.findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
-    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
   }
+  const severityCounts = report.metrics.findingsBySeverity;
 
   const findingsRows = report.findings
     .map((f) => {
-      const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
+      const color = SEVERITY_COLORS[f.severity] ?? DEFAULT_SEVERITY_COLOR;
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
@@ -45,7 +49,7 @@ export function renderHtmlReport(report: EngineReport): string {
   const fixRows = report.fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
+      const statusColor = STATUS_COLORS[status];
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
@@ -61,7 +65,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? DEFAULT_SEVERITY_COLOR })),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -154,7 +158,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -167,7 +171,7 @@ function renderBarChart(title: string, items: { key: string; value: number; colo
   <div class="bar-chart">
     ${items
       .map((item) => {
-        const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
+        const height = maxCount > 0 ? Math.round((item.value / maxCount) * 100) : 0;
         return `<div class="bar">
         <div class="bar-value">${item.value}</div>
         <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
