@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { resolve, sep } from "node:path";
 import { logger } from "./logger.js";
@@ -69,13 +69,22 @@ export async function collectDiff(
       `Failed to collect diff${baseRef ? ` against "${baseRef}"` : ""}:`,
       err,
     );
-    return [];
+    throw err;
   }
 
   const lines = nameStatus
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
+
+  const batchArgs = baseRef ? ["diff", baseRef + "..."] : ["diff"];
+  let batchedDiff = "";
+  try {
+    batchedDiff = await git(batchArgs, cwd);
+  } catch {
+    logger.debug("Could not collect batched diff");
+  }
+  const fileDiffs = splitDiff(batchedDiff);
 
   const files: DiffFile[] = [];
   for (const line of lines) {
@@ -92,23 +101,45 @@ export async function collectDiff(
         continue;
       }
       try {
-        content = readFileSync(full, "utf8");
+        content = await readFile(full, "utf8");
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
     }
-    let diff = "";
-    try {
-      const fileDiffArgs = baseRef
-        ? ["diff", baseRef + "...", "--", path]
-        : ["diff", "--", path];
-      diff = await git(fileDiffArgs, cwd);
-    } catch {
-      logger.debug(`Could not collect diff for ${path}`);
+    let diff = fileDiffs.get(path) ?? "";
+    if (!diff) {
+      try {
+        const fileDiffArgs = baseRef
+          ? ["diff", baseRef + "...", "--", path]
+          : ["diff", "--", path];
+        diff = await git(fileDiffArgs, cwd);
+      } catch {
+        logger.debug(`Could not collect diff for ${path}`);
+      }
     }
     files.push({ path, status, content, diff });
   }
   return files;
+function splitDiff(text: string): Map<string, string> {
+  const files = new Map<string, string>();
+  let currentPath: string | null = null;
+  let lines: string[] = [];
+  const flush = () => {
+    if (currentPath) files.set(currentPath, lines.join("\n"));
+    currentPath = null;
+    lines = [];
+  };
+  for (const line of text.split("\n")) {
+    const m = line.match(/^diff --git a\/(.*) b\/(.*)$/);
+    if (m) {
+      flush();
+      currentPath = m[2];
+    }
+    if (currentPath) lines.push(line);
+  }
+  flush();
+  return files;
+}
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
@@ -117,21 +148,13 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-    try {
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
-    } catch {
-      logger.debug(`Could not resolve base ref ${githubBaseRef}`);
-    }
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    try {
-      if (await refExists(ref, cwd)) return ref;
-    } catch {
-      logger.debug(`Could not check ref ${ref}`);
-    }
+    if (await refExists(ref, cwd)) return ref;
   }
   return undefined;
 }
@@ -150,7 +173,14 @@ function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
   if (code.startsWith("R")) return "renamed";
-  if (code === "M") return "modified";
+  if (
+    code.startsWith("M") ||
+    code.startsWith("T") ||
+    code.startsWith("C") ||
+    code.startsWith("U")
+  ) {
+    return "modified";
+  }
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
