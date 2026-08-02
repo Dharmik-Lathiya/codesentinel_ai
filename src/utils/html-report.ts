@@ -15,6 +15,9 @@ const BAR_HEIGHT_PERCENT = 100;
 const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
 const SCORE_RED_THRESHOLD = 40;
+const BAR_WIDTH_PERCENT = 100;
+const SEMI_BOLD_FONT_WEIGHT = "600";
+const HALF_BAR_HEIGHT_PERCENT = 50;
 
 /**
  * Generate a self-contained HTML dashboard report from an EngineReport.
@@ -86,16 +89,16 @@ export function renderHtmlReport(report: EngineReport): string {
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
     .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
     .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
-    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
+    .bar-fill { width: ${BAR_WIDTH_PERCENT}%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
-    .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .bar-value { font-size: 0.75rem; font-weight: ${SEMI_BOLD_FONT_WEIGHT}; margin-bottom: 0.25rem; }
   </style>
 </head>
 <body>
@@ -158,8 +161,8 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       metrics: { ...baseReport.metrics, findingsBySeverity: { high: 2, low: 1 } },
     };
     const html = renderHtmlReport(report);
-    expect(html).toContain('class="bar-fill" style="height:100%;background:#ea580c"');
-    expect(html).toContain('class="bar-fill" style="height:50%;background:#2563eb"');
+    expect(html).toContain('class="bar-fill" style="height:${BAR_HEIGHT_PERCENT}%;background:#ea580c"');
+    expect(html).toContain('class="bar-fill" style="height:${HALF_BAR_HEIGHT_PERCENT}%;background:#2563eb"');
   });
 
   it("tallies severity counts locally when findingsBySeverity is empty", () => {
