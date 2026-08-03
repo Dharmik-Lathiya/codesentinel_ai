@@ -3,11 +3,8 @@ import { logger } from "./logger.js";
 const MILLISECONDS_PER_SECOND = 1000;
 const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
 const HTTP_STATUS_429 = "429";
-const HTTP_STATUS_RATE_LIMIT = HTTP_STATUS_429;
 const HTTP_STATUS_503 = "503";
-const HTTP_STATUS_SERVICE_UNAVAILABLE = HTTP_STATUS_503;
 const HTTP_STATUS_502 = "502";
-const HTTP_STATUS_BAD_GATEWAY = HTTP_STATUS_502;
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -17,6 +14,11 @@ export interface RetryOptions {
    * Default: 1000ms (`DEFAULT_BASE_DELAY_MS`).
    */
   baseDelayMs?: number;
+  /**
+   * Optional sleep function used between retries.
+   * Defaults to a setTimeout-based sleep; inject for fast, deterministic tests.
+   */
+  sleep?: (ms: number) => Promise<void>;
   /**
    * Optional predicate: return true to retry on this error.
    * Note: the default predicate only matches `Error` instances; non-Error
@@ -31,9 +33,9 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(HTTP_STATUS_RATE_LIMIT) ||
-      msg.includes(HTTP_STATUS_SERVICE_UNAVAILABLE) ||
-      msg.includes(HTTP_STATUS_BAD_GATEWAY) ||
+      msg.includes(HTTP_STATUS_429) ||
+      msg.includes(HTTP_STATUS_503) ||
+      msg.includes(HTTP_STATUS_502) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
@@ -54,6 +56,7 @@ export async function retry<T>(
   const maxAttempts = opts.maxAttempts ?? 3;
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -68,7 +71,7 @@ export async function retry<T>(
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
-      await new Promise((r) => setTimeout(r, delay));
+      await sleep(delay);
     }
   }
   throw lastError;
