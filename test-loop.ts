@@ -10,20 +10,30 @@ const MODERATE_INPUT = 5000;
  * Multiplies x by a step multiplier.
  * Accepts finite numbers; NaN/Infinity inputs pass through unchanged.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * NOTE: Intentional hard discontinuity at EXTREME_THRESHOLD: inputs above it are
+ * multiplied by EXTREME_MULTIPLIER (2x MULTIPLIER), so output jumps sharply at the
+ * boundary. Callers must expect this cliff.
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
   return x * multiplier;
 }
 
-    if (parsed && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
+/**
+ * Parses a JSON string containing a numeric "value" and returns it.
+ * Invalid input (unparseable JSON, missing/non-numeric/non-finite value) is
+ * intentionally coerced to { value: 0 } as the default result; callers treat 0
+ * as the documented default, not as a parsed value.
+ */
+export function processData(input: string): { value: number } {
   try {
     const parsed = JSON.parse(input) as { value?: number } | null;
-    if (parsed && typeof parsed.value === "number") {
+    if (parsed && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
       return { value: parsed.value };
     }
     return { value: 0 };
   } catch {
+    // JSON.parse only throws on unparseable input; map that to the default result.
     return { value: 0 };
   }
 }
@@ -38,6 +48,9 @@ describe("calculate", () => {
     [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    [NaN, NaN],
+    [Infinity, Infinity],
+    [-Infinity, -Infinity],
   ])("boundary value %i", (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
