@@ -618,10 +618,22 @@ async function main(): Promise<void> {
 
     const engine = Engine.fromInputs({ secrets: loadSecrets() });
     if (parsed.ruleId !== undefined) {
-      await engine.dismissByRule(parsed.ruleId, parsed.reason);
+      try {
+        await engine.dismissByRule(parsed.ruleId, parsed.reason);
+      } catch (err) {
+        process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${(err as Error).message}\n`);
+        process.exitCode = 1;
+        return;
+      }
       process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
     } else {
-      await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+      try {
+        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+      } catch (err) {
+        process.stderr.write(`Failed to dismiss finding: ${(err as Error).message}\n`);
+        process.exitCode = 1;
+        return;
+      }
       process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
     }
     return;
@@ -766,8 +778,13 @@ async function main(): Promise<void> {
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    const answer = await engine.ask(values["ask"]);
-    process.stdout.write(answer + "\n");
+    try {
+      const answer = await engine.ask(values["ask"]);
+      process.stdout.write(answer + "\n");
+    } catch (err) {
+      process.stderr.write(`Failed to get answer: ${(err as Error).message}\n`);
+      process.exitCode = 1;
+    }
     return;
   }
 
