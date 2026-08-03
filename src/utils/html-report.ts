@@ -23,6 +23,7 @@ const REPORT_STYLES = `  <style>
     h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
     h2 { font-size: 1.25rem; margin: 1.5rem 0 0.75rem; color: ${H2_COLOR}; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.25rem; }
     .meta { color: #64748b; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    .summary { background: #fff; border-left: 4px solid #6366f1; padding: 0.75rem 1rem; border-radius: 0 8px 8px 0; margin-bottom: 1.5rem; line-height: 1.5; white-space: pre-wrap; }
     .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
     .card { background: #fff; border-radius: 8px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); }
     .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -35,7 +36,7 @@ const REPORT_STYLES = `  <style>
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
-    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; height: 100%; }
     .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
@@ -47,10 +48,9 @@ const REPORT_STYLES = `  <style>
  */
 export function renderHtmlReport(report: EngineReport): string {
   const categoryCounts: Record<string, number> = {};
-  const severityCounts: Record<string, number> = {};
+  const severityCounts: Record<string, number> = { ...report.metrics.findingsBySeverity };
   for (const f of report.findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
-    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
   }
 
   const findingsRows = report.findings
@@ -83,6 +83,17 @@ export function renderHtmlReport(report: EngineReport): string {
     .map((t) => `<tr><td>${escapeHtml(t.file)}</td><td>${escapeHtml(t.testFilePath)}</td></tr>`)
     .join("\n");
 
+  const commentRows = report.comments
+    .map((c) => {
+      const color = SEVERITY_COLORS[c.severity] ?? "#6b7280";
+      return `<tr>
+        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(c.severity)}</span></td>
+        <td>${escapeHtml(c.file)}${c.line != null ? `:${c.line}` : ""}</td>
+        <td>${escapeHtml(c.body)}</td>
+      </tr>`;
+    })
+    .join("\n");
+
   const severityChart = renderBarChart(
     "Severity Distribution",
     Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
@@ -104,6 +115,7 @@ export function renderHtmlReport(report: EngineReport): string {
 <div class="container">
   <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
   <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
+  ${report.summary ? `<p class="summary">${escapeHtml(report.summary)}</p>` : ""}
 
   ${renderSummaryCards(report, severityCounts)}
 
@@ -113,6 +125,8 @@ export function renderHtmlReport(report: EngineReport): string {
 
   <h2>Findings</h2>
   ${renderFindingsTable(report.findings.length, findingsRows)}
+
+  ${renderCommentsTable(report.comments.length, commentRows)}
 
   ${renderFixTable(report.fixAttempts.length, fixRows)}
 
@@ -152,7 +166,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Tests ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -180,6 +194,15 @@ function renderFindingsTable(count: number, rows: string): string {
   if (count === 0) return `<div class="empty">No findings detected.</div>`;
   return `<table>
     <thead><tr><th>Severity</th><th>Category</th><th>File</th><th>Comment</th><th>Suggestion</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderCommentsTable(count: number, rows: string): string {
+  if (count === 0) return "";
+  return `<h2>Review Comments</h2>
+  <table>
+    <thead><tr><th>Severity</th><th>File</th><th>Comment</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
