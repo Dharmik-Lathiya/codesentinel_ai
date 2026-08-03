@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { promisify } from "node:util";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
@@ -26,7 +26,8 @@ export async function git(
     });
     return stdout;
   } catch (err) {
-    const timedOut = err instanceof Error && "killed" in err;
+    const timedOut =
+      err instanceof Error && (err as { killed?: boolean }).killed === true;
     const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
       logger.error(
@@ -61,14 +62,26 @@ export async function collectDiff(
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
   const baseRef = base ?? (await defaultBaseRef(cwd));
+  const rangeArgs = baseRef ? [baseRef + "..."] : [];
   let nameStatus: string;
   try {
     nameStatus = await git(
-      ["diff", "--name-status", "--no-renames", baseRef + "..."],
+      [
+        "-c",
+        "core.quotepath=false",
+        "diff",
+        "--name-status",
+        "-z",
+        "--no-renames",
+        ...rangeArgs,
+      ],
       cwd,
     );
   } catch (err) {
-    logger.warn(`Failed to collect diff against "${baseRef}":`, err);
+    logger.warn(
+      `Failed to collect diff against "${baseRef ?? "working tree"}":`,
+      err,
+    );
     throw err;
   }
 
@@ -76,31 +89,37 @@ export async function collectDiff(
 
   let diffText: string;
   try {
-    diffText = await git(["diff", "--no-renames", baseRef + "..."], cwd);
+    diffText = await git(
+      ["-c", "core.quotepath=false", "diff", "--no-renames", ...rangeArgs],
+      cwd,
+    );
   } catch (err) {
-    logger.warn(`Failed to collect diff output against "${baseRef}":`, err);
+    logger.warn(
+      `Failed to collect diff output against "${baseRef ?? "working tree"}":`,
+      err,
+    );
     throw err;
   }
   const diffByPath = splitDiffByPath(diffText);
 
   const files: DiffFile[] = [];
-  for (const line of nameStatus
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)) {
-    const [statusCode, path] = line.split(/\t/);
+  const nameStatusEntries = nameStatus.split("\0");
+  for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
+    const statusCode = nameStatusEntries[i];
+    const path = nameStatusEntries[i + 1];
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
       const full = resolve(workspaceRoot, path);
-      if (!full.startsWith(workspaceRoot)) {
+      const rel = relative(workspaceRoot, full);
+      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
       try {
-        content = readContent(full);
+        content = await readContent(full);
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
@@ -126,22 +145,22 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   return byPath;
 }
 
-function readContent(full: string): string {
-  const stat = statSync(full);
-  if (stat.size > MAX_CONTENT_BYTES) {
+async function readContent(full: string): Promise<string> {
+  const fileStat = await stat(full);
+  if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  const buffer = readFileSync(full);
-  if (buffer.includes(0)) {
+  const text = await readFile(full, { encoding: "utf8" });
+  if (text.includes("\0")) {
     logger.debug(`Skipping binary file content: ${full}`);
     return "";
   }
-  return buffer.toString("utf8");
+  return text;
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
-async function defaultBaseRef(cwd: string): Promise<string> {
+async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
@@ -158,8 +177,8 @@ async function defaultBaseRef(cwd: string): Promise<string> {
   for (const ref of candidates) {
     if (await refExists(ref, cwd)) return ref;
   }
-  // Fall back to merge-base with the default remote branch.
-  return "HEAD";
+  // No base ref found: fall back to a plain working-tree diff.
+  return undefined;
 }
 
 async function refExists(ref: string, cwd: string): Promise<boolean> {

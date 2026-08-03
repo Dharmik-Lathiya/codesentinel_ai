@@ -39,6 +39,53 @@ function loadSecrets(): RuntimeSecrets {
   };
 }
 
+export interface DismissArgs {
+  reason: string;
+  ruleId?: string;
+  filePath?: string;
+  lineNum?: number | null;
+  ruleIdArg?: string;
+  error?: string;
+}
+
+export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
+  const ruleIdx = dismissArgs.indexOf("--rule");
+  const fileIdx = dismissArgs.indexOf("--file");
+  const hasRule = ruleIdx >= 0;
+  const hasFile = fileIdx >= 0;
+
+  if (hasRule && hasFile) {
+    return { reason: "dismissed by user", error: "Options --rule and --file are mutually exclusive." };
+  }
+
+  if (hasRule) {
+    const ruleId = dismissArgs[ruleIdx + 1];
+    if (!ruleId || ruleId.startsWith("--")) {
+      return { reason: "dismissed by user", error: "Missing rule id for --rule." };
+    }
+    const reason = dismissArgs.slice(ruleIdx + 2).join(" ").trim() || "dismissed by user";
+    return { reason, ruleId };
+  }
+
+  if (hasFile) {
+    const filePath = dismissArgs[fileIdx + 1];
+    if (!filePath || filePath.startsWith("--")) {
+      return { reason: "dismissed by user", error: "Missing file path for --file." };
+    }
+    const lineIdx = dismissArgs.indexOf("--line");
+    const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
+    const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+    const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
+    const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
+    const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
+    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
+    const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
+    return { reason, filePath, lineNum, ruleIdArg };
+  }
+
+  return { reason: "dismissed by user", error: "Missing --rule or --file." };
+}
+
 const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
   "# Uses pre-built composite action (no TypeScript compilation needed)",
@@ -560,43 +607,23 @@ async function main(): Promise<void> {
       showVersion();
       return;
     }
-    const engine = Engine.fromInputs({ secrets: loadSecrets() });
-    const dismissArgs = args.slice(1);
-    const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
-    const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
-
-    if (dismissArgs.includes("--rule") && dismissArgs.includes("--file")) {
+    const parsed = parseDismissArgs(args.slice(1));
+    if (parsed.error) {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
       process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
-      process.stdout.write("Options --rule and --file are mutually exclusive.\n");
+      if (parsed.error.startsWith("Options")) {
+        process.stdout.write("Options --rule and --file are mutually exclusive.\n");
+      }
       return;
     }
 
-    if (dismissArgs.includes("--rule")) {
-      const ruleIdx = dismissArgs.indexOf("--rule");
-      const ruleId = dismissArgs[ruleIdx + 1];
-      if (!ruleId || ruleId.startsWith("--")) {
-        process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-        return;
-      }
-      await engine.dismissByRule(ruleId, reason);
-      process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
-    } else if (dismissArgs.includes("--file")) {
-      const fileIdx = dismissArgs.indexOf("--file");
-      const filePath = dismissArgs[fileIdx + 1];
-      const lineIdx = dismissArgs.indexOf("--line");
-      const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-      const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
-      if (!filePath) {
-        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
-        return;
-      }
-      const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
-      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
-      process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
+    const engine = Engine.fromInputs({ secrets: loadSecrets() });
+    if (parsed.ruleId !== undefined) {
+      await engine.dismissByRule(parsed.ruleId, parsed.reason);
+      process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
     } else {
-      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+      await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+      process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
     }
     return;
   }
