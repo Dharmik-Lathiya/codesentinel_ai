@@ -16,16 +16,23 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-    if (parsed && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
+export function processData(input: string): { value: number | null } {
   try {
-    const parsed = JSON.parse(input) as { value?: number } | null;
-    if (parsed && typeof parsed.value === "number") {
+    const parsed: unknown = JSON.parse(input);
+    if (isFiniteValueObject(parsed)) {
       return { value: parsed.value };
     }
-    return { value: 0 };
+    return { value: null };
   } catch {
-    return { value: 0 };
+    return { value: null };
   }
+}
+
+function isFiniteValueObject(parsed: unknown): parsed is { value: number } {
+  if (typeof parsed !== "object" || parsed === null) return false;
+  if (!("value" in parsed)) return false;
+  const value = (parsed as { value: unknown }).value;
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 describe("calculate", () => {
@@ -41,6 +48,18 @@ describe("calculate", () => {
   ])("boundary value %i", (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
+  test.each([
+    [NaN, NaN],
+    [Infinity, Infinity],
+    [-Infinity, -Infinity],
+  ])("passes through %s unchanged", (input, expected) => {
+    expect(calculate(input)).toBe(expected);
+  });
+
+  test("documents precision loss above Number.MAX_SAFE_INTEGER", () => {
+    const input = Number.MAX_SAFE_INTEGER;
+    expect(Number.isSafeInteger(calculate(input))).toBe(false);
+  });
 });
 
 describe("processData", () => {
@@ -49,25 +68,25 @@ describe("processData", () => {
   });
 
   test("invalid JSON does not throw and returns the default result", () => {
-    expect(processData("not-json")).toEqual({ value: 0 });
+    expect(processData("not-json")).toEqual({ value: null });
   });
 
   test("non-numeric value returns the default result", () => {
-    expect(processData('{"value":"42"}')).toEqual({ value: 0 });
+    expect(processData('{"value":"42"}')).toEqual({ value: null });
   });
 
   test("array input returns the default result", () => {
-    expect(processData("[1,2,3]")).toEqual({ value: 0 });
+    expect(processData("[1,2,3]")).toEqual({ value: null });
   });
 
   test("Infinity value returns the default result", () => {
-    expect(processData('{"value":1e999}')).toEqual({ value: 0 });
+    expect(processData('{"value":1e999}')).toEqual({ value: null });
   });
   test("null value returns the default result", () => {
-    expect(processData('{"value":null}')).toEqual({ value: 0 });
+    expect(processData('{"value":null}')).toEqual({ value: null });
   });
 
   test("empty string input is handled", () => {
-    expect(processData("")).toEqual({ value: 0 });
+    expect(processData("")).toEqual({ value: null });
   });
 });
