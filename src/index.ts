@@ -529,7 +529,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -568,7 +568,12 @@ async function main(): Promise<void> {
   if (args[0] === "init-hook") {
     const root = process.cwd();
     const typeIdx = args.indexOf("--type");
-    const hookType = typeIdx >= 0 && args[typeIdx + 1] === "post-commit" ? "post-commit" : "pre-commit";
+    const rawType = typeIdx >= 0 ? args[typeIdx + 1] : "pre-commit";
+    if (rawType !== "pre-commit" && rawType !== "post-commit") {
+      process.stderr.write(`Unknown hook type: '${rawType}' (expected pre-commit or post-commit)\n`);
+      return;
+    }
+    const hookType = rawType === "post-commit" ? "post-commit" : "pre-commit";
     const hookPath = installHook(root, hookType);
     process.stdout.write(`✅ ${hookType} hook installed at ${hookPath}\n`);
     if (hookType === "post-commit") {
@@ -588,11 +593,6 @@ async function main(): Promise<void> {
     dash.start();
     process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
     process.stdout.write("Press Ctrl+C to stop.\n");
-    for (const signal of ["SIGINT", "SIGTERM"] as const) {
-      process.on(signal, () => {
-        dash.stop();
-      });
-    }
     return;
   }
 
@@ -620,7 +620,7 @@ async function main(): Promise<void> {
       await engine.dismissByRule(parsed.ruleId, parsed.reason);
       process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
     } else {
-      await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+      await engine.dismissByFinding(parsed.filePath!, parsed.lineNum ?? null, parsed.ruleIdArg!, parsed.reason);
       process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
     }
     return;
@@ -766,7 +766,11 @@ async function main(): Promise<void> {
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
-  if (values["ask"] && (modeArg === "chat" || !modeArg)) {
+  if (values["ask"]) {
+    if (modeArg && modeArg !== "chat") {
+      process.stderr.write(`--ask can only be used with chat mode (got '${modeArg}'). Use 'codesentinel chat --ask "..."' instead.\n`);
+      return;
+    }
     const answer = await engine.ask(values["ask"]);
     process.stdout.write(answer + "\n");
     return;
