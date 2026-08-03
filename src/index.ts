@@ -244,6 +244,8 @@ const BUILD_WORKFLOW_CONTENT = [
   "env:",
   "  # Pin CodeSentinel CLI to a release tag, not the default branch",
   "  CODESENTINEL_VERSION: v0.8.0",
+  "  # Max build-fix iterations (override via repo variable MAX_ITERATIONS)",
+  "  MAX_ITERATIONS: ${{ vars.MAX_ITERATIONS || '5' }}",
   "",
   "jobs:",
   "  build-fix:",
@@ -270,7 +272,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "      - name: Install CodeSentinel CLI dependencies",
   "        run: npm ci --prefix \"${{ runner.temp }}/codesentinel\" --omit=dev --ignore-scripts --no-audit --no-fund",
   "      - name: Install dependencies (includes devDeps for tsc/build)",
-  "        run: npm ci --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --ignore-scripts --no-audit --no-fund",
+  "        run: npm ci --ignore-scripts --no-audit --no-fund",
   "",
   "      - name: Build and auto-fix loop",
   "        env:",
@@ -302,7 +304,7 @@ const BUILD_WORKFLOW_CONTENT = [
   '            node "${RUNNER_TEMP}/codesentinel/dist/index.js" fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
   "",
   "            grep -qxF \"node_modules/\" .gitignore 2>/dev/null || echo \"node_modules/\" >> .gitignore",
-  "            git add -A",
+  "            git add -A -- . ':(exclude)package-lock.json' ':(exclude)package.json'",
   "            if git diff --cached --quiet; then",
   '              echo "⚠️ No changes produced by fix — continuing"',
   "              continue",
@@ -312,6 +314,7 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
+  "            git commit -m \"chore: apply CodeSentinel auto-fixes\" 2>&1 || true",
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
   "            if [ $? -ne 0 ]; then",
@@ -323,9 +326,6 @@ const BUILD_WORKFLOW_CONTENT = [
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
@@ -338,18 +338,27 @@ const BUILD_WORKFLOW_CONTENT = [
   "        with:",
   "          script: |",
   "            try {",
+  "              const branch = context.ref.replace('refs/heads/', '');",
   "              const { data: prs } = await github.rest.pulls.list({",
   "                owner: context.repo.owner,",
   "                repo: context.repo.repo,",
   '                state: "open",',
-  "                head: context.ref.replace('refs/heads/', ''),",
+  "                head: `${context.repo.owner}:${branch}`,",
   "              });",
+  '              const body = "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).";',
   "              if (prs.length > 0) {",
   '                await github.rest.issues.createComment({',
   "                  owner: context.repo.owner,",
   "                  repo: context.repo.repo,",
   "                  issue_number: prs[0].number,",
-  '                body: "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."',
+  "                  body,",
+  "                });",
+  "              } else {",
+  "                await github.rest.repos.createCommitComment({",
+  "                  owner: context.repo.owner,",
+  "                  repo: context.repo.repo,",
+  "                  commit_sha: context.sha,",
+  "                  body,",
   "                });",
   "              }",
   "            } catch (err) { core.setFailed(err.message); }",
@@ -578,7 +587,14 @@ async function main(): Promise<void> {
         process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
         return;
       }
-      await engine.dismissByRule(ruleId, reason);
+      try {
+        await engine.dismissByRule(ruleId, reason);
+      } catch (err) {
+        logger.error(`Dismiss failed for rule ${ruleId}:`, err);
+        process.stdout.write(`Failed to dismiss rule: ${ruleId}\n`);
+        process.exitCode = 1;
+        return;
+      }
       process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
     } else if (dismissArgs.includes("--file")) {
       const fileIdx = dismissArgs.indexOf("--file");
@@ -591,7 +607,14 @@ async function main(): Promise<void> {
         return;
       }
       const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
-      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+      try {
+        await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+      } catch (err) {
+        logger.error(`Dismiss failed for finding ${filePath}:`, err);
+        process.stdout.write(`Failed to dismiss finding: ${filePath}\n`);
+        process.exitCode = 1;
+        return;
+      }
       process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
@@ -739,7 +762,15 @@ async function main(): Promise<void> {
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    const answer = await engine.ask(values["ask"]);
+    let answer: string;
+    try {
+      answer = await engine.ask(values["ask"]);
+    } catch (err) {
+      logger.error("Ask failed:", err);
+      process.stderr.write("Ask failed.\n");
+      process.exitCode = 1;
+      return;
+    }
     process.stdout.write(answer + "\n");
     return;
   }
