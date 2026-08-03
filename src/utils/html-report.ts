@@ -1,11 +1,14 @@
 import type { EngineReport } from "../engine/index.js";
+import type { ScoreBreakdown } from "../scorer/index.js";
+
+const DEFAULT_SEVERITY_COLOR = "#6b7280";
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "#dc2626",
   high: "#ea580c",
   medium: "#d97706",
   low: "#2563eb",
-  info: "#6b7280",
+  info: DEFAULT_SEVERITY_COLOR,
 };
 
 const BOLD_FONT_WEIGHT = "700";
@@ -36,6 +39,7 @@ const REPORT_STYLES = `  <style>
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
     .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .bar-track { display: flex; align-items: flex-end; height: 80px; }
     .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
@@ -55,9 +59,9 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const findingsRows = report.findings
     .map((f) => {
-      const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
+      const color = SEVERITY_COLORS[f.severity] ?? DEFAULT_SEVERITY_COLOR;
       return `<tr>
-        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
+        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}" aria-label="Severity: ${escapeHtml(f.severity)}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
         <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
@@ -69,7 +73,7 @@ export function renderHtmlReport(report: EngineReport): string {
   const fixRows = report.fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
+      const statusColor = a.fixed ? (a.verified ? "#16a34a" : SEVERITY_COLORS.medium) : DEFAULT_SEVERITY_COLOR;
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
@@ -83,9 +87,13 @@ export function renderHtmlReport(report: EngineReport): string {
     .map((t) => `<tr><td>${escapeHtml(t.file)}</td><td>${escapeHtml(t.testFilePath)}</td></tr>`)
     .join("\n");
 
+  const commentRows = report.comments
+    .map((c) => `<tr><td>${escapeHtml(c.file)}${c.line != null ? `:${c.line}` : ""}</td><td>${escapeHtml(c.severity)}</td><td>${escapeHtml(c.body)}</td></tr>`)
+    .join("\n");
+
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? DEFAULT_SEVERITY_COLOR })),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -105,6 +113,8 @@ export function renderHtmlReport(report: EngineReport): string {
   <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
   <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
 
+  ${report.summary ? `<p class="meta">${escapeHtml(report.summary)}</p>` : ""}
+
   ${renderSummaryCards(report, severityCounts)}
 
   ${severityChart}
@@ -113,6 +123,8 @@ export function renderHtmlReport(report: EngineReport): string {
 
   <h2>Findings</h2>
   ${renderFindingsTable(report.findings.length, findingsRows)}
+
+  ${renderCommentsTable(report.comments.length, commentRows)}
 
   ${renderFixTable(report.fixAttempts.length, fixRows)}
 
@@ -133,6 +145,7 @@ function renderSummaryCards(report: EngineReport, severityCounts: Record<string,
       <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
     </div>
     ${renderScoreCard(report.score)}
+    ${renderGateCard(report.gatePassed)}
     <div class="card">
       <div class="label">Fix Attempts</div>
       <div class="value">${report.fixAttempts.length}</div>
@@ -145,14 +158,14 @@ function renderSummaryCards(report: EngineReport, severityCounts: Record<string,
   </div>`;
 }
 
-function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): string {
+function renderScoreCard(score: ScoreBreakdown | null): string {
   if (!score) return "";
   return `
     <div class="card" style="display:flex;align-items:center;gap:1rem">
-      <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
+      <div class="score-ring" role="img" aria-label="Quality score ${score.overall} out of 100" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -168,7 +181,7 @@ function renderBarChart(title: string, items: { key: string; value: number; colo
         const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
         return `<div class="bar">
         <div class="bar-value">${item.value}</div>
-        <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
+        <div class="bar-track"><div class="bar-fill" style="height:${height}%;background:${item.color}"></div></div>
         <div class="bar-label">${escapeHtml(item.key)}</div>
       </div>`;
       })
@@ -200,6 +213,25 @@ function renderTestsTable(count: number, rows: string): string {
     <thead><tr><th>Source</th><th>Test File</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
+}
+
+function renderCommentsTable(count: number, rows: string): string {
+  if (count === 0) return "";
+  return `<h2>Review Comments</h2>
+  <table>
+    <thead><tr><th>File</th><th>Severity</th><th>Comment</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderGateCard(gatePassed: boolean | undefined): string {
+  if (gatePassed === undefined) return "";
+  const color = gatePassed ? "#16a34a" : "#dc2626";
+  return `
+    <div class="card">
+      <div class="label">Gate Result</div>
+      <div class="value" style="color:${color}">${gatePassed ? "PASS" : "FAIL"}</div>
+    </div>`;
 }
 
 function escapeHtml(s: string): string {
