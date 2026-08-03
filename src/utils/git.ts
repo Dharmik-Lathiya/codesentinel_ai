@@ -27,7 +27,7 @@ export async function git(
     return stdout;
   } catch (err) {
     const timedOut = err instanceof Error && "killed" in err;
-    const command = `git ${args.join(" ")}`;
+    const command = `git ${JSON.stringify(args)}`;
     if (!options.quiet) {
       logger.error(
         timedOut
@@ -61,6 +61,8 @@ export async function collectDiff(
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
   const baseRef = base ?? (await defaultBaseRef(cwd));
+  // The --name-status and full diff runs below are separate, non-atomic git
+  // invocations; a concurrent commit between them may yield an inconsistent list.
   let nameStatus: string;
   try {
     nameStatus = await git(
@@ -140,7 +142,7 @@ function readContent(full: string): string {
   return buffer.toString("utf8");
 }
 
-/** Determine a sensible base ref (main/master/develop or upstream merge-base). */
+/** Determine a sensible base ref (main/master/develop or HEAD). */
 async function defaultBaseRef(cwd: string): Promise<string> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
@@ -154,11 +156,11 @@ async function defaultBaseRef(cwd: string): Promise<string> {
     }
   }
 
-  const candidates = ["origin/main", "origin/master", "main", "master"];
+  const candidates = ["origin/main", "origin/master", "origin/develop", "main", "master", "develop"];
   for (const ref of candidates) {
     if (await refExists(ref, cwd)) return ref;
   }
-  // Fall back to merge-base with the default remote branch.
+  // Fall back to HEAD (the working tree diff) when no base ref exists.
   return "HEAD";
 }
 
