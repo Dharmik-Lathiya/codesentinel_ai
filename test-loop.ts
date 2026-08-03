@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vitest";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
+export const EXTREME_THRESHOLD = 10000; // intentional: x strictly above this uses a hard 2x multiplier step (x === 10000 still uses MULTIPLIER)
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
 
-const SAMPLE_VALUE = 42;
+const SAMPLE_VALUE = 1337;
 
 /**
  * Accepts finite numbers; NaN/Infinity inputs pass through unchanged.
@@ -17,8 +17,6 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-    if (parsed && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
-  try {
 function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
@@ -44,10 +42,10 @@ describe("calculate", () => {
     [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
-  ])("boundary value %i", (input, expected) => {
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
+  ])("boundary value %i", (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
 });
@@ -60,6 +58,7 @@ describe("processData", () => {
   test("valid JSON SAMPLE_VALUE returns the parsed value", () => {
     expect(processData('{"value":' + SAMPLE_VALUE + '}')).toEqual({ value: SAMPLE_VALUE });
   });
+  test("invalid JSON returns the default result", () => {
     expect(processData("not-json")).toEqual({ value: 0 });
   });
 
@@ -70,6 +69,7 @@ describe("processData", () => {
   test("non-numeric SAMPLE_VALUE returns the default result", () => {
     expect(processData('{"value":"' + SAMPLE_VALUE + '"}')).toEqual({ value: 0 });
   });
+  test("array input returns the default result", () => {
     expect(processData("[1,2,3]")).toEqual({ value: 0 });
   });
 
@@ -79,6 +79,10 @@ describe("processData", () => {
   test("null value returns the default result", () => {
     expect(processData('{"value":null}')).toEqual({ value: 0 });
   });
+  test("missing value key returns the default result", () => {
+    expect(processData('{"other":1}')).toEqual({ value: 0 });
+  });
+
 
   test("empty string input is handled", () => {
     expect(processData("")).toEqual({ value: 0 });
