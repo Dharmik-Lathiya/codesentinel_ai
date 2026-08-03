@@ -5,9 +5,10 @@ import { resolve } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
-const KILOBYTE = 1024;
-const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const BYTES_PER_KILOBYTE = 1024;
+const MEGABYTE = BYTES_PER_KILOBYTE * BYTES_PER_KILOBYTE;
+const MAX_BUFFER_MEGABYTES = 64;
+const MAX_BUFFER = MAX_BUFFER_MEGABYTES * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
 
@@ -29,15 +30,16 @@ export async function git(
     const timedOut = err instanceof Error && "killed" in err;
     const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
-      logger.error(
-        timedOut
-          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-          : `git command failed: ${command}`,
-        err,
-      );
+      logger.error(gitErrorMessage(command, timedOut), err);
     }
     throw err;
   }
+}
+
+function gitErrorMessage(command: string, timedOut: boolean): string {
+  return timedOut
+    ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
+    : `git command failed: ${command}`;
 }
 
 export interface DiffFile {
@@ -60,7 +62,17 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  const baseRef = base ?? (await defaultBaseRef(cwd));
+  let baseRef: string;
+  if (base) {
+    baseRef = base;
+  } else {
+    try {
+      baseRef = await defaultBaseRef(cwd);
+    } catch (err) {
+      logger.warn(`Failed to determine default base ref, using "HEAD":`, err);
+      baseRef = "HEAD";
+    }
+  }
   let nameStatus: string;
   try {
     nameStatus = await git(
@@ -156,7 +168,11 @@ async function defaultBaseRef(cwd: string): Promise<string> {
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch {
+      logger.debug(`Could not check ref ${ref}`);
+    }
   }
   // Fall back to merge-base with the default remote branch.
   return "HEAD";
