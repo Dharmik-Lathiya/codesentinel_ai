@@ -533,9 +533,13 @@ async function main(): Promise<void> {
     dash.start();
     process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
     process.stdout.write("Press Ctrl+C to stop.\n");
+    let stopping = false;
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
       process.on(signal, () => {
+        if (stopping) return;
+        stopping = true;
         dash.stop();
+        process.exit(0);
       });
     }
     return;
@@ -581,7 +585,16 @@ async function main(): Promise<void> {
         process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
         return;
       }
-      const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
+      let ruleIdArg = `${filePath}:${lineNum ?? "all"}`;
+      if (dismissArgs.includes("--rule-id")) {
+        const ruleIdIdx = dismissArgs.indexOf("--rule-id");
+        const customRuleId = dismissArgs[ruleIdIdx + 1];
+        if (!customRuleId || customRuleId.startsWith("--")) {
+          process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> --rule-id <id> [reason]\n");
+          return;
+        }
+        ruleIdArg = customRuleId;
+      }
       await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
       process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
@@ -670,7 +683,15 @@ async function main(): Promise<void> {
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
-  if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
+  if (values["improve-type"]) {
+    const improveType = values["improve-type"];
+    if (improveType !== "test" && improveType !== "util" && improveType !== "doc") {
+      process.stderr.write(`Invalid value for --improve-type: '${improveType}' (expected one of: test, util, doc)\n`);
+      showHelp();
+      return;
+    }
+    overrides.improve_type = improveType;
+  }
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
   const issueTitle = process.env.INPUT_ISSUE_TITLE;
@@ -729,9 +750,16 @@ async function main(): Promise<void> {
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
+  if (values["ask"] && modeArg && modeArg !== "chat") {
+    process.stderr.write("Warning: --ask is only valid in chat mode; ignoring it\n");
+  }
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     const answer = await engine.ask(values["ask"]);
-    process.stdout.write(answer + "\n");
+    if (values.json) {
+      process.stdout.write(JSON.stringify({ mode: "chat", answer }, null, 2) + "\n");
+    } else {
+      process.stdout.write(answer + "\n");
+    }
     return;
   }
 
