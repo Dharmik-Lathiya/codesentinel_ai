@@ -578,8 +578,13 @@ async function main(): Promise<void> {
         process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
         return;
       }
-      await engine.dismissByRule(ruleId, reason);
-      process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
+      try {
+        await engine.dismissByRule(ruleId, reason);
+        process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
+      } catch (err) {
+        process.stderr.write(`Failed to dismiss rule ${ruleId}: ${(err as Error).message}\n`);
+        process.exitCode = 1;
+      }
     } else if (dismissArgs.includes("--file")) {
       const fileIdx = dismissArgs.indexOf("--file");
       const filePath = dismissArgs[fileIdx + 1];
@@ -591,8 +596,13 @@ async function main(): Promise<void> {
         return;
       }
       const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
-      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
-      process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
+      try {
+        await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+        process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
+      } catch (err) {
+        process.stderr.write(`Failed to dismiss finding ${filePath}:${lineNum ?? "all"}: ${(err as Error).message}\n`);
+        process.exitCode = 1;
+      }
     } else {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
       process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
@@ -739,7 +749,14 @@ async function main(): Promise<void> {
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    const answer = await engine.ask(values["ask"]);
+    let answer: string;
+    try {
+      answer = await engine.ask(values["ask"]);
+    } catch (err) {
+      process.stderr.write(`Failed to get answer: ${(err as Error).message}\n`);
+      process.exitCode = 1;
+      return;
+    }
     process.stdout.write(answer + "\n");
     return;
   }
