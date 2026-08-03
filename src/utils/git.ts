@@ -112,9 +112,8 @@ export async function collectDiff(
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      const full = resolveInside(workspaceRoot, path);
+      if (!full) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -133,7 +132,18 @@ export async function collectDiff(
   return files;
 }
 
-function splitDiffByPath(diffText: string): Map<string, string> {
+/** Resolve a repo-relative path inside workspaceRoot, or null if it escapes. */
+export function resolveInside(
+  root: string,
+  path: string,
+): string | null {
+  const full = resolve(root, path);
+  const rel = relative(root, full);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+  return full;
+}
+
+export function splitDiffByPath(diffText: string): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
@@ -146,7 +156,7 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   return byPath;
 }
 
-async function readContent(full: string): Promise<string> {
+export async function readContent(full: string): Promise<string> {
   const fileStat = await stat(full);
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
@@ -164,33 +174,44 @@ async function readContent(full: string): Promise<string> {
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
+  const existing = await existingRefs(cwd);
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    if (existing.has(remoteBase)) return remoteBase;
+    if (existing.has(githubBaseRef)) return githubBaseRef;
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    if (existing.has(ref)) return ref;
   }
   // No base ref found: fall back to a plain working-tree diff.
   return undefined;
 }
 
-async function refExists(ref: string, cwd: string): Promise<boolean> {
+/** Return short local/remote branch names via a single for-each-ref call. */
+async function existingRefs(cwd: string): Promise<Set<string>> {
+  const refs = new Set<string>();
   try {
-    await git(["rev-parse", "--verify", ref], cwd, { quiet: true });
-    return true;
+    const out = await git(
+      ["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"],
+      cwd,
+      { quiet: true },
+    );
+    for (const line of out.split("\n")) {
+      const name = line.trim();
+      if (!name) continue;
+      refs.add(name.replace(/^refs\/heads\//, "").replace(/^refs\/remotes\//, ""));
+    }
   } catch {
-    logger.debug(`Ref ${ref} does not exist`);
-    return false;
+    logger.debug("Failed to enumerate refs");
   }
+  return refs;
 }
 
-function mapStatus(code: string): DiffFile["status"] | null {
-  if (code.startsWith("A")) return "added";
-  if (code.startsWith("D")) return "deleted";
+export function mapStatus(code: string): DiffFile["status"] | null {
+  if (code === "A") return "added";
+  if (code === "D") return "deleted";
   if (code === "M") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
