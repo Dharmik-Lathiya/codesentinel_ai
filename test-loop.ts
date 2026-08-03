@@ -1,32 +1,14 @@
 import { describe, expect, test } from "vitest";
+import {
+  EXTREME_MULTIPLIER,
+  EXTREME_THRESHOLD,
+  MULTIPLIER,
+  calculate,
+  processData,
+} from "./src/utils/process.js";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
-export const MULTIPLIER = 4096;
-export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
-
-/**
- * Multiplies x by a step multiplier.
- * Accepts finite numbers; NaN/Infinity inputs pass through unchanged.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
- */
-export function calculate(x: number): number {
-  const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
-  return x * multiplier;
-}
-
-    if (parsed && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
-  try {
-    const parsed = JSON.parse(input) as { value?: number } | null;
-    if (parsed && typeof parsed.value === "number") {
-      return { value: parsed.value };
-    }
-    return { value: 0 };
-  } catch {
-    return { value: 0 };
-  }
-}
 
 describe("calculate", () => {
   test.each([
@@ -38,6 +20,9 @@ describe("calculate", () => {
     [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    [NaN, NaN],
+    [Infinity, Infinity],
+    [-Infinity, -Infinity],
   ])("boundary value %i", (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
