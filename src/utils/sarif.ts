@@ -1,10 +1,12 @@
 import { createRequire } from "node:module";
 import type { EngineReport } from "../engine/index.js";
+import type { Severity } from "../config/types.js";
 
 interface SarifResult {
   ruleId: string;
   level: "error" | "warning" | "note";
   message: { text: string };
+  properties?: { severity: Severity };
   locations: Array<{
     physicalLocation: {
       artifactLocation: { uri: string };
@@ -28,9 +30,15 @@ interface ReportingDescriptor {
   shortDescription: { text: string };
 }
 
-const PKG_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
+const PKG_VERSION = (() => {
+  try {
+    return (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
+  } catch {
+    return "0.0.0";
+  }
+})();
 
-const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
+const SEVERITY_MAP: Record<Severity, "error" | "warning" | "note"> = {
   critical: "error",
   high: "error",
   medium: "warning",
@@ -53,7 +61,13 @@ function simpleHash(s: string): string {
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
+      artifactLocation: {
+        uri: file
+          .replace(/\\/g, "/")
+          .split("/")
+          .map(encodeURIComponent)
+          .join("/"),
+      },
       ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
@@ -95,8 +109,9 @@ export function renderSarif(report: EngineReport): string {
     }
     results.push({
       ruleId,
-      level: SEVERITY_MAP[f.severity] ?? "note",
+      level: SEVERITY_MAP[f.severity],
       message: { text: f.comment },
+      properties: { severity: f.severity },
       locations: [createSarifLocation(f.file, f.line ?? undefined)],
     });
   }
