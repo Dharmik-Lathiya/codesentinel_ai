@@ -22,7 +22,7 @@ export async function git(
       cwd,
       maxBuffer: MAX_BUFFER,
       timeout: GIT_TIMEOUT_MS,
-      killSignal: "SIGKILL",
+      killSignal: "SIGTERM",
     });
     return stdout;
   } catch (err) {
@@ -138,9 +138,10 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.+?)\s+b\//.exec(firstLine);
+    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
     if (!match) continue;
-    byPath.set(match[1], part);
+    const path = match[2] === "dev/null" ? match[1] : match[2];
+    byPath.set(path, part);
   }
   return byPath;
 }
@@ -165,12 +166,8 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-    try {
       if (await refExists(remoteBase, cwd)) return remoteBase;
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
-    } catch {
-      logger.debug(`Could not resolve base ref ${githubBaseRef}`);
-    }
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
