@@ -1,9 +1,8 @@
 export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
 export const MULTIPLIER = 4096;
 const EXTREME_MULTIPLIER = 8192; // 2x MULTIPLIER
-const SMALL_INPUT = 100;
-const MEDIUM_INPUT = 1000;
 const BELOW_THRESHOLD_INPUT = 4999;
+const BOUNDARY_INPUT = 5000;
 
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
@@ -28,11 +27,11 @@ describe("calculate", () => {
     [0, 0],
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [5000, 5000 * MULTIPLIER],
+    [BOUNDARY_INPUT, BOUNDARY_INPUT * MULTIPLIER],
     [6000, 6000 * MULTIPLIER],
     [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * MULTIPLIER * 2],
+    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
   ])("boundary value %i", (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
@@ -58,6 +57,7 @@ describe("processData", () => {
   test("Infinity value returns the default result", () => {
     expect(processData('{"value":1e999}')).toEqual({ value: 0 });
   });
+
   test("null value returns the default result", () => {
     expect(processData('{"value":null}')).toEqual({ value: 0 });
   });
