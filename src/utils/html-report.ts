@@ -28,14 +28,14 @@ const REPORT_STYLES = `  <style>
     .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
-    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
+    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.35); }
     table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
-    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .bar { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; flex: 1; height: 120px; }
     .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
@@ -137,6 +137,53 @@ function renderSummaryCards(report: EngineReport, severityCounts: Record<string,
       <div class="label">Fix Attempts</div>
       <div class="value">${report.fixAttempts.length}</div>
       <div class="sub">${report.fixAttempts.filter((a) => a.fixed && a.verified).length} verified</div>
+  it("renders em dash fallback when suggestion is absent", () => {
+    const report = {
+      ...baseReport,
+      findings: [{
+        severity: "high" as const,
+        category: "security" as const,
+        file: "x.ts",
+        line: 1,
+        comment: "Issue without suggestion",
+        source: "static" as const,
+      }],
+      metrics: { ...baseReport.metrics, findingsBySeverity: { high: 1 } },
+    };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("—");
+  });
+
+  it("escapes mode in title and h1", () => {
+    const report = { ...baseReport, mode: "<audit>" as EngineReport["mode"] };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("&lt;audit&gt;");
+    expect(html).not.toContain("<audit>");
+  });
+
+  it("escapes ampersands in comments", () => {
+    const report = {
+      ...baseReport,
+      findings: [{
+        severity: "low" as const,
+        category: "smell" as const,
+        file: "x.ts",
+        line: 1,
+        comment: "a&b",
+        source: "static" as const,
+      }],
+      metrics: { ...baseReport.metrics, findingsBySeverity: { low: 1 } },
+    };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("a&amp;b");
+  });
+
+  it("omits bar chart headings when empty", () => {
+    const report = { ...baseReport, findings: [], metrics: { ...baseReport.metrics, findingsBySeverity: {} } };
+    const html = renderHtmlReport(report);
+    expect(html).not.toContain("Category Breakdown");
+    expect(html).not.toContain("Severity Distribution");
+  });
     </div>
     <div class="card">
       <div class="label">Tests Generated</div>
@@ -145,11 +192,11 @@ function renderSummaryCards(report: EngineReport, severityCounts: Record<string,
   </div>`;
 }
 
-function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): string {
+function renderScoreCard(score: EngineReport["score"]): string {
   if (!score) return "";
   return `
     <div class="card" style="display:flex;align-items:center;gap:1rem">
-      <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
+      <div class="score-ring" role="img" aria-label="Quality score ${score.overall}" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
         <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
@@ -162,7 +209,7 @@ function renderBarChart(title: string, items: { key: string; value: number; colo
   if (items.length === 0) return "";
   const maxCount = Math.max(...items.map((item) => item.value));
   return `<h2>${escapeHtml(title)}</h2>
-  <div class="bar-chart">
+  <div class="bar-chart" role="img" aria-label="${escapeHtml(`${title}: ${items.map((item) => `${item.value} ${item.key}`).join(", ")}`)}">
     ${items
       .map((item) => {
         const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;

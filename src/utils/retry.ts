@@ -26,6 +26,14 @@ export interface RetryOptions {
 }
 
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
+  const status =
+    typeof err === "object" && err !== null
+      ? (err as { status?: number }).status ??
+        (err as { statusCode?: number }).statusCode
+      : undefined;
+  if (status === 429 || status === 502 || status === 503) {
+    return true;
+  }
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
     return (
@@ -46,12 +54,17 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
  * Retry an async operation with exponential backoff. Only retries on transient
  * errors (rate limits, 5xx, timeouts). Throws the original error on permanent
  * failures or after exhausting attempts.
+ *
+ * Contract: the default predicate only retries `Error` instances plus objects
+ * exposing a numeric 429/502/503 `status` or `statusCode` field. Non-Error
+ * throws (strings, plain objects) are otherwise never retried — wrap such
+ * values at call sites or pass a custom `shouldRetry` if retries are desired.
  */
 export async function retry<T>(
   fn: () => Promise<T>,
   opts: RetryOptions = {},
 ): Promise<T> {
-  const maxAttempts = opts.maxAttempts ?? 3;
+  const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
 
