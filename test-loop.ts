@@ -5,16 +5,20 @@ export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
+const EXTENDED_INPUT = 6000;
 
 const SAMPLE_VALUE = 42;
 
 /**
  * Accepts finite numbers; NaN/Infinity inputs pass through unchanged.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Results are clamped to the safe integer range [Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER].
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
-  return x * multiplier;
+  const result = x * multiplier;
+  return Number.isFinite(result)
+    ? Math.max(-Number.MAX_SAFE_INTEGER, Math.min(result, Number.MAX_SAFE_INTEGER))
+    : result;
 }
 
     if (parsed && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
@@ -38,9 +42,10 @@ describe("calculate", () => {
   test.each([
     [0, 0],
     [-5, -5 * MULTIPLIER],
+    [-EXTREME_THRESHOLD - 1, (-EXTREME_THRESHOLD - 1) * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
     [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [6000, 6000 * MULTIPLIER],
+    [EXTENDED_INPUT, EXTENDED_INPUT * MULTIPLIER],
     [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
