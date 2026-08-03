@@ -38,7 +38,7 @@ function loadSecrets(): RuntimeSecrets {
   };
 }
 
-const WORKFLOW_CONTENT = [
+export const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
   "# Uses pre-built composite action (no TypeScript compilation needed)",
   "# Setup time: ~30s vs ~5min for npm install + tsc build",
@@ -135,8 +135,9 @@ const WORKFLOW_CONTENT = [
   "            const body = context.payload.comment.body.trim();",
   "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
   "            if (!match) { core.setFailed('No valid command'); return; }",
-  "            const mode = match[1].toLowerCase();",
-  "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
+  "            const rawMode = match[1].toLowerCase();",
+  "            const mode = rawMode === 'ask' ? 'chat' : rawMode;",
+  "            const question = rawMode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
   "            core.setOutput('mode', mode);",
   "            core.setOutput('question', question);",
   "",
@@ -193,7 +194,7 @@ const WORKFLOW_CONTENT = [
   "                issue_number: context.issue.number",
   "              });",
   "              core.setOutput('title', issue.title);",
-  "              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));",
+`              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));`,
   "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
@@ -229,7 +230,7 @@ const WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
-const BUILD_WORKFLOW_CONTENT = [
+export const BUILD_WORKFLOW_CONTENT = [
   "name: CodeSentinel Build Fix",
   "",
   "on:",
@@ -247,7 +248,6 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  build-fix:",
-  "    if: ${{ github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
   "    if: ${{ github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
@@ -312,10 +312,10 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
-  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
+  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || { echo 'Rebase failed'; exit 1; }",
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            git push origin \"HEAD:${{ github.ref_name }}\" 2>&1 || { echo 'Push failed'; exit 1; }",
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
