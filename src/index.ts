@@ -184,8 +184,9 @@ const WORKFLOW_CONTENT = [
   "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
   "            if (!match) { core.setFailed('No valid command'); return; }",
   "            const mode = match[1].toLowerCase();",
-  "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
-  "            core.setOutput('mode', mode);",
+  "            const isAsk = mode === 'ask';",
+  "            const question = isAsk ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
+  "            core.setOutput('mode', isAsk ? 'chat' : mode);",
   "            core.setOutput('question', question);",
   "",
   "      - name: Get PR info (PR comments only)",
@@ -358,22 +359,20 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
+  '            git commit -m "fix: CodeSentinel auto-fix"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            AUTH_HEADER=\"AUTHORIZATION: basic $(printf 'x-access-token:%s' \"$GIT_PUSH_TOKEN\" | base64)\"",
+  "            git -c http.extraHeader=\"$AUTH_HEADER\" pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
+  "            git -c http.extraHeader=\"$AUTH_HEADER\" push origin HEAD:${{ github.ref_name }} 2>&1",
   "            if [ $? -ne 0 ]; then",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
   "              git fetch origin ${{ github.ref_name }} 2>&1",
   "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
-  "              git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "              git -c http.extraHeader=\"$AUTH_HEADER\" push origin HEAD:${{ github.ref_name }} 2>&1",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
@@ -521,7 +520,6 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
   OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
 
 Examples:
@@ -635,6 +633,7 @@ async function main(): Promise<void> {
       "max-iterations": { type: "string" },
       "auto-fix": { type: "boolean", default: false },
       scoring: { type: "boolean", default: true },
+      "no-scoring": { type: "boolean", default: false },
       "test-gen": { type: "boolean", default: false },
       provider: { type: "string" },
       ask: { type: "string" },
@@ -705,6 +704,7 @@ async function main(): Promise<void> {
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
+  if (values["no-scoring"]) overrides.enable_scoring = false;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
   if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
