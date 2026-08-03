@@ -3,10 +3,6 @@ import { describe, expect, test } from "vitest";
 export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
-const BELOW_THRESHOLD_INPUT = 4999;
-const MODERATE_INPUT = 5000;
-
-const SAMPLE_VALUE = 42;
 
 /**
  * Accepts finite numbers; NaN/Infinity inputs pass through unchanged.
@@ -14,11 +10,11 @@ const SAMPLE_VALUE = 42;
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
-  return x * multiplier;
+  const result = x * multiplier;
+  if (!Number.isFinite(x)) return x;
+  return Number.isFinite(result) ? result : Number.MAX_VALUE;
 }
 
-    if (parsed && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
-  try {
 function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
@@ -38,16 +34,14 @@ describe("calculate", () => {
   test.each([
     [0, 0],
     [-5, -5 * MULTIPLIER],
-    [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
+    [NaN, NaN],
+    [Infinity, Infinity],
+    [-Infinity, -Infinity],
     [6000, 6000 * MULTIPLIER],
     [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
   ])("boundary value %i", (input, expected) => {
-    [NaN, NaN],
-    [Infinity, Infinity],
-    [-Infinity, -Infinity],
     expect(calculate(input)).toBe(expected);
   });
 });
@@ -57,9 +51,7 @@ describe("processData", () => {
     expect(processData('{"value":42}')).toEqual({ value: 42 });
   });
 
-  test("valid JSON SAMPLE_VALUE returns the parsed value", () => {
-    expect(processData('{"value":' + SAMPLE_VALUE + '}')).toEqual({ value: SAMPLE_VALUE });
-  });
+  test("not-json input returns the default result", () => {
     expect(processData("not-json")).toEqual({ value: 0 });
   });
 
@@ -67,9 +59,7 @@ describe("processData", () => {
     expect(processData('{"value":"42"}')).toEqual({ value: 0 });
   });
 
-  test("non-numeric SAMPLE_VALUE returns the default result", () => {
-    expect(processData('{"value":"' + SAMPLE_VALUE + '"}')).toEqual({ value: 0 });
-  });
+  test("array input returns the default result", () => {
     expect(processData("[1,2,3]")).toEqual({ value: 0 });
   });
 
