@@ -133,7 +133,7 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          script: |",
   "            const body = context.payload.comment.body.trim();",
-  "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
+  "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|improve|ask)\\b/i);",
   "            if (!match) { core.setFailed('No valid command'); return; }",
   "            const mode = match[1].toLowerCase();",
   "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
@@ -355,7 +355,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
-function runSetup(force: boolean): void {
+function runSetup(force: boolean, useOpencodeCli = false): void {
   const cwd = process.cwd();
   const workflowDir = join(cwd, ".github", "workflows");
   const workflowPath = join(workflowDir, "codesentinel.yml");
@@ -371,7 +371,10 @@ function runSetup(force: boolean): void {
     process.stdout.write("Backed up existing workflow to codesentinel.yml.bak\n");
   }
   mkdirSync(workflowDir, { recursive: true });
-  writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
+  const workflowContent = useOpencodeCli
+    ? WORKFLOW_CONTENT.replace(/use_opencode_cli: "false"/g, 'use_opencode_cli: "true"')
+    : WORKFLOW_CONTENT;
+  writeFileSync(workflowPath, workflowContent, "utf8");
   process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
 
   if (existsSync(buildWorkflowPath)) {
@@ -404,7 +407,7 @@ function runSetup(force: boolean): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
@@ -427,7 +430,7 @@ Usage:
   codesentinel setup
 
 Commands:
-  setup [--force]     Create GitHub Actions workflow (--force overwrites existing files)
+  setup [--force] [--use-opencode-cli]  Create GitHub Actions workflow (--force overwrites; --use-opencode-cli uses the OpenCode CLI)
   init-hook           Install git hook (add --type post-commit for build-fix loop)
   dashboard           Start web dashboard
   dismiss <finding>   Dismiss a false positive finding
@@ -483,7 +486,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -515,7 +518,7 @@ async function main(): Promise<void> {
 
   // Handle top-level commands
   if (args[0] === "setup") {
-    runSetup(args.includes("--force"));
+    runSetup(args.includes("--force"), args.includes("--use-opencode-cli"));
     return;
   }
 
@@ -578,7 +581,13 @@ async function main(): Promise<void> {
         process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
         return;
       }
-      await engine.dismissByRule(ruleId, reason);
+      try {
+        await engine.dismissByRule(ruleId, reason);
+      } catch (err) {
+        process.stderr.write(`Failed to dismiss rule: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
+        return;
+      }
       process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
     } else if (dismissArgs.includes("--file")) {
       const fileIdx = dismissArgs.indexOf("--file");
@@ -591,7 +600,13 @@ async function main(): Promise<void> {
         return;
       }
       const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
-      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+      try {
+        await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
+      } catch (err) {
+        process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
+        return;
+      }
       process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
       process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
@@ -739,8 +754,13 @@ async function main(): Promise<void> {
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    const answer = await engine.ask(values["ask"]);
-    process.stdout.write(answer + "\n");
+    try {
+      const answer = await engine.ask(values["ask"]);
+      process.stdout.write(answer + "\n");
+    } catch (err) {
+      process.stderr.write(`Failed to get answer: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    }
     return;
   }
 
