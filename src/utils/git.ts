@@ -152,7 +152,13 @@ async function readContent(full: string): Promise<string> {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
+  let text: string;
+  try {
+    text = await readFile(full, { encoding: "utf8" });
+  } catch {
+    logger.debug(`Could not read content for ${full}`);
+    return "";
+  }
   if (text.includes("\0")) {
     logger.debug(`Skipping binary file content: ${full}`);
     return "";
@@ -166,13 +172,21 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
+    try {
       if (await refExists(remoteBase, cwd)) return remoteBase;
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    } catch {
+      logger.debug(`Could not resolve GitHub base ref ${githubBaseRef}`);
+    }
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch {
+      logger.debug(`Could not check base ref ${ref}`);
+    }
   }
   // No base ref found: fall back to a plain working-tree diff.
   return undefined;
@@ -191,6 +205,8 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
+  if (code === "M") return "modified";
+  if (code.startsWith("T")) return "modified";
   if (code === "M") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
