@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Engine } from "./engine/index.js";
+import { Engine, type EngineReport } from "./engine/index.js";
 import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 import type { CodeSentinelConfig, Mode, ModelConfig, Provider, RuntimeSecrets } from "./config/types.js";
 import { logger, type LogLevel } from "./utils/logger.js";
@@ -355,6 +355,7 @@ const BUILD_WORKFLOW_CONTENT = [
   '              echo "⚠️ No changes produced by fix — continuing"',
   "              continue",
   "            fi",
+  "            git commit -m \"🤖 CodeSentinel: auto-fix build errors\" 2>&1",
   "",
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
@@ -435,6 +436,10 @@ function runSetup(force: boolean): void {
   writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
   process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
 
+  printSetupGuide();
+}
+
+function printSetupGuide(): void {
   process.stdout.write("Next steps:\n");
   process.stdout.write("  git add .github/workflows/\n");
   process.stdout.write('  git commit -m "Add CodeSentinel AI workflows"\n');
@@ -496,7 +501,13 @@ Modes:
   gate        Run quality gate (exit non-zero on threshold breach)
   deadcode    Detect unused exports across files
 
-Options:
+`);
+  printHelpOptions();
+  printHelpExamples();
+}
+
+function printHelpOptions(): void {
+  process.stdout.write(`Options:
   -m, --mode <mode>           Operational mode
   -c, --config <path>         Path to codesentinel.config.json
   --provider <name>           AI provider (openai | anthropic | gemini | opencode)
@@ -529,7 +540,11 @@ Environment Variables:
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
   OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
 
-Examples:
+`);
+}
+
+function printHelpExamples(): void {
+  process.stdout.write(`Examples:
   codesentinel setup
   codesentinel review --config ./codesentinel.config.json
   codesentinel fix --auto-fix --dry-run
@@ -543,6 +558,7 @@ Examples:
   codesentinel deadcode
   codesentinel describe
 `);
+}
 }
 
 function showVersion(): void {
@@ -792,12 +808,30 @@ async function main(): Promise<void> {
 
   // Special handling for deadcode mode — run in-process without AI
   if (modeArg === "deadcode") {
-    const root = process.cwd();
-    const rels = collectFiles(root, engine.config.include, engine.config.exclude);
-    const files = rels.map((path) => ({
-      path,
-      content: readText(resolve(root, path)),
-    }));
+    await runDeadCodeMode(engine);
+    return;
+  }
+
+  let report: EngineReport;
+  try {
+    report = await engine.run();
+  } catch (err) {
+    process.stderr.write(`Analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  printReport(report, values);
+}
+
+async function runDeadCodeMode(engine: Engine): Promise<void> {
+  const root = process.cwd();
+  const rels = collectFiles(root, engine.config.include, engine.config.exclude);
+  const files = rels.map((path) => ({
+    path,
+    content: readText(resolve(root, path)),
+  }));
+  try {
     const findings = await engine.runDeadCode(files);
     if (findings.length === 0) {
       process.stdout.write("✅ No unused exports detected.\n");
@@ -808,12 +842,16 @@ async function main(): Promise<void> {
         process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
       }
     }
-    return;
+  } catch (err) {
+    process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
   }
+}
 
-  const report = await engine.run();
-
-  // JSON output mode
+function printReport(
+  report: EngineReport,
+  values: { json?: boolean; sarif?: boolean; "dry-run"?: boolean },
+): void {
   if (values.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
@@ -823,7 +861,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  // SARIF output mode
   if (values.sarif) {
     process.stdout.write(renderSarif(report) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
