@@ -464,16 +464,19 @@ function runSetup(force: boolean): void {
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
 }
 
-function showHelp(): void {
-  let pkg;
+function readPackageVersion(): string {
   try {
-    pkg = JSON.parse(
+    const pkg = JSON.parse(
       readFileSync(join(__dirname, "..", "package.json"), "utf8"),
     );
+    return pkg.version ?? "unknown";
   } catch {
-    pkg = { version: "unknown" };
+    return "unknown";
   }
-  process.stdout.write(`CodeSentinel AI v${pkg.version}
+}
+
+function showHelp(): void {
+  process.stdout.write(`CodeSentinel AI v${readPackageVersion()}
 AI-powered code review, fix, audit, scoring, and test generation.
 
 Usage:
@@ -495,6 +498,8 @@ Modes:
   chat        Ask questions about the codebase (--ask required)
   gate        Run quality gate (exit non-zero on threshold breach)
   deadcode    Detect unused exports across files
+  improve     Generate tests, utilities, or docs (--improve-type)
+  plan        Generate implementation plan from issue
 
 Options:
   -m, --mode <mode>           Operational mode
@@ -509,6 +514,10 @@ Options:
   --context <text>            Free-form project context for prompts
   --dry-run                   Show what would be fixed without writing (fix mode)
   --jsonl                     Output AI review results in JSONL format
+  --json                      Output report as JSON
+  --sarif                     Output report in SARIF format
+  --improve-type <type>       Improvement type: test | util | doc
+  --use-opencode-cli          Use opencode CLI for AI calls
   --mcp                       Enable MCP server integration for library docs
   --learning-db <path>        Enable self-learning store at path
   --yaml-config               Enable YAML config file discovery (.opencode-reviewer.yml)
@@ -536,7 +545,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -546,15 +555,7 @@ Examples:
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
-  process.stdout.write(`${pkg.version}\n`);
+  process.stdout.write(`${readPackageVersion()}\n`);
 }
 
 /**
