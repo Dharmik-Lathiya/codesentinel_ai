@@ -74,12 +74,15 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     }
     const lineIdx = dismissArgs.indexOf("--line");
     const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-    const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+    const parsedLineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+    const lineNum = parsedLineNum !== null && parsedLineNum >= 1 ? parsedLineNum : null;
     const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
     const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
     const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
-    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
-    const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
+    const consumed = new Set<number>([fileIdx, fileIdx + 1]);
+    if (lineIdx >= 0) { consumed.add(lineIdx); consumed.add(lineIdx + 1); }
+    if (ruleIdArgIdx >= 0) { consumed.add(ruleIdArgIdx); consumed.add(ruleIdArgIdx + 1); }
+    const reason = dismissArgs.filter((arg, idx) => !consumed.has(idx) && !arg.startsWith("--")).join(" ").trim() || "dismissed by user";
     return { reason, filePath, lineNum, ruleIdArg };
   }
 
@@ -298,7 +301,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "jobs:",
   "  build-fix:",
   "    runs-on: ubuntu-latest",
-  "    if: ${{ github.event_name == 'push' && github.event.head_commit.author.name != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
+  "    if: ${{ (github.event_name == 'push' && github.event.head_commit.author.name != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]')) || github.event_name == 'workflow_dispatch' }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
   "        with:",
@@ -365,15 +368,14 @@ const BUILD_WORKFLOW_CONTENT = [
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
-  "            if git push origin HEAD:${{ github.ref_name }} 2>&1; then",
-  '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
-  "            else",
+  "            git push origin HEAD:${{ github.ref_name }} 2>&1 || {",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
   "              git fetch origin ${{ github.ref_name }} 2>&1",
   "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
   "              git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
-  "            fi",
+  "            }",
+  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
+  "            git remote set-url origin \"https://github.com/${{ github.repository }}.git\" 2>&1",
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
