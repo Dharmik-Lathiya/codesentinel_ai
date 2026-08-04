@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -10,6 +10,7 @@ const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER = 64 * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
+const MAX_TOTAL_CONTENT_BYTES = 32 * MEGABYTE;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -26,8 +27,16 @@ export async function git(
     });
     return stdout;
   } catch (err) {
+    const errInfo = err as {
+      killed?: boolean;
+      signal?: string | null;
+      code?: string | number | null;
+    };
     const timedOut =
-      err instanceof Error && (err as { killed?: boolean }).killed === true;
+      err instanceof Error &&
+      errInfo.killed === true &&
+      errInfo.signal === "SIGTERM" &&
+      errInfo.code == null;
     const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
       logger.error(
@@ -100,10 +109,14 @@ export async function collectDiff(
     );
     throw err;
   }
-  const diffByPath = splitDiffByPath(diffText);
+  const nameStatusEntries = nameStatus.split("\0");
+  const diffPaths = nameStatusEntries
+    .filter((_, i) => i % 2 === 1)
+    .filter(Boolean);
+  const diffByPath = splitDiffByPath(diffText, diffPaths);
 
   const files: DiffFile[] = [];
-  const nameStatusEntries = nameStatus.split("\0");
+  let totalContentBytes = 0;
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
@@ -118,10 +131,17 @@ export async function collectDiff(
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
+      if (totalContentBytes < MAX_TOTAL_CONTENT_BYTES) {
+        try {
+          content = await readContent(full);
+          totalContentBytes += content.length;
+        } catch {
+          logger.debug(`Could not read content for ${path}`);
+        }
+      } else {
+        logger.warn(
+          `Skipping content for ${path}: total content budget (${MAX_TOTAL_CONTENT_BYTES} bytes) exceeded`,
+        );
       }
     }
     const diff = diffByPath.get(path) ?? "";
@@ -133,21 +153,66 @@ export async function collectDiff(
   return files;
 }
 
-function splitDiffByPath(diffText: string): Map<string, string> {
+function splitDiffByPath(
+  diffText: string,
+  knownPaths: string[],
+): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const header = unquoteHeader(firstLine);
+    const path = knownPaths.find((p) => header === `a/${p} b/${p}`);
+    if (!path) continue;
     byPath.set(path, part);
   }
   return byPath;
 }
 
+function unquoteHeader(line: string): string {
+  let out = "";
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') continue;
+    if (ch === "\\" && i + 1 < line.length) {
+      const esc = line[i + 1];
+      if (esc >= "0" && esc <= "7") {
+        const octal = line.slice(i + 1, i + 4);
+        if (/^[0-7]{3}$/.test(octal)) {
+          out += String.fromCharCode(parseInt(octal, 8));
+          i += 3;
+        } else {
+          out += esc;
+          i++;
+        }
+      } else {
+        switch (esc) {
+          case "a": out += "\a"; break;
+          case "b": out += "\b"; break;
+          case "t": out += "\t"; break;
+          case "n": out += "\n"; break;
+          case "v": out += "\v"; break;
+          case "f": out += "\f"; break;
+          case "r": out += "\r"; break;
+          case "\\": out += "\\\\"; break;
+          case '"': out += '"'; break;
+          default: out += esc;
+        }
+        i++;
+      }
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
+  const fileStat = await lstat(full);
+  if (fileStat.isSymbolicLink()) {
+    logger.debug(`Skipping symlink file content: ${full}`);
+    return "";
+  }
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
@@ -191,7 +256,7 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code === "M") return "modified";
+  if (code === "M" || code === "T") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
