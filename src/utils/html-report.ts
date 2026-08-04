@@ -1,4 +1,5 @@
 import type { EngineReport } from "../engine/index.js";
+import type { ScoreBreakdown } from "../scorer/index.js";
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "#dc2626",
@@ -107,11 +108,55 @@ export function renderHtmlReport(report: EngineReport): string {
 
   ${renderSummaryCards(report, severityCounts)}
 
+  it("escapes HTML in file, suggestion, mode, and chart keys", () => {
+    const report = {
+      ...baseReport,
+      mode: "review<mode>",
+      findings: [{
+        severity: "high",
+        category: "security<chart>",
+        file: "x<file>.ts",
+        line: 0,
+        comment: "plain",
+        suggestion: "<b>fix</b>",
+        source: "static",
+      }],
+      metrics: { ...baseReport.metrics, findingsBySeverity: { high: 1 } },
+    } as unknown as EngineReport;
+    const html = renderHtmlReport(report);
+    expect(html).toContain("x&lt;file&gt;.ts:0");
+    expect(html).toContain("&lt;b&gt;fix&lt;/b&gt;");
+    expect(html).toContain("review&lt;mode&gt; Report");
+    expect(html).toContain("security&lt;chart&gt;");
+    expect(html).not.toContain("<file>");
+    expect(html).not.toContain("<b>fix</b>");
+    expect(html).not.toContain("<mode>");
+    expect(html).not.toContain("<chart>");
+  });
+
+  it("renders em dash for empty suggestion and line suffix for line 0", () => {
+    const report = {
+      ...baseReport,
+      findings: [{
+        severity: "low",
+        category: "smell",
+        file: "x.ts",
+        line: 0,
+        comment: "plain",
+        suggestion: "",
+        source: "static",
+      }],
+      metrics: { ...baseReport.metrics, findingsBySeverity: { low: 1 } },
+    };
+    const html = renderHtmlReport(report);
+    expect(html).toContain("x.ts:0");
+    expect(html).toContain("<td>—</td>");
+  });
+
   ${severityChart}
 
   ${categoryChart}
 
-  <h2>Findings</h2>
   ${renderFindingsTable(report.findings.length, findingsRows)}
 
   ${renderFixTable(report.fixAttempts.length, fixRows)}
@@ -145,14 +190,14 @@ function renderSummaryCards(report: EngineReport, severityCounts: Record<string,
   </div>`;
 }
 
-function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): string {
+function renderScoreCard(score: ScoreBreakdown | null): string {
   if (!score) return "";
   return `
     <div class="card" style="display:flex;align-items:center;gap:1rem">
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -178,7 +223,8 @@ function renderBarChart(title: string, items: { key: string; value: number; colo
 
 function renderFindingsTable(count: number, rows: string): string {
   if (count === 0) return `<div class="empty">No findings detected.</div>`;
-  return `<table>
+  return `<h2>Findings</h2>
+  <table>
     <thead><tr><th>Severity</th><th>Category</th><th>File</th><th>Comment</th><th>Suggestion</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
