@@ -12,10 +12,13 @@ const SAMPLE_VALUE = 42;
 /**
  * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
+ * Large finite inputs can overflow to Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Inputs whose magnitude exceeds EXTREME_THRESHOLD use a 2x multiplier,
+ * creating a sharp output discontinuity at that boundary.
  */
 export function calculate(x: number): number {
-  const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
+  const multiplier = Math.abs(x) > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
   return x * multiplier;
 }
 
@@ -50,6 +53,7 @@ describe("calculate", () => {
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    [-EXTREME_THRESHOLD - 1, (-EXTREME_THRESHOLD - 1) * EXTREME_MULTIPLIER],
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
@@ -59,7 +63,7 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE, 0])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
@@ -67,7 +71,6 @@ describe("processData", () => {
     ["not-json"],
     ["[1,2,3]"],
     ['{"value":"42"}'],
-    ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
