@@ -386,19 +386,25 @@ const BUILD_WORKFLOW_CONTENT = [
   "        with:",
   "          script: |",
   "            try {",
-  "              const { data: prs } = await github.rest.pulls.list({",
-  "                owner: context.repo.owner,",
-  "                repo: context.repo.repo,",
-  '                state: "open",',
-  "                head: context.ref.replace('refs/heads/', ''),",
-  "              });",
-  "              if (prs.length > 0) {",
-  '                await github.rest.issues.createComment({',
+  "              let prs;",
+  "              try {",
+  "                const { data } = await github.rest.pulls.list({",
   "                  owner: context.repo.owner,",
   "                  repo: context.repo.repo,",
-  "                  issue_number: prs[0].number,",
-  '                body: "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."',
+  '                  state: "open",',
+  "                  head: context.ref.replace('refs/heads/', ''),",
   "                });",
+  "                prs = data;",
+  "              } catch (err) { core.setFailed(err.message); return; }",
+  "              if (prs.length > 0) {",
+  "                try {",
+  "                  await github.rest.issues.createComment({",
+  "                    owner: context.repo.owner,",
+  "                    repo: context.repo.repo,",
+  "                    issue_number: prs[0].number,",
+  '                body: "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."',
+  "                  });",
+  "                } catch (err) { core.setFailed(err.message); return; }",
   "              }",
   "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
@@ -618,11 +624,19 @@ async function main(): Promise<void> {
 
     const engine = Engine.fromInputs({ secrets: loadSecrets() });
     if (parsed.ruleId !== undefined) {
-      await engine.dismissByRule(parsed.ruleId, parsed.reason);
-      process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
+      try {
+        await engine.dismissByRule(parsed.ruleId, parsed.reason);
+        process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
+      } catch (err) {
+        process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
+      }
     } else {
-      await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
-      process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
+      try {
+        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+        process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
+      } catch (err) {
+        process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+      }
     }
     return;
   }
@@ -766,8 +780,13 @@ async function main(): Promise<void> {
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    const answer = await engine.ask(values["ask"]);
-    process.stdout.write(answer + "\n");
+    try {
+      const answer = await engine.ask(values["ask"]);
+      process.stdout.write(answer + "\n");
+    } catch (err) {
+      process.stderr.write(`Chat query failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    }
     return;
   }
 
