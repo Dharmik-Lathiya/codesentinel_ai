@@ -17,7 +17,15 @@ const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
 const SNIPPET_MAX_CHAR_LENGTH = 80;
 const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
 
-function parseTrufflehogLine(line: string): Finding | null {
+export const GITLEAKS_SEVERITY_MAP = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+} as const;
+type GitleaksSeverity = keyof typeof GITLEAKS_SEVERITY_MAP;
+
+export function parseTrufflehogLine(line: string): Finding | null {
   try {
     const r = JSON.parse(line);
     return {
@@ -30,7 +38,6 @@ function parseTrufflehogLine(line: string): Finding | null {
       source: "scanner" as const,
     } as Finding;
   } catch {
-    logger.warn("Failed to parse trufflehog JSON line");
     return null;
   }
 }
@@ -38,6 +45,10 @@ function parseTrufflehogLine(line: string): Finding | null {
 const gitleaks: ScannerTool = {
   name: "gitleaks",
   detect(): boolean {
+    if (process.platform === "win32") {
+      logger.debug("gitleaks scanner uses Linux/macOS commands (`which`, /dev/stdout), skipping on Windows");
+      return false;
+    }
     try {
       execSync("which gitleaks", { stdio: "ignore" });
       return true;
@@ -63,7 +74,7 @@ const gitleaks: ScannerTool = {
       return results.map((r) => ({
         file: r.File,
         line: r.StartLine || null,
-        severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
+        severity: GITLEAKS_SEVERITY_MAP[(r.Severity?.toLowerCase() ?? "") as GitleaksSeverity] ?? "medium",
         category: "security" as const,
         comment: `[gitleaks] ${r.Description}`,
         suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
@@ -79,6 +90,10 @@ const gitleaks: ScannerTool = {
 const trufflehog: ScannerTool = {
   name: "trufflehog",
   detect(): boolean {
+    if (process.platform === "win32") {
+      logger.debug("trufflehog scanner uses Linux/macOS commands (`which`, /dev/null), skipping on Windows");
+      return false;
+    }
     try {
       execSync("which trufflehog", { stdio: "ignore" });
       return true;
@@ -90,12 +105,20 @@ const trufflehog: ScannerTool = {
   run(root: string): Finding[] {
     try {
       const out = execSync(
-        "trufflehog filesystem . --json --no-verification 2>/dev/null || true",
+        "trufflehog filesystem . --json 2>/dev/null || true",
         { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
       const lines = out.trim().split("\n").filter(Boolean);
-      return lines.map(parseTrufflehogLine).filter((f): f is Finding => f !== null);
+      const findings: Finding[] = [];
+      let unparsed = 0;
+      for (const line of lines) {
+        const finding = parseTrufflehogLine(line);
+        if (finding) findings.push(finding);
+        else unparsed += 1;
+      }
+      if (unparsed > 0) logger.warn(`trufflehog: skipped ${unparsed} unparseable JSON line(s)`);
+      return findings;
     } catch (e) {
       logger.warn(`trufflehog run failed: ${e}`);
       return [];
