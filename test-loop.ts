@@ -5,12 +5,14 @@ export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
+const UPPER_MODERATE_INPUT = 6000;
 
 const SAMPLE_VALUE = 42;
-
 /**
  * Accepts finite numbers; NaN/Infinity inputs pass through unchanged.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Inputs greater than EXTREME_THRESHOLD use a 2x multiplier; values at or below use the base multiplier.
+ */
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
@@ -40,7 +42,7 @@ describe("calculate", () => {
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
     [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [6000, 6000 * MULTIPLIER],
+    [UPPER_MODERATE_INPUT, UPPER_MODERATE_INPUT * MULTIPLIER],
     [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
