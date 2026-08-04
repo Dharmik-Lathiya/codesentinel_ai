@@ -7,7 +7,8 @@ import { logger } from "./logger.js";
 const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const MAX_BUFFER_MEGABYTES = 64;
+const MAX_BUFFER = MAX_BUFFER_MEGABYTES * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
 
@@ -26,21 +27,21 @@ export async function git(
     });
     return stdout;
   } catch (err) {
-    const timedOut =
-      err instanceof Error && (err as { killed?: boolean }).killed === true;
-    const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
-      logger.error(
-        timedOut
-          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-          : `git command failed: ${command}`,
-        err,
-      );
+      logger.error(formatGitError(err, args), err);
     }
     throw err;
   }
 }
 
+function formatGitError(err: unknown, args: string[]): string {
+  const timedOut =
+    err instanceof Error && (err as { killed?: boolean }).killed === true;
+  const command = `git ${args.join(" ")}`;
+  return timedOut
+    ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
+    : `git command failed: ${command}`;
+}
 export interface DiffFile {
   /** Path of the file changed in the diff. */
   path: string;
@@ -61,7 +62,12 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  const baseRef = base ?? (await defaultBaseRef(cwd));
+let baseRef: string | undefined;
+try {
+  baseRef = base ?? (await defaultBaseRef(cwd));
+} catch (err) {
+  logger.warn("Failed to determine base ref:", err);
+}
   const rangeArgs = baseRef ? [baseRef + "..."] : [];
   let nameStatus: string;
   try {
@@ -147,17 +153,21 @@ function splitDiffByPath(diffText: string): Map<string, string> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
-  if (fileStat.size > MAX_CONTENT_BYTES) {
-    logger.debug(`Skipping oversized file content: ${full}`);
+  try {
+    const fileStat = await stat(full);
+    if (fileStat.size > MAX_CONTENT_BYTES) {
+      logger.debug(`Skipping oversized file content: ${full}`);
+      return "";
+    }
+    const text = await readFile(full, { encoding: "utf8" });
+    if (text.includes("\0")) {
+      logger.debug(`Skipping binary file content: ${full}`);
+      return "";
+    }
+    return text;
+  } catch {
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
-  if (text.includes("\0")) {
-    logger.debug(`Skipping binary file content: ${full}`);
-    return "";
-  }
-  return text;
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
