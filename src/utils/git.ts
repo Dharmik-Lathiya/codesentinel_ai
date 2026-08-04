@@ -130,6 +130,12 @@ export async function collectDiff(
     }
     files.push({ path, status, content, diff });
   }
+  if (files.length === 0 && !baseRef) {
+    logger.warn(
+      "No base ref resolved and no working-tree diff detected; " +
+        "review may silently return zero files in a clean checkout.",
+    );
+  }
   return files;
 }
 
@@ -152,7 +158,13 @@ async function readContent(full: string): Promise<string> {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
+  let text: string;
+  try {
+    text = await readFile(full, { encoding: "utf8" });
+  } catch {
+    logger.debug(`Could not read content for ${full}`);
+    return "";
+  }
   if (text.includes("\0")) {
     logger.debug(`Skipping binary file content: ${full}`);
     return "";
@@ -166,13 +178,25 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
+    try {
       if (await refExists(remoteBase, cwd)) return remoteBase;
+    } catch {
+      logger.debug(`Ref ${remoteBase} check failed`);
+    }
+    try {
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    } catch {
+      logger.debug(`Ref ${githubBaseRef} check failed`);
+    }
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch {
+      logger.debug(`Ref ${ref} check failed`);
+    }
   }
   // No base ref found: fall back to a plain working-tree diff.
   return undefined;
