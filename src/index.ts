@@ -17,6 +17,7 @@ const DEFAULT_GATE_MIN_SCORE = 70;
 const PARSE_INT_RADIX = 10;
 const MAX_SCORE = 100;
 const MAX_ISSUE_BODY_LENGTH = 8000;
+const MAX_ISSUE_TITLE_LENGTH = 200;
 const NODE_VERSION = 20;
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 const VALID_MODES = new Set<string>(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"]);
@@ -63,7 +64,9 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     if (!ruleId || ruleId.startsWith("--")) {
       return { reason: "dismissed by user", error: "Missing rule id for --rule." };
     }
-    const reason = dismissArgs.slice(ruleIdx + 2).join(" ").trim() || "dismissed by user";
+    const reasonTokens = dismissArgs.slice(ruleIdx + 2);
+    const reasonEnd = reasonTokens.findIndex((a) => a.startsWith("--"));
+    const reason = (reasonEnd >= 0 ? reasonTokens.slice(0, reasonEnd) : reasonTokens).join(" ").trim() || "dismissed by user";
     return { reason, ruleId };
   }
 
@@ -73,8 +76,14 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
       return { reason: "dismissed by user", error: "Missing file path for --file." };
     }
     const lineIdx = dismissArgs.indexOf("--line");
-    const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-    const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+    let lineNum: number | null = null;
+    if (lineIdx >= 0) {
+      const rawLine = dismissArgs[lineIdx + 1];
+      if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
+        return { reason: "dismissed by user", error: "Missing or invalid line number for --line." };
+      }
+      lineNum = parseInt(rawLine, PARSE_INT_RADIX);
+    }
     const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
     const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
     const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
@@ -134,16 +143,31 @@ const WORKFLOW_CONTENT = [
 "              core.setFailed(err.message);",
 "            }",
   "",
+  "      - name: Get issue info (truncated, untrusted inputs)",
+  "        id: issue_info",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            try {",
+  "              const { data: issue } = await github.rest.issues.get({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                issue_number: context.issue.number",
+  "              });",
+  "              core.setOutput('title', (issue.title || '').slice(0, " + `${MAX_ISSUE_TITLE_LENGTH}` + "));",
+  "              core.setOutput('body', (issue.body || '').slice(0, " + `${MAX_ISSUE_BODY_LENGTH}` + "));",
+  "            } catch (err) { core.setFailed(err.message); }",
+  "",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
+  "      # AI-generated output is UNVERIFIED — review before merging",
   "      - name: Run CodeSentinel plan",
   "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        env:",
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
   "        with:",
   "          mode: plan",
-  "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+  "          issue_title: ${{ steps.issue_info.outputs.title }}",
+  "          issue_body: ${{ steps.issue_info.outputs.body }}",
   "          use_opencode_cli: \"false\"",
   "",
 "      - name: Update comment with plan",
@@ -240,7 +264,7 @@ const WORKFLOW_CONTENT = [
   "                owner: context.repo.owner, repo: context.repo.repo,",
   "                issue_number: context.issue.number",
   "              });",
-  "              core.setOutput('title', issue.title);",
+  "              core.setOutput('title', (issue.title || '').slice(0, " + `${MAX_ISSUE_TITLE_LENGTH}` + "));",
   "              core.setOutput('body', (issue.body || '').slice(0, " + `${MAX_ISSUE_BODY_LENGTH}` + "));",
   "            } catch (err) { core.setFailed(err.message); }",
   "",
@@ -458,7 +482,7 @@ function runSetup(force: boolean): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
@@ -536,7 +560,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -798,7 +822,14 @@ async function main(): Promise<void> {
       path,
       content: readText(resolve(root, path)),
     }));
-    const findings = await engine.runDeadCode(files);
+    let findings;
+    try {
+      findings = await engine.runDeadCode(files);
+    } catch (err) {
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+      return;
+    }
     if (findings.length === 0) {
       process.stdout.write("✅ No unused exports detected.\n");
     } else {
