@@ -20,6 +20,9 @@ const TABLE_SHADOW_ALPHA = "0.08";
 const BAR_FILL_WIDTH_PERCENT = "100%";
 const BAR_VALUE_FONT_WEIGHT = "600";
 const APOSTROPHE_ENTITY = "&#39;";
+const DEFAULT_COLOR = "#6b7280";
+const SUCCESS_COLOR = "#16a34a";
+const WARNING_COLOR = "#d97706";
 const REPORT_STYLES = `  <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
@@ -38,8 +41,8 @@ const REPORT_STYLES = `  <style>
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
-    .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
-    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .bar-chart { display: flex; align-items: stretch; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
+    .bar { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1; height: 100%; }
     .bar-fill { width: ${BAR_FILL_WIDTH_PERCENT}; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: ${BAR_VALUE_FONT_WEIGHT}; margin-bottom: 0.25rem; }
@@ -58,7 +61,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? DEFAULT_COLOR })),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -85,6 +88,7 @@ function renderSummaryCards(report: EngineReport, severityCounts: Record<string,
       <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
     </div>
     ${renderScoreCard(report.score)}
+    ${renderGateCard(report)}
     <div class="card">
       <div class="label">Fix Attempts</div>
       <div class="value">${report.fixAttempts.length}</div>
@@ -104,12 +108,22 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
 }
 
+function renderGateCard(report: EngineReport): string {
+  if (report.gatePassed === undefined) return "";
+  const passed = report.gatePassed;
+  return `
+    <div class="card">
+      <div class="label">Quality Gate</div>
+      <div class="value" style="color:${passed ? SUCCESS_COLOR : "#dc2626"}">${passed ? "PASSED" : "FAILED"}</div>
+      <div class="sub">${passed ? "All gate checks passed" : "Gate checks failed"}</div>
+    </div>`;
+}
 function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
   if (items.length === 0) return "";
   const maxCount = Math.max(...items.map((item) => item.value));
@@ -160,12 +174,12 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-.replace(/'/g, APOSTROPHE_ENTITY);
+    .replace(/'/g, APOSTROPHE_ENTITY);
 }
 
 function scoreColor(score: number): string {
-  if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
-  if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
+  if (score >= SCORE_GREEN_THRESHOLD) return SUCCESS_COLOR;
+  if (score >= SCORE_ORANGE_THRESHOLD) return WARNING_COLOR;
   if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
   return "#dc2626";
 }
@@ -186,7 +200,7 @@ function summarizeFindings(findings: EngineReport["findings"]): {
 function buildFindingsRows(findings: EngineReport["findings"]): string {
   return findings
     .map((f) => {
-      const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
+      const color = SEVERITY_COLORS[f.severity] ?? DEFAULT_COLOR;
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
@@ -202,7 +216,7 @@ function buildFixRows(fixAttempts: EngineReport["fixAttempts"]): string {
   return fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
+      const statusColor = a.fixed ? (a.verified ? SUCCESS_COLOR : WARNING_COLOR) : DEFAULT_COLOR;
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
