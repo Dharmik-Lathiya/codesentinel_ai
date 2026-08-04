@@ -112,26 +112,38 @@ export async function collectDiff(
 
   const files: DiffFile[] = [];
   const nameStatusEntries = nameStatus.split("\0");
+  const entries: { status: DiffFile["status"]; path: string }[] = [];
+  const reads: { path: string; full: string }[] = [];
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
-    let content = "";
     if (status !== "deleted") {
       const full = resolve(workspaceRoot, path);
       const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      if (rel === "" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
+      reads.push({ path, full });
     }
+    entries.push({ status, path });
+  }
+
+  const contentByPath = new Map<string, string>();
+  const readBatchSize = 20;
+  for (let i = 0; i < reads.length; i += readBatchSize) {
+    await Promise.all(
+      reads.slice(i, i + readBatchSize).map(async ({ path, full }) => {
+        contentByPath.set(path, await readContent(full));
+      }),
+    );
+  }
+
+  for (const { status, path } of entries) {
+    const content = status === "deleted" ? "" : (contentByPath.get(path) ?? "");
     const diff = diffByPath.get(path) ?? "";
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
@@ -179,8 +191,8 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
