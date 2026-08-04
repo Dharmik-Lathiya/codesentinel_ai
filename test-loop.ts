@@ -17,11 +17,10 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-    if (parsed && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
-  try {
 function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
+const DEFAULT_RESULT: { value: number } = { value: 0 };
 
 export function processData(input: string): { value: number } {
   try {
@@ -29,9 +28,9 @@ export function processData(input: string): { value: number } {
     if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
       return { value: parsed.value };
     }
-    return { value: 0 };
+    return DEFAULT_RESULT;
   } catch {
-    return { value: 0 };
+    return DEFAULT_RESULT;
   }
 }
 describe("calculate", () => {
@@ -45,9 +44,6 @@ describe("calculate", () => {
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
   ])("boundary value %i", (input, expected) => {
-    [NaN, NaN],
-    [Infinity, Infinity],
-    [-Infinity, -Infinity],
     expect(calculate(input)).toBe(expected);
   });
 });
@@ -60,6 +56,7 @@ describe("processData", () => {
   test("valid JSON SAMPLE_VALUE returns the parsed value", () => {
     expect(processData('{"value":' + SAMPLE_VALUE + '}')).toEqual({ value: SAMPLE_VALUE });
   });
+  test("invalid JSON returns the default result", () => {
     expect(processData("not-json")).toEqual({ value: 0 });
   });
 
@@ -70,6 +67,7 @@ describe("processData", () => {
   test("non-numeric SAMPLE_VALUE returns the default result", () => {
     expect(processData('{"value":"' + SAMPLE_VALUE + '"}')).toEqual({ value: 0 });
   });
+  test("non-object value returns the default result", () => {
     expect(processData("[1,2,3]")).toEqual({ value: 0 });
   });
 
