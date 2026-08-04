@@ -295,7 +295,8 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  build-fix:",
-  "    if: ${{ github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
+  "    runs-on: ubuntu-latest",
+  "    if: ${{ github.event_name == 'push' && github.actor != 'github-actions[bot]' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
   "        with:",
@@ -359,21 +360,18 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
+  "            git commit -m \"CodeSentinel: auto-fix build errors [skip ci]\"",
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            git push \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" HEAD:${{ github.ref_name }} 2>&1",
   "            if [ $? -ne 0 ]; then",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
   "              git fetch origin ${{ github.ref_name }} 2>&1",
   "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
-  "              git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "              git push \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" HEAD:${{ github.ref_name }} 2>&1",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
@@ -521,7 +519,6 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
   OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
 
 Examples:
