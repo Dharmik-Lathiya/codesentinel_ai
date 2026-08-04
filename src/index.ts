@@ -521,7 +521,7 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
   OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
 
 Examples:
