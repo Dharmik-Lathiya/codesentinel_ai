@@ -8,6 +8,8 @@ const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
+const NEGATIVE_DECIMAL_VALUE = -7.25;
+const SAMPLE_VALUE = 42;
 
 /**
  * Scales the input by a fixed multiplier.
@@ -59,14 +61,14 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
   test.each([
     ["not-json"],
     ["[1,2,3]"],
-    ['{"value":"42"}'],
+    ['{"value":"' + SAMPLE_VALUE + '"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
@@ -77,7 +79,7 @@ describe("processData", () => {
   });
 
   test('negative and decimal values are preserved', () => {
-    expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
+    expect(processData('{"value":' + NEGATIVE_DECIMAL_VALUE + '}')).toEqual({ value: NEGATIVE_DECIMAL_VALUE });
   });
 
   test('whitespace-padded JSON is parsed', () => {
