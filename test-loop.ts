@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
+export const EXTREME_THRESHOLD = 10000; // intentional: inputs strictly above this (exclusive bound) use a hard 2x multiplier step
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
@@ -36,9 +36,10 @@ export function processData(input: string): { value: number } {
     }
     return { value: 0 };
   } catch {
+  } catch {
+    // Intentional swallow: unparseable JSON maps to the 0 sentinel by contract.
     return { value: 0 };
   }
-}
 
 describe("calculate", () => {
   test.each([
@@ -83,7 +84,15 @@ describe("processData", () => {
   test('whitespace-padded JSON is parsed', () => {
     expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
   });
+  });
 
+  test.each([
+    ['{"value":1e5}', 100000],
+    ['{"value":9007199254740993}', 9007199254740992],
+    ['{"value":1,"extra":2}', 1],
+  ])('valid edge input %s returns the parsed value', (input, expected) => {
+    expect(processData(input)).toEqual({ value: expected });
+  });
   test('empty string input is handled', () => {
     expect(processData("")).toEqual({ value: 0 });
   });
