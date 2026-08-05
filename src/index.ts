@@ -143,10 +143,27 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          mode: plan",
   "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+"          issue_body: ${{ github.event.issue.body }}",
   "          use_opencode_cli: \"false\"",
   "",
-"      - name: Update comment with plan",
+  "      - name: Update comment on plan failure",
+  "        if: failure()",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            const fs = require('fs');",
+  "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
+  "            const body = '### CodeSentinel \\u2014 Implementation Plan Failed\\n\\n```\\n' + (out.trim() || 'Please check the workflow run for details.') + '\\n```';",
+  "            try {",
+  "              const comment_id = ${{ steps.loading.outputs.comment_id }};",
+  "              if (comment_id) {",
+  "                await github.rest.issues.updateComment({",
+  "                  owner: context.repo.owner, repo: context.repo.repo, comment_id, body",
+  "                });",
+  "              }",
+  "            } catch (err) { core.setFailed(err.message); }",
+  "",
+  "      - name: Update comment with plan",
 "        uses: actions/github-script@v7",
 "        with:",
 "          script: |",
@@ -183,8 +200,9 @@ const WORKFLOW_CONTENT = [
   "            const body = context.payload.comment.body.trim();",
   "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
   "            if (!match) { core.setFailed('No valid command'); return; }",
-  "            const mode = match[1].toLowerCase();",
-  "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
+  "            const rawMode = match[1].toLowerCase();",
+  "            const mode = rawMode === 'ask' ? 'chat' : rawMode;",
+  "            const question = rawMode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
   "            core.setOutput('mode', mode);",
   "            core.setOutput('question', question);",
   "",
@@ -329,6 +347,7 @@ const BUILD_WORKFLOW_CONTENT = [
 '          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}',
 '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
 '          CODESENTINEL_GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN }}',
+'          MAX_ITERATIONS: 5',
   "        run: |",
   "          MAX_ITER=${MAX_ITERATIONS:-5}",
   '          echo "::group::Build-Fix Loop"',
@@ -356,12 +375,14 @@ const BUILD_WORKFLOW_CONTENT = [
   "              continue",
   "            fi",
   "",
+  "            git commit -m \"Auto-fix by CodeSentinel Bot [skip ci]\"",
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
+  "            echo \"::add-mask::${GIT_PUSH_TOKEN}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            git pull --rebase --autostash origin ${{ github.ref_name }} 2>&1 || { echo \"⚠️ Pull/rebase failed — aborting fix loop\"; echo \"::endgroup::\"; exit 1; }",
   "            if [ $? -ne 0 ]; then",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
   "              git fetch origin ${{ github.ref_name }} 2>&1",
@@ -372,9 +393,6 @@ const BUILD_WORKFLOW_CONTENT = [
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
-  "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
   "          echo \"::endgroup::\"",
@@ -495,6 +513,7 @@ Modes:
   chat        Ask questions about the codebase (--ask required)
   gate        Run quality gate (exit non-zero on threshold breach)
   deadcode    Detect unused exports across files
+  improve     Improve/refactor code (CLI-only, not exposed via slash commands)
 
 Options:
   -m, --mode <mode>           Operational mode
@@ -631,8 +650,12 @@ async function main(): Promise<void> {
         process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
       }
     } else {
+      if (parsed.filePath === undefined) {
+        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
+        return;
+      }
       try {
-        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+        await engine.dismissByFinding(parsed.filePath, parsed.lineNum ?? null, parsed.ruleIdArg ?? `${parsed.filePath}:${parsed.lineNum ?? "all"}`, parsed.reason);
         process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
