@@ -25,7 +25,7 @@ function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
 }
 function mergeOverride<T extends object>(current: T | undefined, patch: Partial<T>): T {
-  return { ...(current as T), ...patch } as T;
+  return current ? { ...current, ...patch } : ({ ...patch } as T);
 }
 
 function loadSecrets(): RuntimeSecrets {
@@ -292,6 +292,8 @@ const BUILD_WORKFLOW_CONTENT = [
   "env:",
   "  # Pin CodeSentinel CLI to a release tag, not the default branch",
   "  CODESENTINEL_VERSION: v0.8.0",
+  "  # Max auto-fix iterations (user-settable)",
+  "  MAX_ITERATIONS: 5",
   "",
   "jobs:",
   "  build-fix:",
@@ -359,7 +361,9 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
+  "            # Use a transient credential helper so the PAT is not persisted on disk",
+  "            git remote set-url origin \"https://github.com/${{ github.repository }}.git\" 2>&1",
+  "            git config credential.helper \"!f() { echo username=x-access-token; echo password=${GIT_PUSH_TOKEN}; }; f\"",
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
   "            if [ $? -ne 0 ]; then",
@@ -371,7 +375,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
+  "            git remote set-url origin \"https://github.com/${{ github.repository }}.git\" 2>&1",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
@@ -697,8 +701,20 @@ async function main(): Promise<void> {
     [values["max-high"], "--max-high"],
   ];
   for (const [value, name] of numericFlags) {
-    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
-      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
+    if (value === undefined) continue;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0 || !Number.isInteger(parsed)) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative integer)\n`);
+      showHelp();
+      return;
+    }
+    if (name === "--min-score" && parsed > MAX_SCORE) {
+      process.stderr.write(`Invalid value for --min-score: '${value}' (expected 0-${MAX_SCORE})\n`);
+      showHelp();
+      return;
+    }
+    if (name === "--max-iterations" && parsed === 0) {
+      process.stderr.write(`Invalid value for --max-iterations: '${value}' (expected a positive integer)\n`);
       showHelp();
       return;
     }
@@ -751,7 +767,7 @@ async function main(): Promise<void> {
       describe: providerModel,
     };
   }
-  if (values["dry-run"]) overrides.enable_auto_fix = false;
+  if (values["dry-run"]) overrides.dry_run = true;
   if (values.jsonl) overrides.jsonl_output = true;
   if (values.mcp) overrides.mcp = mergeOverride(overrides.mcp, { enabled: true });
   if (values["learning-db"]) {
