@@ -15,12 +15,13 @@ const SAMPLE_VALUE = 42;
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
  */
 export function calculate(x: number): number {
+  // Positive-only threshold by design: negative magnitudes always use MULTIPLIER.
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
   return x * multiplier;
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
-  return typeof v === "object" && v !== null && "value" in v;
+  return typeof v === "object" && v !== null && Object.hasOwn(v, "value");
 }
 
 /**
@@ -30,7 +31,7 @@ function isValueObject(v: unknown): v is { value?: number } {
  */
 export function processData(input: string): { value: number } {
   try {
-    const parsed = JSON.parse(input) as unknown;
+    const parsed: unknown = JSON.parse(input);
     if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
       return { value: parsed.value };
     }
@@ -59,7 +60,7 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
@@ -86,5 +87,13 @@ describe("processData", () => {
 
   test('empty string input is handled', () => {
     expect(processData("")).toEqual({ value: 0 });
+  });
+
+  test('zero value is preserved', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
+  });
+
+  test('values above Number.MAX_SAFE_INTEGER lose integer precision', () => {
+    expect(processData('{"value":9007199254740993}')).toEqual({ value: 9007199254740992 });
   });
 });
