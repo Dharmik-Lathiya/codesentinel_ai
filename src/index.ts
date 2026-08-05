@@ -181,7 +181,7 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          script: |",
   "            const body = context.payload.comment.body.trim();",
-  "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
+  "            const match = body.match(/^\/(review|fix|audit|score|testgen|chat|improve|gate|deadcode|describe|plan|ask)\b/i);",
   "            if (!match) { core.setFailed('No valid command'); return; }",
   "            const mode = match[1].toLowerCase();",
   "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
@@ -241,7 +241,7 @@ const WORKFLOW_CONTENT = [
   "                issue_number: context.issue.number",
   "              });",
   "              core.setOutput('title', issue.title);",
-  "              core.setOutput('body', (issue.body || '').slice(0, " + `${MAX_ISSUE_BODY_LENGTH}` + "));",
+`              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));`,
   "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
@@ -648,6 +648,7 @@ async function main(): Promise<void> {
       "max-iterations": { type: "string" },
       "auto-fix": { type: "boolean", default: false },
       scoring: { type: "boolean", default: true },
+      "no-scoring": { type: "boolean", default: false },
       "test-gen": { type: "boolean", default: false },
       provider: { type: "string" },
       ask: { type: "string" },
@@ -718,6 +719,7 @@ async function main(): Promise<void> {
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
+  if (values["no-scoring"]) overrides.enable_scoring = false;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
   if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
@@ -760,15 +762,6 @@ async function main(): Promise<void> {
   if (values["use-opencode-cli"]) {
     overrides.use_opencode_cli = true;
   }
-  if (values["yaml-config"] && !values.config) {
-    const searchPaths = [".opencode-reviewer.yml", ".codesentinel.yml", "codesentinel.config.yml"];
-    for (const p of searchPaths) {
-      if (existsSync(resolve(process.cwd(), p))) {
-        overrides.configFile = p;
-        break;
-      }
-    }
-  }
 
   const engine = Engine.fromInputs({
     configPath: values.config,
@@ -778,6 +771,12 @@ async function main(): Promise<void> {
 
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+
+  if (values["ask"] && modeArg && modeArg !== "chat") {
+    process.stderr.write(`Error: --ask requires chat mode (got '${modeArg}')\n`);
+    process.exitCode = 1;
+    return;
+  }
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     try {
@@ -798,15 +797,20 @@ async function main(): Promise<void> {
       path,
       content: readText(resolve(root, path)),
     }));
-    const findings = await engine.runDeadCode(files);
-    if (findings.length === 0) {
-      process.stdout.write("✅ No unused exports detected.\n");
-    } else {
-      process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
-      process.stdout.write(`Unused exports (${findings.length}):\n`);
-      for (const f of findings) {
-        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
+    try {
+      const findings = await engine.runDeadCode(files);
+      if (findings.length === 0) {
+        process.stdout.write("✅ No unused exports detected.\n");
+      } else {
+        process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
+        process.stdout.write(`Unused exports (${findings.length}):\n`);
+        for (const f of findings) {
+          process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
+        }
       }
+    } catch (err) {
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
     }
     return;
   }
