@@ -508,7 +508,7 @@ Options:
   --ask <question>            Ask a question (activates chat mode)
   --context <text>            Free-form project context for prompts
   --dry-run                   Show what would be fixed without writing (fix mode)
-  --jsonl                     Output AI review results in JSONL format
+  --jsonl                     Use JSONL format for AI review prompt parsing (no stdout output)
   --mcp                       Enable MCP server integration for library docs
   --learning-db <path>        Enable self-learning store at path
   --yaml-config               Enable YAML config file discovery (.opencode-reviewer.yml)
@@ -697,11 +697,42 @@ async function main(): Promise<void> {
     [values["max-high"], "--max-high"],
   ];
   for (const [value, name] of numericFlags) {
-    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+    if (value === undefined) continue;
+    const num = Number(value);
+    if (!Number.isFinite(num) || num < 0) {
       process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
       showHelp();
       return;
     }
+    if (name === "--min-score" && num > MAX_SCORE) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (expected 0-${MAX_SCORE})\n`);
+      showHelp();
+      return;
+    }
+    if (
+      (name === "--max-iterations" || name === "--max-critical" || name === "--max-high") &&
+      !Number.isInteger(num)
+    ) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (expected an integer)\n`);
+      showHelp();
+      return;
+    }
+  }
+
+  const VALID_PROVIDERS = new Set<string>(["openai", "anthropic", "gemini", "opencode", "opencode-cli"]);
+  if (values.provider && !VALID_PROVIDERS.has(values.provider)) {
+    process.stderr.write(`Invalid provider: '${values.provider}' (expected one of: openai, anthropic, gemini, opencode, opencode-cli)\n`);
+    showHelp();
+    return;
+  }
+  if (values["log-level"] && !["debug", "info", "warn", "error"].includes(values["log-level"])) {
+    process.stderr.write(`Invalid --log-level: '${values["log-level"]}' (expected one of: debug, info, warn, error)\n`);
+    showHelp();
+    return;
+  }
+
+  if (values["log-level"]) {
+    logger.level = values["log-level"] as LogLevel;
   }
 
   if (values["log-level"]) {
@@ -779,6 +810,10 @@ async function main(): Promise<void> {
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
+if (values["ask"] && modeArg && modeArg !== "chat") {
+    process.stdout.write(`[codesentinel:warn] --ask is only used in chat mode; ignoring --ask for mode '${modeArg}'\n`);
+  }
+
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     try {
       const answer = await engine.ask(values["ask"]);
@@ -798,7 +833,14 @@ async function main(): Promise<void> {
       path,
       content: readText(resolve(root, path)),
     }));
-    const findings = await engine.runDeadCode(files);
+    let findings;
+    try {
+      findings = await engine.runDeadCode(files);
+    } catch (err) {
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+      return;
+    }
     if (findings.length === 0) {
       process.stdout.write("✅ No unused exports detected.\n");
     } else {
