@@ -5,9 +5,10 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
-const KILOBYTE = 1024;
-const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const BYTES_PER_KILOBYTE = 1024;
+const MEGABYTE = BYTES_PER_KILOBYTE * BYTES_PER_KILOBYTE;
+const MAX_BUFFER_MEGABYTES = 64;
+const MAX_BUFFER = MAX_BUFFER_MEGABYTES * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
 
@@ -29,13 +30,11 @@ export async function git(
     const timedOut =
       err instanceof Error && (err as { killed?: boolean }).killed === true;
     const command = `git ${args.join(" ")}`;
+    const message = timedOut
+      ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
+      : `git command failed: ${command}`;
     if (!options.quiet) {
-      logger.error(
-        timedOut
-          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-          : `git command failed: ${command}`,
-        err,
-      );
+      logger.error(message, err);
     }
     throw err;
   }
@@ -61,7 +60,17 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  const baseRef = base ?? (await defaultBaseRef(cwd));
+  let baseRef: string | undefined;
+  if (base) {
+    baseRef = base;
+  } else {
+    try {
+      baseRef = await defaultBaseRef(cwd);
+    } catch (err) {
+      logger.warn("Failed to determine default base ref:", err);
+      baseRef = undefined;
+    }
+  }
   const rangeArgs = baseRef ? [baseRef + "..."] : [];
   let nameStatus: string;
   try {
@@ -147,7 +156,12 @@ function splitDiffByPath(diffText: string): Map<string, string> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
+  let fileStat;
+  try {
+    fileStat = await stat(full);
+  } catch {
+    return "";
+  }
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
