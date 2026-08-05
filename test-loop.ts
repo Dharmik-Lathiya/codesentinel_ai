@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
+export const EXTREME_THRESHOLD = 10000; // intentional STRICT > boundary: exactly EXTREME_THRESHOLD still uses MULTIPLIER; inputs above it use a hard 2x multiplier step
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
@@ -53,6 +53,7 @@ describe("calculate", () => {
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
+    [1e17, 1e17 * MULTIPLIER], // finite value above Number.MAX_SAFE_INTEGER: result loses integer precision (round-trips as observed)
   ])('boundary value %i', (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
