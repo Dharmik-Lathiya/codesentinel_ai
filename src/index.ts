@@ -533,7 +533,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -746,6 +746,7 @@ async function main(): Promise<void> {
       testgen: providerModel,
       chat: providerModel,
       describe: providerModel,
+      plan: providerModel,
     };
   }
   if (values["dry-run"]) overrides.enable_auto_fix = false;

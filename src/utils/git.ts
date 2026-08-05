@@ -10,6 +10,7 @@ const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER = 64 * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
+const MAX_DIFF_ATTEMPTS = 3;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -63,47 +64,54 @@ export async function collectDiff(
 ): Promise<DiffFile[]> {
   const baseRef = base ?? (await defaultBaseRef(cwd));
   const rangeArgs = baseRef ? [baseRef + "..."] : [];
-  let nameStatus: string;
-  try {
-    nameStatus = await git(
-      [
-        "-c",
-        "core.quotepath=false",
-        "diff",
-        "--name-status",
-        "-z",
-        "--no-renames",
-        ...rangeArgs,
-      ],
-      cwd,
-    );
-  } catch (err) {
-    logger.warn(
-      `Failed to collect diff against "${baseRef ?? "working tree"}":`,
-      err,
-    );
-    throw err;
-  }
+  const workspaceRoot = (
+    await git(["rev-parse", "--show-toplevel"], cwd)
+  ).trim();
 
-  const workspaceRoot = resolve(cwd);
-
-  let diffText: string;
-  try {
-    diffText = await git(
-      ["-c", "core.quotepath=false", "diff", "--no-renames", ...rangeArgs],
-      cwd,
-    );
-  } catch (err) {
-    logger.warn(
-      `Failed to collect diff output against "${baseRef ?? "working tree"}":`,
-      err,
-    );
-    throw err;
+  let nameStatusEntries: string[] = [];
+  let diffByPath = new Map<string, string>();
+  for (let attempt = 0; attempt < MAX_DIFF_ATTEMPTS; attempt++) {
+    let nameStatus: string;
+    let diffText: string;
+    try {
+      nameStatus = await git(
+        [
+          "-c",
+          "core.quotepath=false",
+          "diff",
+          "--name-status",
+          "-z",
+          "--no-renames",
+          ...rangeArgs,
+        ],
+        cwd,
+      );
+      diffText = await git(
+        ["-c", "core.quotepath=false", "diff", "--no-renames", ...rangeArgs],
+        cwd,
+      );
+    } catch (err) {
+      logger.warn(
+        `Failed to collect diff against "${baseRef ?? "working tree"}":`,
+        err,
+      );
+      throw err;
+    }
+    nameStatusEntries = nameStatus.split("\0");
+    const knownPaths = new Set<string>();
+    for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
+      const path = nameStatusEntries[i + 1];
+      if (path) knownPaths.add(path);
+    }
+    diffByPath = splitDiffByPath(diffText, knownPaths);
+    const consistent =
+      knownPaths.size === diffByPath.size &&
+      [...knownPaths].every((p) => diffByPath.has(p));
+    if (consistent || attempt === MAX_DIFF_ATTEMPTS - 1) break;
+    logger.warn("Diff output inconsistent with name-status; retrying");
   }
-  const diffByPath = splitDiffByPath(diffText);
 
   const files: DiffFile[] = [];
-  const nameStatusEntries = nameStatus.split("\0");
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
@@ -133,14 +141,29 @@ export async function collectDiff(
   return files;
 }
 
-function splitDiffByPath(diffText: string): Map<string, string> {
+function splitDiffByPath(
+  diffText: string,
+  knownPaths: Set<string>,
+): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    let path: string | undefined;
+    for (const candidate of knownPaths) {
+      if (
+        firstLine.endsWith(` b/${candidate}`) ||
+        firstLine === `a/${candidate} b/dev/null`
+      ) {
+        path = candidate;
+        break;
+      }
+    }
+    if (path === undefined) {
+      const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
+      if (!match) continue;
+      path = match[2] === "dev/null" ? match[1] : match[2];
+    }
     byPath.set(path, part);
   }
   return byPath;
@@ -160,14 +183,22 @@ async function readContent(full: string): Promise<string> {
   return text;
 }
 
-/** Determine a sensible base ref (main/master/develop or upstream merge-base). */
+/** Determine a sensible base ref (PR base branch, or main/master when available). */
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    try {
+      await git(["fetch", "origin", githubBaseRef], cwd, { quiet: true });
       if (await refExists(remoteBase, cwd)) return remoteBase;
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+      return "FETCH_HEAD";
+    } catch (err) {
+      logger.warn(`Failed to fetch base ref ${remoteBase}:`, err);
+    }
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
@@ -189,8 +220,8 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 }
 
 function mapStatus(code: string): DiffFile["status"] | null {
-  if (code.startsWith("A")) return "added";
-  if (code.startsWith("D")) return "deleted";
+  if (code === "A") return "added";
+  if (code === "D") return "deleted";
   if (code === "M") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
