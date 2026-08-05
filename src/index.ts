@@ -559,6 +559,13 @@ function showVersion(): void {
 
 /**
  * Command-line interface. Usage:
+function handleGateFailure(report: EngineReport): void {
+  if (report.mode === "gate" && report.gatePassed === false) {
+    process.stderr.write("Gate check failed\n");
+    process.exitCode = 1;
+  }
+}
+
  *   codesentinel --mode review --config ./codesentinel.config.json
  *   codesentinel score --provider opencode
  *   codesentinel chat --ask "How does auth work?"
@@ -568,6 +575,16 @@ async function main(): Promise<void> {
 
   // Handle top-level commands
   if (args[0] === "setup") {
+  // Handle help/version before any command dispatch
+  if (args.includes("--help") || args.includes("-h")) {
+    showHelp();
+    return;
+  }
+  if (args.includes("--version")) {
+    showVersion();
+    return;
+  }
+
     runSetup(args.includes("--force"));
     return;
   }
@@ -734,10 +751,15 @@ async function main(): Promise<void> {
     overrides.gate = mergeOverride(overrides.gate, { minScore: Number(values["min-score"]) });
   }
   if (values["max-critical"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Number(values["max-critical"]) });
+  if (values["log-level"]) {
+    const level = values["log-level"] as string;
+    if (!["debug", "info", "warn", "error"].includes(level)) {
+      process.stderr.write(`Invalid value for --log-level: '${level}' (expected debug | info | warn | error)\n`);
+      showHelp();
+      return;
+    }
+    logger.level = level as LogLevel;
   }
-  if (values["max-high"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Number(values["max-high"]) });
   }
 
   if (values.provider) {
