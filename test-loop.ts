@@ -13,6 +13,8 @@ const SAMPLE_VALUE = 42;
  * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Inputs above EXTREME_THRESHOLD scale by EXTREME_MULTIPLIER, so
+ * results jump by more than 2x at the cutoff (the input also grows).
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
@@ -30,7 +32,7 @@ function isValueObject(v: unknown): v is { value?: number } {
  */
 export function processData(input: string): { value: number } {
   try {
-    const parsed = JSON.parse(input) as unknown;
+    const parsed = JSON.parse(input);
     if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
       return { value: parsed.value };
     }
@@ -56,11 +58,24 @@ describe("calculate", () => {
   ])('boundary value %i', (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
+
+  test('integers past the safe-integer boundary lose precision', () => {
+    const exact = calculate(1099511627775);
+    const imprecise = calculate(1099511627776);
+    expect(Number.isSafeInteger(exact)).toBe(true);
+    expect(Number.isSafeInteger(imprecise)).toBe(false);
+    expect(imprecise).toBe(Number.MAX_SAFE_INTEGER + 1);
+    expect(imprecise).toBe(imprecise + 1);
+  });
 });
 
 describe("processData", () => {
   test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
+  });
+
+  test('zero value is returned, colliding with the invalid sentinel', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
   });
 
   test.each([
