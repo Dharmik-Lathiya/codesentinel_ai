@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -102,7 +102,11 @@ export async function collectDiff(
   }
   const diffByPath = splitDiffByPath(diffText);
 
-  const files: DiffFile[] = [];
+  const pending: Array<{
+    path: string;
+    status: NonNullable<DiffFile["status"]>;
+    content: Promise<string>;
+  }> = [];
   const nameStatusEntries = nameStatus.split("\0");
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
@@ -110,26 +114,37 @@ export async function collectDiff(
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
-    let content = "";
-    if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
-        continue;
-      }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
-    }
     const diff = diffByPath.get(path) ?? "";
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
-    files.push({ path, status, content, diff });
+    if (status === "deleted") {
+      pending.push({ path, status, content: Promise.resolve("") });
+      continue;
+    }
+    const full = resolve(workspaceRoot, path);
+    const rel = relative(workspaceRoot, full);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      logger.warn(`Skipping path outside workspace: ${path}`);
+      continue;
+    }
+    const content = readContent(full).then(
+      (value) => value,
+      () => {
+        logger.debug(`Could not read content for ${path}`);
+        return "";
+      },
+    );
+    pending.push({ path, status, content });
   }
+  const files: DiffFile[] = await Promise.all(
+    pending.map(async (entry) => ({
+      path: entry.path,
+      status: entry.status,
+      content: await entry.content,
+      diff: diffByPath.get(entry.path) ?? "",
+    })),
+  );
   return files;
 }
 
@@ -147,12 +162,12 @@ function splitDiffByPath(diffText: string): Map<string, string> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
-  if (fileStat.size > MAX_CONTENT_BYTES) {
+  const data = await readFile(full);
+  if (data.byteLength > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
+  const text = data.toString("utf8");
   if (text.includes("\0")) {
     logger.debug(`Skipping binary file content: ${full}`);
     return "";
@@ -170,7 +185,14 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
-  const candidates = ["origin/main", "origin/master", "main", "master"];
+  const candidates = [
+    "origin/main",
+    "origin/master",
+    "main",
+    "master",
+    "origin/develop",
+    "develop",
+  ];
   for (const ref of candidates) {
     if (await refExists(ref, cwd)) return ref;
   }
@@ -189,9 +211,9 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 }
 
 function mapStatus(code: string): DiffFile["status"] | null {
-  if (code.startsWith("A")) return "added";
-  if (code.startsWith("D")) return "deleted";
-  if (code === "M") return "modified";
+  if (code.includes("A")) return "added";
+  if (code.includes("D")) return "deleted";
+  if (code.includes("M")) return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
