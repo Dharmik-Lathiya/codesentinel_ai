@@ -21,21 +21,29 @@ export interface MCPContextEntry {
   relevance: number;
 }
 
+export interface MCPManagerOptions {
+  clientFactory?: () => Client;
+}
+
 export class MCPManager {
   private clients = new Map<string, Client>();
   private configs: MCPServerConfig[];
+  private clientFactory: () => Client;
 
-  constructor(configs: MCPServerConfig[] = []) {
+  constructor(configs: MCPServerConfig[] = [], options: MCPManagerOptions = {}) {
     this.configs = configs;
+    this.clientFactory =
+      options.clientFactory ??
+      (() =>
+        new Client(
+          { name: "codesentinel", version: "1.0.0" },
+          { capabilities: {} },
+        ));
   }
 
   async connectAll(): Promise<void> {
     for (const cfg of this.configs) {
-      try {
-        await this.connect(cfg);
-      } catch {
-        // Error already handled in connect()
-      }
+      await this.connect(cfg);
     }
   }
 
@@ -56,17 +64,24 @@ export class MCPManager {
 
   async connect(cfg: MCPServerConfig): Promise<void> {
     try {
-      const client = new Client(
-        { name: "codesentinel", version: "1.0.0" },
-        { capabilities: {} },
-      );
+      const client = this.clientFactory();
       const transport = this.createTransport(cfg);
       if (!transport) {
         return;
       }
       const timeout = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const abort = AbortSignal.timeout(timeout);
-      await client.connect(transport);
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        abort.addEventListener("abort", () => {
+          reject(new Error(`MCP connect to "${cfg.name}" timed out after ${timeout}ms`));
+        });
+      });
+      try {
+        await Promise.race([client.connect(transport), timeoutPromise]);
+      } catch (err) {
+        await client.close().catch(() => {});
+        throw err;
+      }
       this.clients.set(cfg.name, client);
       logger.info(`MCP: connected to "${cfg.name}"`);
     } catch (err) {
