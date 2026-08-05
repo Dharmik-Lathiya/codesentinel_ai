@@ -7,7 +7,8 @@ import { logger } from "./logger.js";
 const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const MAX_BUFFER_MEGABYTES = 64;
+const MAX_BUFFER = MAX_BUFFER_MEGABYTES * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
 
@@ -26,19 +27,27 @@ export async function git(
     });
     return stdout;
   } catch (err) {
-    const timedOut =
-      err instanceof Error && (err as { killed?: boolean }).killed === true;
-    const command = `git ${args.join(" ")}`;
-    if (!options.quiet) {
-      logger.error(
-        timedOut
-          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-          : `git command failed: ${command}`,
-        err,
-      );
-    }
+    logGitFailure(args, err, options.quiet);
     throw err;
   }
+}
+
+/** Log a git command failure, distinguishing timeouts from generic failures. */
+function logGitFailure(
+  args: string[],
+  err: unknown,
+  quiet?: boolean,
+): void {
+  if (quiet) return;
+  const timedOut =
+    err instanceof Error && (err as { killed?: boolean }).killed === true;
+  const command = `git ${args.join(" ")}`;
+  logger.error(
+    timedOut
+      ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
+      : `git command failed: ${command}`,
+    err,
+  );
 }
 
 export interface DiffFile {
@@ -61,7 +70,7 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  const baseRef = base ?? (await defaultBaseRef(cwd));
+  const baseRef = await resolveBase(base, cwd);
   const rangeArgs = baseRef ? [baseRef + "..."] : [];
   let nameStatus: string;
   try {
@@ -147,7 +156,12 @@ function splitDiffByPath(diffText: string): Map<string, string> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
+  let fileStat;
+  try {
+    fileStat = await stat(full);
+  } catch {
+    return "";
+  }
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
@@ -158,6 +172,20 @@ async function readContent(full: string): Promise<string> {
     return "";
   }
   return text;
+}
+
+/** Resolve the base ref, tolerating resolution failures. */
+async function resolveBase(
+  base: string | undefined,
+  cwd: string,
+): Promise<string | undefined> {
+  if (base) return base;
+  try {
+    return await defaultBaseRef(cwd);
+  } catch (err) {
+    logger.warn("Failed to determine default base ref:", err);
+    return undefined;
+  }
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
