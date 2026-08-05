@@ -85,7 +85,8 @@ export async function collectDiff(
     throw err;
   }
 
-  const workspaceRoot = resolve(cwd);
+  const root = (await git(["rev-parse", "--show-toplevel"], cwd, { quiet: true })).trim() || cwd;
+  const workspaceRoot = resolve(root);
 
   let diffText: string;
   try {

@@ -594,7 +594,13 @@ async function main(): Promise<void> {
   if (args[0] === "init-hook") {
     const root = process.cwd();
     const typeIdx = args.indexOf("--type");
-    const hookType = typeIdx >= 0 && args[typeIdx + 1] === "post-commit" ? "post-commit" : "pre-commit";
+    const rawType = typeIdx >= 0 ? args[typeIdx + 1] : undefined;
+    if (rawType !== undefined && rawType !== "pre-commit" && rawType !== "post-commit") {
+      process.stderr.write(`Unknown hook type: '${rawType}' (expected 'pre-commit' or 'post-commit')\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const hookType = rawType === "post-commit" ? "post-commit" : "pre-commit";
     const hookPath = installHook(root, hookType);
     process.stdout.write(`✅ ${hookType} hook installed at ${hookPath}\n`);
     if (hookType === "post-commit") {
@@ -725,10 +731,22 @@ async function main(): Promise<void> {
       showHelp();
       return;
     }
+    if (name === "--min-score" && value !== undefined && Number(value) > MAX_SCORE) {
+      process.stderr.write(`Invalid value for --min-score: '${value}' (expected 0-${MAX_SCORE})\n`);
+      showHelp();
+      return;
+    }
   }
 
-  if (values["log-level"]) {
-    logger.level = values["log-level"] as LogLevel;
+  const VALID_LOG_LEVELS = ["debug", "info", "warn", "error"];
+  const logLevel = values["log-level"];
+  if (logLevel) {
+    if (!VALID_LOG_LEVELS.includes(logLevel)) {
+      process.stderr.write(`Invalid log level: '${logLevel}' (expected one of: ${VALID_LOG_LEVELS.join(", ")})\n`);
+      showHelp();
+      return;
+    }
+    logger.level = logLevel as LogLevel;
   }
   if (values.json) {
     logger.setJsonMode(true);
