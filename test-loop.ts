@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
+export const EXTREME_THRESHOLD = 10000; // intentional load/stress mode: inputs strictly above this use a hard 2x multiplier step (exclusive boundary, x > 10000)
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
@@ -11,6 +11,8 @@ const SAMPLE_VALUE = 42;
 
 /**
  * Scales the input by a fixed multiplier.
+ * Load/stress mode: once x exceeds the exclusive boundary EXTREME_THRESHOLD
+ * (i.e. x > 10000), a 2x multiplier is applied so larger inputs scale more aggressively.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
  */
@@ -53,7 +55,7 @@ describe("calculate", () => {
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
-  ])('boundary value %i', (input, expected) => {
+  ])('calculate(%i)', (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
 });
