@@ -4,8 +4,8 @@ export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a 
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
-const MODERATE_INPUT = 5000;
-const HIGH_INPUT = 6000;
+const MID_RANGE_INPUT = 5000;
+const NEAR_THRESHOLD_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 
@@ -19,7 +19,7 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-function isValueObject(v: unknown): v is { value?: number } {
+function isValueObject(v: unknown): v is { value: unknown } {
   return typeof v === "object" && v !== null && "value" in v;
 }
 
@@ -35,8 +35,11 @@ export function processData(input: string): { value: number } {
       return { value: parsed.value };
     }
     return { value: 0 };
-  } catch {
-    return { value: 0 };
+  } catch (e) {
+    if (e instanceof SyntaxError) {
+      return { value: 0 };
+    }
+    throw e;
   }
 }
 
@@ -45,15 +48,17 @@ describe("calculate", () => {
     [0, 0],
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
+    [MID_RANGE_INPUT, MID_RANGE_INPUT * MULTIPLIER],
+    [NEAR_THRESHOLD_INPUT, NEAR_THRESHOLD_INPUT * MULTIPLIER],
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
-  ])('boundary value %i', (input, expected) => {
+    [Number.MAX_SAFE_INTEGER / MULTIPLIER, (Number.MAX_SAFE_INTEGER / MULTIPLIER) * MULTIPLIER],
+    [Number.MAX_VALUE, Infinity],
+  ])('boundary value %s', (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
 });
