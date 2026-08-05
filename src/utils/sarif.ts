@@ -39,6 +39,7 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
 };
 
 const COMMENT_TRUNCATION_LENGTH = 40;
+const HASH_RADIX = 36;
 
 function simpleHash(s: string): string {
   let hash = 0;
@@ -47,13 +48,13 @@ function simpleHash(s: string): string {
     hash = ((hash << 5) - hash) + char;
     hash |= 0;
   }
-  return Math.abs(hash).toString(36);
+  return Math.abs(hash).toString(HASH_RADIX);
 }
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
+      artifactLocation: { uri: file.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/") },
       ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
@@ -90,7 +91,7 @@ export function renderSarif(report: EngineReport): string {
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
-        shortDescription: { text: f.comment },
+        shortDescription: { text: f.comment.slice(0, COMMENT_TRUNCATION_LENGTH) },
       });
     }
     results.push({
