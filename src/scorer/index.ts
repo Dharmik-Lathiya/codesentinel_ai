@@ -62,14 +62,14 @@ export class Scorer {
       .filter((f) => f.category === "smell" || f.category === "style")
       .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity] / 2, 0);
 
-    const security = clamp(MAX_SCORE - securityPenalty);
-    const maintainability = clamp(MAX_SCORE - smellPenalty);
+    const security = MAX_SCORE - securityPenalty;
+    const maintainability = MAX_SCORE - smellPenalty;
 
     // Readability proxy: average function length / comment presence.
-    const readability = clamp(this.readabilityMetric(files));
+    const readability = this.readabilityMetric(files);
 
     // Test coverage proxy: ratio of source files that have a sibling test.
-    const testCoverage = clamp(this.coverageMetric(files));
+    const testCoverage = this.coverageMetric(files);
 
     return this.finalize({
       readability,
