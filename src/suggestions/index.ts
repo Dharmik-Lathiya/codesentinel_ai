@@ -3,6 +3,8 @@ const CONTEXT_BEFORE = 3;
 const CONTEXT_AFTER = 2;
 const MAX_FINDINGS = 10;
 
+const esc = (s: string): string => s.replace(/([*_`#>~\[\]|\\])/g, "\\$1");
+
 /**
  * Wrap multiple findings into a single comment with suggestion blocks.
  */
@@ -22,7 +24,7 @@ export function buildSuggestionsComment(
       const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
       const original = lines[f.line - 1];
       const code = suggested || `${context}  // ${f.comment}\n${original}\n${after}`;
-      parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
+      parts.push(`**${esc(f.file)}:${f.line}** — ${esc(f.severity.toUpperCase())} — ${esc(f.comment)}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
     } else {
       const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
       parts.push(`**${f.file}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${suggested || "// " + f.comment}\n\`\`\`\n`);

@@ -27,6 +27,12 @@ export const WEIGHTS = {
 
 const MAX_SCORE = 100;
 
+const MAX_LONG_LINE_LENGTH = 120;
+const READABILITY_BASE_SCORE = 100;
+const COMMENT_RATIO_WEIGHT = 20;
+const MIN_READABILITY_SCORE = 20;
+const NO_FILES_DEFAULT = 100;
+
 const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
 
 
@@ -153,11 +159,11 @@ export class Scorer {
         (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
-      const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const longLines = lines.filter((l) => l.length > MAX_LONG_LINE_LENGTH).length;
+      const score = READABILITY_BASE_SCORE - longLines * 2 + commentRatio * COMMENT_RATIO_WEIGHT;
+      total += Math.max(MIN_READABILITY_SCORE, score);
     }
-    return fileCount ? total / fileCount : 100;
+    return fileCount ? total / fileCount : NO_FILES_DEFAULT;
   }
 
   /** Coverage heuristic: fraction of source files that have a related test. */
