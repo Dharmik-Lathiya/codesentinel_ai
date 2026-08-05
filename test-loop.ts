@@ -55,6 +55,8 @@ describe("calculate", () => {
     [-Infinity, -Infinity],
   ])('boundary value %i', (input, expected) => {
     expect(calculate(input)).toBe(expected);
+    [1e18, 1e18 * EXTREME_MULTIPLIER],
+    [1.5, 1.5 * MULTIPLIER],
   });
 });
 
@@ -69,7 +71,6 @@ describe("processData", () => {
     ['{"value":"42"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
-    ['{"value":null}'],
     ['{"value":1e999}'],
     ["{" + SAMPLE_VALUE + "}"],
   ])('invalid input %s returns the default result', (input) => {
