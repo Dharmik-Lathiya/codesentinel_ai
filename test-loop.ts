@@ -19,7 +19,7 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-function isValueObject(v: unknown): v is { value?: number } {
+function isValueObject(v: unknown): v is { value: unknown } {
   return typeof v === "object" && v !== null && "value" in v;
 }
 
@@ -35,9 +35,10 @@ export function processData(input: string): { value: number } {
       return { value: parsed.value };
     }
     return { value: 0 };
-  } catch {
-    return { value: 0 };
-  }
+    } catch (err) {
+      console.error("processData: JSON parse failed", err);
+      return { value: 0 };
+    }
 }
 
 describe("calculate", () => {
@@ -59,7 +60,7 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([7, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
