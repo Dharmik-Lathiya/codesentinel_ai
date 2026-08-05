@@ -10,9 +10,17 @@ const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 
 /**
- * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Results above Number.MAX_SAFE_INTEGER lose integer precision and are
+ * returned unchanged (the original input) rather than silently corrupted.
+ */
+export function calculate(x: number): number {
+  // NOTE: hard step is intentional, so the scaled value is discontinuous at
+  // the threshold (x <= 10000 uses MULTIPLIER, x > 10000 uses EXTREME_MULTIPLIER).
+  const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
+  const result = x * multiplier;
+  return Number.isSafeInteger(result) ? result : x;
+}
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
@@ -23,15 +31,23 @@ function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
 
+function isSafeNumber(v: unknown): v is number {
+  return (
+    typeof v === "number" &&
+    Number.isFinite(v) &&
+    (Number.isInteger(v) ? Number.isSafeInteger(v) : true)
+  );
+}
+
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
- * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
- * Finite numbers above Number.MAX_SAFE_INTEGER lose integer precision.
+ * input (unparseable JSON, missing/non-numeric value, NaN/Infinity, or
+ * integers that lose precision above Number.MAX_SAFE_INTEGER).
  */
 export function processData(input: string): { value: number } {
   try {
     const parsed = JSON.parse(input) as unknown;
-    if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
+    if (isValueObject(parsed) && isSafeNumber(parsed.value)) {
       return { value: parsed.value };
     }
     return { value: 0 };
@@ -59,7 +75,7 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([42, 7])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
@@ -67,7 +83,6 @@ describe("processData", () => {
     ["not-json"],
     ["[1,2,3]"],
     ['{"value":"42"}'],
-    ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
@@ -78,6 +93,14 @@ describe("processData", () => {
 
   test('negative and decimal values are preserved', () => {
     expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
+  });
+
+  test('a zero value is preserved', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
+  });
+
+  test('unsafe integers above MAX_SAFE_INTEGER fall back to the sentinel', () => {
+    expect(processData('{"value":9007199254740993}')).toEqual({ value: 0 });
   });
 
   test('whitespace-padded JSON is parsed', () => {
