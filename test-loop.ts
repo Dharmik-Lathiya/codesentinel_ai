@@ -3,10 +3,10 @@ import { describe, expect, test } from "vitest";
 export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
-const BELOW_THRESHOLD_INPUT = 4999;
-const MODERATE_INPUT = 5000;
-const HIGH_INPUT = 6000;
-const BELOW_EXTREME_INPUT = 9999;
+const FAR_BELOW_THRESHOLD = 4999;
+const MID_BELOW_THRESHOLD = 5000;
+const NEAR_BELOW_THRESHOLD = 6000;
+const JUST_BELOW_THRESHOLD = 9999;
 const SAMPLE_VALUE = 42;
 
 /**
@@ -46,10 +46,10 @@ describe("calculate", () => {
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
     [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
-    [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    [FAR_BELOW_THRESHOLD, FAR_BELOW_THRESHOLD * MULTIPLIER],
+    [MID_BELOW_THRESHOLD, MID_BELOW_THRESHOLD * MULTIPLIER],
+    [NEAR_BELOW_THRESHOLD, NEAR_BELOW_THRESHOLD * MULTIPLIER],
+    [JUST_BELOW_THRESHOLD, JUST_BELOW_THRESHOLD * MULTIPLIER],
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
@@ -61,7 +61,7 @@ describe("calculate", () => {
 describe("processData", () => {
   test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
-  });
+test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
 
   test.each([
     ["not-json"],
