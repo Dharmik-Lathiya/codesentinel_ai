@@ -125,37 +125,48 @@ export class LearningCache {
     return this.withLock(key, async () => {
       const existing = await this.backend.get(key);
       if (existing) {
-        const idx = existing.lessons.findIndex((l) => l.pattern === lesson.pattern);
-        if (idx >= 0) {
-          existing.lessons[idx] = lesson;
-        } else {
-          existing.lessons.push(lesson);
-        }
+        this.mergeLesson(existing, lesson);
         existing.updatedAt = new Date().toISOString();
-        try { await this.backend.set(key, existing); } catch { /* ignore */ }
+        await this.persist(key, existing);
       } else {
-        const entry: CacheEntry = {
+        await this.persist(key, {
           key,
           lessons: [lesson],
           updatedAt: new Date().toISOString(),
-        };
-        try { await this.backend.set(key, entry); } catch { /* ignore */ }
+        });
       }
     });
   }
 
+  private mergeLesson(entry: CacheEntry, lesson: Lesson): void {
+    const idx = entry.lessons.findIndex((l) => l.pattern === lesson.pattern);
+    if (idx >= 0) {
+      entry.lessons[idx] = lesson;
+    } else {
+      entry.lessons.push(lesson);
+    }
+  }
+
+  private async persist(key: string, entry: CacheEntry): Promise<void> {
+    try {
+      await this.backend.set(key, entry);
+    } catch {
+      // ignore
+    }
+  }
+
+  private async readEntry(file: string): Promise<CacheEntry | null> {
+    const key = file.replace(/\.json$/, "");
+    try {
+      return await this.backend.get(key);
+    } catch {
+      return null;
+    }
+  }
+
   async getAll(): Promise<Lesson[]> {
     const files: string[] = await this.backend.list().catch(() => []);
-    const entries = await Promise.all(
-      files.map(async (file) => {
-        const key = file.replace(/\.json$/, "");
-        try {
-          return await this.backend.get(key);
-        } catch {
-          return null;
-        }
-      })
-    );
+    const entries = await Promise.all(files.map((file) => this.readEntry(file)));
     const lessons: Lesson[] = [];
     for (const entry of entries) {
       if (entry) lessons.push(...entry.lessons.map((l) => ({ ...l })));
@@ -173,16 +184,7 @@ export class LearningCache {
 
   async getStats(): Promise<{ totalEntries: number; totalLessons: number }> {
     const files = await this.backend.list();
-    const entries = await Promise.all(
-      files.map(async (file) => {
-        const key = file.replace(/\.json$/, "");
-        try {
-          return await this.backend.get(key);
-        } catch {
-          return null;
-        }
-      })
-    );
+    const entries = await Promise.all(files.map((file) => this.readEntry(file)));
     let totalLessons = 0;
     for (const entry of entries) {
       if (entry) totalLessons += entry.lessons.length;
