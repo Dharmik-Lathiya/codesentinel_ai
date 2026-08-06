@@ -630,9 +630,13 @@ async function main(): Promise<void> {
       } catch (err) {
         process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
       }
-    } else {
+} else {
+      if (!parsed.filePath) {
+        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
+        return;
+      }
       try {
-        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+        await engine.dismissByFinding(parsed.filePath, parsed.lineNum ?? null, parsed.ruleIdArg ?? `${parsed.filePath}:all`, parsed.reason);
         process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
