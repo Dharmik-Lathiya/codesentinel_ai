@@ -16,7 +16,7 @@ export interface CodeSentinelPlugin {
   name: string;
   /** Called once at engine startup. */
   init?(ctx: PluginContext): void | Promise<void>;
-  /** Add findings based on the analyzed files. */
+  /** Add findings for a single file. Called once per analyzed file. */
   analyze?(
     files: { path: string; content: string }[],
   ): Finding[] | Promise<Finding[]>;
