@@ -13,6 +13,8 @@ const SAMPLE_VALUE = 42;
  * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Note: inputs strictly greater than EXTREME_THRESHOLD use a 2x multiplier, so
+ * calculate(x) jumps exactly 2x for a value just above the threshold.
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
@@ -42,18 +44,18 @@ export function processData(input: string): { value: number } {
 
 describe("calculate", () => {
   test.each([
-    [0, 0],
-    [-5, -5 * MULTIPLIER],
-    [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
-    [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
-    [NaN, NaN],
-    [Infinity, Infinity],
-    [-Infinity, -Infinity],
-  ])('boundary value %i', (input, expected) => {
+    ['zero', 0, 0],
+    ['negative', -5, -5 * MULTIPLIER],
+    ['below threshold', BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
+    ['moderate', MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
+    ['high', HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
+    ['below extreme', BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
+    ['exactly extreme', EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
+    ['above extreme', EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    ['NaN', NaN, NaN],
+    ['Infinity', Infinity, Infinity],
+    ['-Infinity', -Infinity, -Infinity],
+  ])('boundary value %s', (_name, input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
 });
