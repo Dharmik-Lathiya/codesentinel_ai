@@ -8,6 +8,8 @@ const HTTP_STATUS_503 = "503";
 const HTTP_STATUS_SERVICE_UNAVAILABLE = HTTP_STATUS_503;
 const HTTP_STATUS_502 = "502";
 const HTTP_STATUS_BAD_GATEWAY = HTTP_STATUS_502;
+const MIN_DELAY_MS = 1;
+const MAX_DELAY_MS = 60 * MILLISECONDS_PER_SECOND;
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -64,7 +66,10 @@ export async function retry<T>(
       if (attempt === maxAttempts || !shouldRetry(err)) {
         throw err;
       }
-      const delay = baseDelayMs * Math.pow(2, attempt - 1) * Math.random();
+      const delay = Math.min(
+        MAX_DELAY_MS,
+        Math.max(MIN_DELAY_MS, baseDelayMs * Math.pow(2, attempt - 1) * Math.random()),
+      );
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
