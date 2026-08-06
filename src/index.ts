@@ -794,10 +794,21 @@ async function main(): Promise<void> {
   if (modeArg === "deadcode") {
     const root = process.cwd();
     const rels = collectFiles(root, engine.config.include, engine.config.exclude);
-    const files = rels.map((path) => ({
-      path,
-      content: readText(resolve(root, path)),
-    }));
+    const files: Array<{ path: string; content: string }> = [];
+    let unreadable = 0;
+    for (const path of rels) {
+      try {
+        files.push({ path, content: readText(resolve(root, path)) });
+      } catch (err) {
+        unreadable++;
+        process.stderr.write(
+          `Skipping unreadable file ${path}: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      }
+    }
+    if (unreadable > 0) {
+      process.stderr.write(`Skipped ${unreadable} unreadable file(s).\n`);
+    }
     let findings;
     try {
       findings = await engine.runDeadCode(files);
@@ -818,25 +829,26 @@ async function main(): Promise<void> {
     return;
   }
 
-  const report = await engine.run();
+const report = await engine.run();
 
-  // JSON output mode
-  if (values.json) {
-    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+  const exitOnGateFailed = () => {
     if (report.mode === "gate" && report.gatePassed === false) {
       process.stderr.write("Gate check failed\n");
       process.exitCode = 1;
     }
+  };
+
+  // JSON output mode
+  if (values.json) {
+    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    exitOnGateFailed();
     return;
   }
 
   // SARIF output mode
   if (values.sarif) {
     process.stdout.write(renderSarif(report) + "\n");
-    if (report.mode === "gate" && report.gatePassed === false) {
-      process.stderr.write("Gate check failed\n");
-      process.exitCode = 1;
-    }
+    exitOnGateFailed();
     return;
   }
 
@@ -870,10 +882,7 @@ async function main(): Promise<void> {
   process.stdout.write(`\nDone in ${report.metrics.durationMs}ms.\n`);
 
   // Exit non-zero if gate fails
-  if (report.mode === "gate" && report.gatePassed === false) {
-    process.stderr.write("Gate check failed\n");
-    process.exitCode = 1;
-  }
+  exitOnGateFailed();
 }
 
 main().catch((err) => {
