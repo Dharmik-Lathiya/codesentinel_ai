@@ -63,10 +63,10 @@ const gitleaks: ScannerTool = {
       return results.map((r) => ({
         file: r.File,
         line: r.StartLine || null,
-        severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
+        severity: (["low", "medium", "high", "critical"].includes((r.Severity ?? "medium").toLowerCase()) ? (r.Severity ?? "medium").toLowerCase() : "medium") as "low" | "medium" | "high" | "critical",
         category: "security" as const,
         comment: `[gitleaks] ${r.Description}`,
-        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
+        suggestion: `Match: ${(r.Match ?? "").trim().slice(0, SNIPPET_LENGTH)}`,
         source: "scanner" as const,
       }));
     } catch (e) {
