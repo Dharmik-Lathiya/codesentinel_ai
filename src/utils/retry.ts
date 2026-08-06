@@ -25,15 +25,24 @@ export interface RetryOptions {
   shouldRetry?: (err: unknown) => boolean;
 }
 
+const RETRY_STATUS_PATTERN = new RegExp(
+  `\\b${HTTP_STATUS_RATE_LIMIT}\\b|\\b${HTTP_STATUS_SERVICE_UNAVAILABLE}\\b|\\b${HTTP_STATUS_BAD_GATEWAY}\\b`,
+);
+
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
+    const status =
+      (err as any).status ??
+      (err as any).statusCode ??
+      (err as any).response?.status;
     return (
+      RETRY_STATUS_PATTERN.test(msg) ||
+      String(status) === HTTP_STATUS_RATE_LIMIT ||
+      String(status) === HTTP_STATUS_SERVICE_UNAVAILABLE ||
+      String(status) === HTTP_STATUS_BAD_GATEWAY ||
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(HTTP_STATUS_RATE_LIMIT) ||
-      msg.includes(HTTP_STATUS_SERVICE_UNAVAILABLE) ||
-      msg.includes(HTTP_STATUS_BAD_GATEWAY) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")

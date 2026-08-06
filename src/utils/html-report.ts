@@ -1,11 +1,14 @@
 import type { EngineReport } from "../engine/index.js";
 
+const FALLBACK_COLOR = "#6b7280";
+const FIX_PENDING_COLOR = "#d97706";
+
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "#dc2626",
   high: "#ea580c",
-  medium: "#d97706",
+  medium: FIX_PENDING_COLOR,
   low: "#2563eb",
-  info: "#6b7280",
+  info: FALLBACK_COLOR,
 };
 
 const BOLD_FONT_WEIGHT = "700";
@@ -55,7 +58,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const findingsRows = report.findings
     .map((f) => {
-      const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
+      const color = SEVERITY_COLORS[f.severity] ?? FALLBACK_COLOR;
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
@@ -69,7 +72,7 @@ export function renderHtmlReport(report: EngineReport): string {
   const fixRows = report.fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
+      const statusColor = a.fixed ? (a.verified ? "#16a34a" : FIX_PENDING_COLOR) : FALLBACK_COLOR;
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
@@ -85,7 +88,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? FALLBACK_COLOR })),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -149,10 +152,10 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
   if (!score) return "";
   return `
     <div class="card" style="display:flex;align-items:center;gap:1rem">
-      <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
+      <div class="score-ring" role="img" aria-label="Quality score ${score.overall}" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Tests ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -160,10 +163,11 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
 
 function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
   if (items.length === 0) return "";
-  const maxCount = Math.max(...items.map((item) => item.value));
+  const sortedItems = [...items].sort((a, b) => b.value - a.value);
+  const maxCount = Math.max(...sortedItems.map((item) => item.value));
   return `<h2>${escapeHtml(title)}</h2>
   <div class="bar-chart">
-    ${items
+    ${sortedItems
       .map((item) => {
         const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
         return `<div class="bar">
@@ -211,7 +215,7 @@ function escapeHtml(s: string): string {
 .replace(/'/g, APOSTROPHE_ENTITY);
 }
 
-function scoreColor(score: number): string {
+export function scoreColor(score: number): string {
   if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
   if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
   if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
