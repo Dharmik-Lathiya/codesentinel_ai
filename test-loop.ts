@@ -13,6 +13,7 @@ const SAMPLE_VALUE = 42;
  * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Inputs strictly above EXTREME_THRESHOLD use a hard 2x multiplier step (discontinuous jump between 10000 and 10001).
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
@@ -55,6 +56,11 @@ describe("calculate", () => {
     [-Infinity, -Infinity],
   ])('boundary value %i', (input, expected) => {
     expect(calculate(input)).toBe(expected);
+  });
+
+  test('literal expectations independent of the multiplier constants', () => {
+    expect(calculate(4999)).toBe(20475904);
+    expect(calculate(10001)).toBe(81928192);
   });
 });
 
