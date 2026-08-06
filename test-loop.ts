@@ -12,7 +12,10 @@ const SAMPLE_VALUE = 42;
 /**
  * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Integer precision is lost for inputs above
+ * Math.trunc(Number.MAX_SAFE_INTEGER / MULTIPLIER) (~2^41) on the normal path,
+ * and above Math.trunc(Number.MAX_SAFE_INTEGER / EXTREME_MULTIPLIER) when the
+ * extreme 2x multiplier applies (inputs above EXTREME_THRESHOLD).
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
@@ -23,10 +26,12 @@ function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
 
-/**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
- * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
+ * input (unparseable JSON, non-numeric/missing value, NaN/Infinity).
  * Finite numbers above Number.MAX_SAFE_INTEGER lose integer precision.
+ * NOTE: the sentinel 0 also swallows parse errors (empty catch), so a real zero
+ * value and an invalid input are indistinguishable to callers.
+ */
  */
 export function processData(input: string): { value: number } {
   try {
@@ -50,10 +55,15 @@ describe("calculate", () => {
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+  ])('boundary value %i', (input, expected) => {
+    expect(calculate(input)).toBe(expected);
+  });
+
+  test.each([
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
-  ])('boundary value %i', (input, expected) => {
+  ])('non-finite input %s passes through', (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
 });
