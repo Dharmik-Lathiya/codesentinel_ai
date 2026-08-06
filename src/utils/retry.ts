@@ -64,7 +64,8 @@ export async function retry<T>(
       if (attempt === maxAttempts || !shouldRetry(err)) {
         throw err;
       }
-      const delay = baseDelayMs * Math.pow(2, attempt - 1) * Math.random();
+      const jitter = 0.5 + 0.5 * Math.random();
+      const delay = baseDelayMs * Math.pow(2, attempt - 1) * jitter;
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
