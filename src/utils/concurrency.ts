@@ -1,12 +1,15 @@
 /**
  * Execute async operations with bounded concurrency. Returns results in input order.
+ * Errors are collected per-item; the caller is responsible for filtering.
  */
 export async function concurrentMap<T, R>(
   items: T[],
   fn: (item: T, index: number) => Promise<R>,
   concurrency: number = 5,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
+): Promise<(R | Error)[]> {
+  if (!Array.isArray(items)) throw new TypeError('items must be an array');
+  if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error('concurrency must be a positive integer');
+  const results: (R | Error)[] = new Array(items.length);
   let nextIndex = 0;
 
   async function worker(): Promise<void> {
@@ -15,7 +18,7 @@ export async function concurrentMap<T, R>(
       try {
         results[index] = await fn(items[index], index);
       } catch (error) {
-        throw error; // rethrow to propagate failure
+        results[index] = error instanceof Error ? error : new Error(String(error));
       }
     }
   }
@@ -24,7 +27,7 @@ export async function concurrentMap<T, R>(
   try {
     await Promise.all(workers);
   } catch (error) {
-    throw error; // rethrow to propagate failure
+    throw error instanceof Error ? error : new Error(String(error));
   }
   return results;
 }

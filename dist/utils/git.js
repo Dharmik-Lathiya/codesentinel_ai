@@ -1,11 +1,35 @@
 import { execFile } from "node:child_process";
+import { readFile, stat } from "node:fs/promises";
 import { promisify } from "node:util";
+import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
 const exec = promisify(execFile);
+const KILOBYTE = 1024;
+const MEGABYTE = KILOBYTE * KILOBYTE;
+const MAX_BUFFER = 64 * MEGABYTE;
+const GIT_TIMEOUT_MS = 60_000;
+const MAX_CONTENT_BYTES = MEGABYTE;
 /** Run a git command in the given cwd, returning stdout. */
-export async function git(args, cwd = process.cwd()) {
-    const { stdout } = await exec("git", args, { cwd, maxBuffer: 64 * 1024 * 1024 });
-    return stdout;
+export async function git(args, cwd = process.cwd(), options = {}) {
+    try {
+        const { stdout } = await exec("git", args, {
+            cwd,
+            maxBuffer: MAX_BUFFER,
+            timeout: GIT_TIMEOUT_MS,
+            killSignal: "SIGTERM",
+        });
+        return stdout;
+    }
+    catch (err) {
+        const timedOut = err instanceof Error && err.killed === true;
+        const command = `git ${args.join(" ")}`;
+        if (!options.quiet) {
+            logger.error(timedOut
+                ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
+                : `git command failed: ${command}`, err);
+        }
+        throw err;
+    }
 }
 /**
  * Collect the changed files for the current PR/branch relative to a base ref.
@@ -13,44 +37,93 @@ export async function git(args, cwd = process.cwd()) {
  * upstream branch is configured.
  */
 export async function collectDiff(base, cwd = process.cwd()) {
-    const baseRef = base || (await defaultBaseRef(cwd));
+    const baseRef = base ?? (await defaultBaseRef(cwd));
+    const rangeArgs = baseRef ? [baseRef + "..."] : [];
     let nameStatus;
     try {
-        nameStatus = await git(["diff", "--name-status", "--no-renames", baseRef + "..."], cwd);
+        nameStatus = await git([
+            "-c",
+            "core.quotepath=false",
+            "diff",
+            "--name-status",
+            "-z",
+            "--no-renames",
+            ...rangeArgs,
+        ], cwd);
     }
     catch (err) {
-        logger.warn(`Failed to collect diff against "${baseRef}":`, err);
-        return [];
+        logger.warn(`Failed to collect diff against "${baseRef ?? "working tree"}":`, err);
+        throw err;
     }
-    const lines = nameStatus
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean);
+    const workspaceRoot = resolve(cwd);
+    let diffText;
+    try {
+        diffText = await git(["-c", "core.quotepath=false", "diff", "--no-renames", ...rangeArgs], cwd);
+    }
+    catch (err) {
+        logger.warn(`Failed to collect diff output against "${baseRef ?? "working tree"}":`, err);
+        throw err;
+    }
+    const diffByPath = splitDiffByPath(diffText);
     const files = [];
-    for (const line of lines) {
-        const [statusCode, path] = line.split(/\t/);
+    const nameStatusEntries = nameStatus.split("\0");
+    for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
+        const statusCode = nameStatusEntries[i];
+        const path = nameStatusEntries[i + 1];
         if (!statusCode || !path)
             continue;
         const status = mapStatus(statusCode);
+        if (!status)
+            continue;
         let content = "";
         if (status !== "deleted") {
+            const full = resolve(workspaceRoot, path);
+            const rel = relative(workspaceRoot, full);
+            if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+                logger.warn(`Skipping path outside workspace: ${path}`);
+                continue;
+            }
             try {
-                content = await git(["show", `:${path}`], cwd);
+                content = await readContent(full);
             }
             catch {
                 logger.debug(`Could not read content for ${path}`);
             }
         }
-        let diff = "";
-        try {
-            diff = await git(["diff", baseRef + "...", "--", path], cwd);
-        }
-        catch {
-            logger.debug(`Could not collect diff for ${path}`);
+        const diff = diffByPath.get(path) ?? "";
+        if (!diff && status !== "deleted") {
+            logger.warn(`Could not collect diff for ${path}`);
         }
         files.push({ path, status, content, diff });
     }
     return files;
+}
+function splitDiffByPath(diffText) {
+    const byPath = new Map();
+    for (const part of diffText.split(/(?=^diff --git )/m)) {
+        if (!part.startsWith("diff --git "))
+            continue;
+        const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
+        const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
+        if (!match)
+            continue;
+        const path = match[2] === "dev/null" ? match[1] : match[2];
+        byPath.set(path, part);
+    }
+    return byPath;
+}
+async function readContent(full) {
+    const fileStat = await stat(full);
+    if (fileStat.size > MAX_CONTENT_BYTES) {
+        logger.debug(`Skipping oversized file content: ${full}`);
+        return "";
+    }
+    const text = await readFile(full, { encoding: "utf8" });
+    if (text.includes("\0")) {
+        logger.debug(`Skipping binary file content: ${full}`);
+        return "";
+    }
+    return text;
 }
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
 async function defaultBaseRef(cwd) {
@@ -68,15 +141,16 @@ async function defaultBaseRef(cwd) {
         if (await refExists(ref, cwd))
             return ref;
     }
-    // Fall back to merge-base with the default remote branch.
-    return "HEAD";
+    // No base ref found: fall back to a plain working-tree diff.
+    return undefined;
 }
 async function refExists(ref, cwd) {
     try {
-        await git(["rev-parse", "--verify", ref], cwd);
+        await git(["rev-parse", "--verify", ref], cwd, { quiet: true });
         return true;
     }
     catch {
+        logger.debug(`Ref ${ref} does not exist`);
         return false;
     }
 }
@@ -85,8 +159,9 @@ function mapStatus(code) {
         return "added";
     if (code.startsWith("D"))
         return "deleted";
-    if (code.startsWith("R"))
-        return "renamed";
-    return "modified";
+    if (code === "M")
+        return "modified";
+    logger.warn(`Unknown git status code: ${code}`);
+    return null;
 }
 //# sourceMappingURL=git.js.map

@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import type { EngineReport } from "../engine/index.js";
 
 interface SarifResult {
@@ -13,7 +14,7 @@ interface SarifResult {
 }
 
 interface SarifRun {
-  tool: { driver: { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } };
+  tool: { driver: { name: string; version: string; rules: ReportingDescriptor[] } };
   results: SarifResult[];
 }
 
@@ -22,6 +23,12 @@ interface SarifLog {
   version: string;
   runs: SarifRun[];
 }
+interface ReportingDescriptor {
+  id: string;
+  shortDescription: { text: string };
+}
+
+const PKG_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
 
 const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   critical: "error",
@@ -31,33 +38,55 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
-const MAX_COMMENT_LENGTH = 40;
+const COMMENT_TRUNCATION_LENGTH = 40;
+
+function simpleHash(s: string): string {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    const char = s.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: file },
-      ...(line ? { region: { startLine: line } } : {}),
+      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
+      ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
 }
 
 function createToolDriver(
-  rules: Map<string, { id: string; shortDescription: { text: string } }>
-): { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } {
+  rules: Map<string, ReportingDescriptor>
+): { name: string; version: string; rules: ReportingDescriptor[] } {
   return {
     name: "CodeSentinel AI",
-    version: "0.1.6",
-    rules: [...rules.values()],
+    version: PKG_VERSION,
+    rules: Array.from(rules.values()),
+  };
+}
+
+function createSarifRun(
+  rules: Map<string, ReportingDescriptor>,
+  results: SarifResult[]
+): SarifRun {
+  return {
+    tool: {
+      driver: createToolDriver(rules),
+    },
+    results,
   };
 }
 
 export function renderSarif(report: EngineReport): string {
-  const rules = new Map<string, { id: string; shortDescription: { text: string } }>();
+  const rules = new Map<string, ReportingDescriptor>();
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
-    const ruleId = `${f.category}:${f.comment.slice(0, MAX_COMMENT_LENGTH).replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const ruleId = `${f.category}:${simpleHash(f.comment)}`;
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
@@ -75,14 +104,7 @@ export function renderSarif(report: EngineReport): string {
   const sarif: SarifLog = {
     $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
     version: "2.1.0",
-    runs: [
-      {
-        tool: {
-          driver: createToolDriver(rules),
-        },
-        results,
-      },
-    ],
+    runs: [createSarifRun(rules, results)],
   };
 
   return JSON.stringify(sarif, null, 2);

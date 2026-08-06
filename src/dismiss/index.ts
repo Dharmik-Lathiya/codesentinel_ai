@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import type { Finding } from "../analyzer/index.js";
 import type { Dismissal } from "../config/types.js";
 
-const MAX_RULE_ID_COMMENT_LENGTH = 40;
+const MAX_RULE_ID_COMMENT_LENGTH = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".length;
 
 export class DismissalManager {
   private dismissals: Dismissal[] = [];

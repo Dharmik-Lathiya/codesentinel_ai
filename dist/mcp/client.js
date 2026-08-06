@@ -2,6 +2,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { logger } from "../utils/logger.js";
+const DEFAULT_TIMEOUT_MS = 5000;
+const DEFAULT_QUERY_MAX_TOKENS = 4000;
+const DEFAULT_LIBRARY_MAX_TOKENS = 2000;
 export class MCPManager {
     clients = new Map();
     configs;
@@ -10,28 +13,38 @@ export class MCPManager {
     }
     async connectAll() {
         for (const cfg of this.configs) {
-            await this.connect(cfg);
+            try {
+                await this.connect(cfg);
+            }
+            catch {
+                // Error already handled in connect()
+            }
+        }
+    }
+    createTransport(cfg) {
+        if (cfg.type === "local" && cfg.command) {
+            return new StdioClientTransport({
+                command: cfg.command[0],
+                args: cfg.command.slice(1),
+                env: cfg.environment,
+            });
+        }
+        else if (cfg.type === "remote" && cfg.url) {
+            return new SSEClientTransport(new URL(cfg.url));
+        }
+        else {
+            logger.warn(`MCP: invalid config for "${cfg.name}"`);
+            return null;
         }
     }
     async connect(cfg) {
         try {
             const client = new Client({ name: "codesentinel", version: "1.0.0" }, { capabilities: {} });
-            let transport;
-            if (cfg.type === "local" && cfg.command) {
-                transport = new StdioClientTransport({
-                    command: cfg.command[0],
-                    args: cfg.command.slice(1),
-                    env: cfg.environment,
-                });
-            }
-            else if (cfg.type === "remote" && cfg.url) {
-                transport = new SSEClientTransport(new URL(cfg.url));
-            }
-            else {
-                logger.warn(`MCP: invalid config for "${cfg.name}"`);
+            const transport = this.createTransport(cfg);
+            if (!transport) {
                 return;
             }
-            const timeout = cfg.timeoutMs ?? 5000;
+            const timeout = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS;
             const abort = AbortSignal.timeout(timeout);
             await client.connect(transport);
             this.clients.set(cfg.name, client);
@@ -51,40 +64,52 @@ export class MCPManager {
         }
         this.clients.clear();
     }
-    async queryContext(prompt, maxTokens = 4000) {
+    async queryClientTools(serverName, client, prompt) {
         const entries = [];
-        for (const [name, client] of this.clients) {
-            try {
-                const tools = await client.listTools();
-                for (const tool of tools.tools) {
-                    if (tool.name.includes("search") || tool.name.includes("query") || tool.name.includes("docs")) {
-                        const result = await client.callTool({ name: tool.name, arguments: { query: prompt } });
-                        const content = JSON.stringify(result.content ?? "");
-                        entries.push({ serverName: name, content, relevance: 1 });
-                    }
+        try {
+            const tools = await client.listTools();
+            for (const tool of tools.tools) {
+                if (tool.name.includes("search") || tool.name.includes("query") || tool.name.includes("docs")) {
+                    const result = await client.callTool({ name: tool.name, arguments: { query: prompt } });
+                    const content = JSON.stringify(result.content ?? "");
+                    entries.push({ serverName, content, relevance: 1 });
                 }
             }
-            catch (err) {
-                logger.warn(`MCP: query error on "${name}": ${err}`);
-            }
+        }
+        catch (err) {
+            logger.warn(`MCP: query error on "${serverName}": ${err}`);
+        }
+        return entries;
+    }
+    async queryContext(prompt, maxTokens = DEFAULT_QUERY_MAX_TOKENS) {
+        const entries = [];
+        for (const [name, client] of this.clients) {
+            const clientEntries = await this.queryClientTools(name, client, prompt);
+            entries.push(...clientEntries);
         }
         return this.trimByBudget(entries, maxTokens);
     }
-    async getLibraryDocs(libraries, maxTokens = 2000) {
+    async getClientLibraryDocs(serverName, client, library) {
+        const entries = [];
+        try {
+            const tools = await client.listTools();
+            for (const tool of tools.tools) {
+                if (tool.name.toLowerCase().includes("docs") || tool.name.toLowerCase().includes("context")) {
+                    const result = await client.callTool({ name: tool.name, arguments: { library } });
+                    const content = JSON.stringify(result.content ?? "");
+                    entries.push({ serverName, content, relevance: 0.8 });
+                }
+            }
+        }
+        catch { /* skip */ }
+        return entries;
+    }
+    async getLibraryDocs(libraries, maxTokens = DEFAULT_LIBRARY_MAX_TOKENS) {
         const entries = [];
         for (const lib of libraries) {
             for (const [name, client] of this.clients) {
-                try {
-                    const tools = await client.listTools();
-                    for (const tool of tools.tools) {
-                        if (tool.name.toLowerCase().includes("docs") || tool.name.toLowerCase().includes("context")) {
-                            const result = await client.callTool({ name: tool.name, arguments: { library: lib } });
-                            const content = JSON.stringify(result.content ?? "");
-                            entries.push({ serverName: name, content, relevance: 0.8 });
-                        }
-                    }
-                }
-                catch { /* skip */ }
+                const clientEntries = await this.getClientLibraryDocs(name, client, lib);
+                entries.push(...clientEntries);
             }
         }
         return this.trimByBudget(entries, maxTokens);

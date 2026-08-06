@@ -8,7 +8,7 @@ export declare class GeminiProvider implements AIProvider {
     private readonly secrets;
     readonly name = "gemini";
     private client;
-    private model;
+    private models;
     private initializing;
     constructor(secrets: RuntimeSecrets);
     private getModel;

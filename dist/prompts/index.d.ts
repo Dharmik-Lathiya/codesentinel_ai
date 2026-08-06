@@ -1,5 +1,5 @@
 import type { CodeSentinelConfig } from "../config/types.js";
-export type PromptName = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "describe" | "generate-utils" | "generate-docs";
+export type PromptName = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "describe" | "generate-utils" | "generate-docs" | "plan";
 /** Variables substituted into a prompt template. */
 export type PromptVars = Record<string, string | number | boolean | null>;
 /**

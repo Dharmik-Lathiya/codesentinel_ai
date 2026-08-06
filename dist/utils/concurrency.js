@@ -1,7 +1,12 @@
 /**
  * Execute async operations with bounded concurrency. Returns results in input order.
+ * Errors are collected per-item; the caller is responsible for filtering.
  */
 export async function concurrentMap(items, fn, concurrency = 5) {
+    if (!Array.isArray(items))
+        throw new TypeError('items must be an array');
+    if (!Number.isInteger(concurrency) || concurrency < 1)
+        throw new Error('concurrency must be a positive integer');
     const results = new Array(items.length);
     let nextIndex = 0;
     async function worker() {
@@ -11,7 +16,7 @@ export async function concurrentMap(items, fn, concurrency = 5) {
                 results[index] = await fn(items[index], index);
             }
             catch (error) {
-                throw error; // rethrow to propagate failure
+                results[index] = error instanceof Error ? error : new Error(String(error));
             }
         }
     }
@@ -20,7 +25,7 @@ export async function concurrentMap(items, fn, concurrency = 5) {
         await Promise.all(workers);
     }
     catch (error) {
-        throw error; // rethrow to propagate failure
+        throw error instanceof Error ? error : new Error(String(error));
     }
     return results;
 }

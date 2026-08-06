@@ -1,5 +1,4 @@
 import { ProviderUnavailableError } from "./provider.js";
-const DEFAULT_MAX_TOKENS = 4096;
 /**
  * OpenAI-backed provider. Uses the chat completions API. The SDK is loaded
  * lazily (on first call) so the package works without the optional dependency
@@ -39,11 +38,13 @@ export class OpenAIProvider {
     async complete(req) {
         try {
             const client = await this.getClient();
+            const tokens = req.model.maxTokens ?? req.maxTokens;
             const res = await client.chat.completions.create({
                 model: req.model.model,
                 messages: req.messages,
                 temperature: req.temperature ?? 0.2,
-                max_tokens: req.maxTokens ?? DEFAULT_MAX_TOKENS,
+                ...(tokens ? { max_tokens: tokens } : {}),
+                ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
             });
             const message = res.choices?.[0]?.message?.content ?? "";
             return {

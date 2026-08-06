@@ -1,7 +1,10 @@
 import { writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { homedir } from "node:os";
 import { Engine, configFromInputs } from "../engine/index.js";
 import { GitHubReporter } from "./reporter.js";
 import { logger } from "../utils/logger.js";
+import { setupOpenCode } from "../opencode/installer.js";
 /**
  * GitHub Action entrypoint. Reads inputs from the environment (set by action.yml
  * as INPUT_<NAME>), runs the engine, posts PR comments and writes the job
@@ -19,8 +22,39 @@ export async function runAction() {
         test_runner: get("test_runner"),
         provider: get("provider"),
         auto_merge: get("auto_merge"),
+        issue_title: get("issue_title"),
+        issue_body: get("issue_body"),
+        ask: get("ask"),
+        use_opencode_cli: get("use_opencode_cli"),
     };
-    const configOverrides = configFromInputs(inputs);
+    const useOpencodeCliFlag = inputs.use_opencode_cli === "true";
+    const opencodeVersion = get("opencode_version") || "latest";
+    // When the OpenCode CLI mode is requested, install the binary (or use cached)
+    // and prepend its directory to PATH so runner.ts can locate it.
+    if (useOpencodeCliFlag) {
+        try {
+            const { binaryPath } = await setupOpenCode(opencodeVersion);
+            const binDir = dirname(binaryPath);
+            const existingPath = process.env.PATH ?? "";
+            if (!existingPath.split(":").includes(binDir)) {
+                process.env.PATH = `${binDir}:${existingPath}`;
+            }
+            logger.info(`action: OpenCode CLI installed at ${binaryPath}`);
+        }
+        catch (err) {
+            logger.warn(`action: OpenCode CLI install failed (${err}), continuing without it`);
+        }
+    }
+    else {
+        // Also prepend the default install dir so system-installed opencode is found
+        const defaultBinDir = `${process.env.HOME ?? homedir()}/.codesentinel/bin`;
+        const existingPath = process.env.PATH ?? "";
+        if (!existingPath.split(":").includes(defaultBinDir)) {
+            process.env.PATH = `${defaultBinDir}:${existingPath}`;
+        }
+    }
+    // Build config overrides from all inputs (including use_opencode_cli)
+    const configOverrides = configFromInputs({ ...inputs, use_opencode_cli: useOpencodeCliFlag ? "true" : undefined });
     const secrets = {
         github_token: process.env.GITHUB_TOKEN,
         openai_api_key: process.env.OPENAI_API_KEY || get("openai_api_key"),
@@ -29,13 +63,29 @@ export async function runAction() {
         opencode_api_key: process.env.OPENCODE_API_KEY || get("opencode_api_key"),
         opencode_base_url: process.env.OPENCODE_BASE_URL || get("opencode_base_url"),
     };
+    const runMode = (inputs.mode || "review");
     const engine = Engine.fromInputs({
         configPath: get("config_path") || undefined,
-        overrides: { ...configOverrides, enable_auto_fix: configOverrides.enable_auto_fix ?? false },
+        overrides: { ...configOverrides, mode: runMode, enable_auto_fix: configOverrides.enable_auto_fix ?? false },
         secrets,
     });
-    const report = await engine.run();
+    // Handle chat mode with ask question
+    if (runMode === "chat" && inputs.ask) {
+        const answer = await engine.ask(inputs.ask);
+        process.stdout.write(answer + "\n");
+        return;
+    }
     const autoMerge = configOverrides.autoMerge ?? false;
+    const report = await engine.run();
+    // Write human-readable output to stdout so workflows can capture it via tee
+    const outputMode = report.mode ?? configOverrides.mode ?? "plan";
+    process.stdout.write(`\n=== CodeSentinel [${outputMode}] ===\n`);
+    process.stdout.write(report.summary + "\n");
+    if (report.score) {
+        process.stdout.write(`Score: ${report.score.overall}/100 ` +
+            `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
+            `security ${report.score.security}, coverage ${report.score.test_coverage})\n`);
+    }
     await publishOutputs(report, secrets, autoMerge);
 }
 /** Post comments / issues and write the step summary + metrics outputs. */

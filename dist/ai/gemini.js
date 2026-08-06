@@ -1,5 +1,4 @@
 import { ProviderUnavailableError } from "./provider.js";
-const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 /**
  * Google Gemini provider. Uses generateContent with the combined prompt text.
  */
@@ -7,7 +6,7 @@ export class GeminiProvider {
     secrets;
     name = "gemini";
     client = null;
-    model = null;
+    models = new Map();
     initializing = null;
     constructor(secrets) {
         this.secrets = secrets;
@@ -16,32 +15,41 @@ export class GeminiProvider {
         }
     }
     async getModel(req) {
-        if (this.model)
-            return this.model;
+        const modelName = req.model.model;
+        const existing = this.models.get(modelName);
+        if (existing)
+            return existing;
         if (!this.initializing) {
-            this.initializing = import("@google/generative-ai").then((mod) => {
+            this.initializing = (async () => {
+                const mod = await import("@google/generative-ai");
                 const { GoogleGenerativeAI } = mod;
                 const genAI = new GoogleGenerativeAI(this.secrets.gemini_api_key);
-                return genAI.getGenerativeModel({ model: req.model.model });
-            });
+                return genAI.getGenerativeModel({ model: modelName });
+            })();
         }
         try {
-            this.model = await this.initializing;
+            const model = await this.initializing;
+            this.models.set(modelName, model);
+            return model;
         }
         catch (err) {
             this.initializing = null;
             throw new ProviderUnavailableError("gemini", `failed to initialize model: ${err.message}`);
         }
-        return this.model;
     }
     async #generateContent(model, prompt, req) {
         try {
+            const tokens = req.model.maxTokens ?? req.maxTokens;
+            const generationConfig = {
+                temperature: req.temperature ?? 0.2,
+                ...(tokens ? { maxOutputTokens: tokens } : {}),
+            };
+            if (req.responseFormat === "json_object") {
+                generationConfig.responseMimeType = "application/json";
+            }
             return await model.generateContent({
                 contents: [{ role: "user", parts: [{ text: prompt }] }],
-                generationConfig: {
-                    temperature: req.temperature ?? 0.2,
-                    maxOutputTokens: req.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-                },
+                generationConfig,
             });
         }
         catch (err) {
@@ -61,7 +69,17 @@ export class GeminiProvider {
             .join("\n\n");
         const res = await this.#generateContent(model, prompt, req);
         const text = res.response?.text?.() ?? "";
-        return { content: text, model: req.model.model, provider: this.name };
+        const usage = res.response?.usageMetadata;
+        return {
+            content: text,
+            model: req.model.model,
+            provider: this.name,
+            usage: usage ? {
+                promptTokens: usage.promptTokenCount,
+                completionTokens: usage.candidatesTokenCount,
+                totalTokens: usage.totalTokenCount,
+            } : undefined,
+        };
     }
 }
 export function geminiFactory(secrets) {

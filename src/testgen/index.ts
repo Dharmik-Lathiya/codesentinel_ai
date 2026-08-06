@@ -3,7 +3,7 @@ import { dirname, join, relative, resolve } from "node:path";
 
 import { languageOf, ensureDir } from "../utils/files.js";
 import type { CodeSentinelConfig } from "../config/types.js";
-import type { AIHub } from "../ai/index.js";
+import type { EngineAI } from "../ai/providers/opencode-cli.js";
 import { PromptRegistry } from "../prompts/index.js";
 import { extractJson } from "../ai/provider.js";
 
@@ -65,7 +65,7 @@ export interface GeneratedTest {
 export class TestGenerator {
   constructor(
     private config: CodeSentinelConfig,
-    private ai: AIHub,
+    private ai: EngineAI,
     private prompts: PromptRegistry,
   ) {}
 
@@ -87,7 +87,13 @@ export class TestGenerator {
     for (const rel of uniqueFiles) {
       const file = files.find((f) => f.path === rel);
       if (!file) continue;
-      const gen = await this.generateForFile(root, file);
+      let gen: GeneratedTest | null;
+      try {
+        gen = await this.generateForFile(root, file);
+      } catch (e) {
+        console.error(`Failed to generate tests for ${rel}:`, e);
+        continue;
+      }
       if (gen) results.push(gen);
     }
     return results;
@@ -112,10 +118,16 @@ export class TestGenerator {
       project_context: this.config.project_context || "(none)",
     });
 
-    const res = await this.ai.complete("testgen", [
-      { role: "system", content: "You generate precise unit tests." },
-      { role: "user", content: prompt },
-    ]);
+    let res: any;
+    try {
+      res = await this.ai.complete("testgen", [
+        { role: "system", content: "You generate precise unit tests." },
+        { role: "user", content: prompt },
+      ]);
+    } catch (e) {
+      console.error(`AI completion failed for ${file.path}:`, e);
+      return null;
+    }
 
     const parsed = extractJson<{ test_file_path?: string; content: string }>(
       res.content,

@@ -1,5 +1,6 @@
 import type { Finding } from "../analyzer/index.js";
 import type { SecretPattern, Severity } from "../config/types.js";
+import { logger } from "../utils/logger.js";
 
 function checkLine(
   line: string,
@@ -9,11 +10,14 @@ function checkLine(
   re: RegExp,
 ): Finding | null {
   const trimmed = line.trim();
-  if (trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")) return null;
-  if (trimmed.startsWith("#")) return null;
+  if (!trimmed) return null;
+
+  // Strip inline comments before regex matching to avoid false positives
+  const stripped = trimmed.replace(/\/\/.*$/, "").replace(/#.*$/, "").trim();
+  if (!stripped) return null;
 
   re.lastIndex = 0;
-  if (re.test(line)) {
+  if (re.test(stripped)) {
     return {
       severity: pattern.severity as Severity,
       category: "security",
@@ -52,4 +56,37 @@ export function scanSecrets(
   }
 
   return findings;
+}
+
+/**
+ * Redact secrets from file content before sending to an AI provider.
+ * Returns a new string with each detected secret replaced by
+ * `[REDACTED:<pattern-id>]`. The original content is never modified.
+ */
+export function redactSecrets(
+  content: string,
+  patterns: SecretPattern[],
+): string {
+  let redacted = content;
+  let redactedCount = 0;
+
+  for (const pattern of patterns) {
+    const flags = pattern.regex.startsWith("(?i)") ? "gi" : "g";
+    const source = pattern.regex.startsWith("(?i)") ? pattern.regex.slice(4) : pattern.regex;
+    let re: RegExp;
+    try {
+      re = new RegExp(source, flags);
+    } catch {
+      continue;
+    }
+    redacted = redacted.replace(re, (match) => {
+      redactedCount++;
+      return `[REDACTED:${pattern.id}]`;
+    });
+  }
+
+  if (redactedCount > 0) {
+    logger.info(`redactSecrets: redacted ${redactedCount} secret(s) from AI-bound content`);
+  }
+  return redacted;
 }

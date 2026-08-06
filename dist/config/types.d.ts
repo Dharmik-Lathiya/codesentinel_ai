@@ -6,15 +6,17 @@
  * and pick different AI providers/models for different tasks.
  */
 /** Supported operational modes. */
-export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe" | "improve";
+export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe" | "improve" | "plan";
 /** Supported AI providers. */
-export type Provider = "openai" | "anthropic" | "gemini" | "opencode";
+export type Provider = "openai" | "anthropic" | "gemini" | "opencode" | "opencode-cli";
 /** Supported test runners targeted by the test generation module. */
 export type TestRunner = "jest" | "vitest";
 /** Per-task model routing: each capability can use its own provider + model. */
 export interface ModelConfig {
     provider: Provider;
     model: string;
+    /** Max output tokens. Defaults to 4096 if unset. */
+    maxTokens?: number;
 }
 /** A single categorization of a finding produced by the analyzer/AI. */
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
@@ -149,6 +151,10 @@ export interface CodeSentinelConfig {
     custom_prompt_paths: Record<string, string>;
     /** Free-form project context injected into prompts. */
     project_context: string;
+    /** Issue title (used by plan mode). */
+    issue_title?: string;
+    /** Issue body (used by plan mode). */
+    issue_body?: string;
     /** Default provider + model for every task unless overridden per-task. */
     default_model: ModelConfig;
     /** Per-task model overrides. */
@@ -160,6 +166,7 @@ export interface CodeSentinelConfig {
         testgen?: ModelConfig;
         chat?: ModelConfig;
         describe?: ModelConfig;
+        plan?: ModelConfig;
     };
     /** Test runner to generate tests for. */
     test_runner: TestRunner;
@@ -203,6 +210,8 @@ export interface CodeSentinelConfig {
     improve_type?: "test" | "util" | "doc";
     /** YAML config file path (alternative to codesentinel.config.json) */
     configFile?: string;
+    /** Use the opencode CLI binary directly instead of the AI provider API. */
+    use_opencode_cli?: boolean;
 }
 /** External linter configuration. */
 export interface LinterConfig {
@@ -215,7 +224,7 @@ export interface LinterConfig {
 }
 /** Quality gate threshold configuration. */
 export interface GateConfig {
-    /** Minimum overall score (0-100) required to pass. */
+    /** Minimum overall score (0-{@link MAX_GATE_SCORE}) required to pass. */
     minScore: number;
     /** Maximum number of critical findings allowed. */
     maxCritical: number;
@@ -226,6 +235,7 @@ export interface GateConfig {
     /** Fail on any bug findings. */
     blockOnBugs: boolean;
 }
+export declare const MAX_GATE_SCORE = 100;
 /** Strategy for blending AI security scores with static baseline. */
 export type SecurityBlendStrategy = "min" | "avg" | "static-only";
 /** Secret scanning pattern configuration. */
@@ -284,4 +294,6 @@ export interface RuntimeSecrets {
     opencode_api_key?: string;
     /** Optional base URL for self-hosted OpenCode-compatible endpoints. */
     opencode_base_url?: string;
+    /** When "true", the OpenCode provider uses the CLI binary instead of HTTP. */
+    use_opencode_cli?: string;
 }

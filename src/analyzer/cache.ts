@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { logger } from "../utils/logger.js";
 import type { Finding } from "../analyzer/index.js";
 
 /**
@@ -287,6 +288,7 @@ export class AnalysisCache {
       const content = readFileSync(filePath, "utf8");
       return JSON.parse(content) as AnalysisCacheEntry;
     } catch {
+      logger.debug("Cache load failed");
       return null;
     }
   }
@@ -299,7 +301,7 @@ export class AnalysisCache {
       const filePath = join(this.cacheDir, `${key}.json`);
       writeFileSync(filePath, JSON.stringify(entry), "utf8");
     } catch {
-      // Cache failures must never break the run
+      logger.debug("Cache save failed");
     }
   }
 
@@ -321,7 +323,7 @@ export class AnalysisCache {
         }
       }
     } catch {
-      // Ignore errors during cache loading
+      logger.debug("Memory cache load failed");
     }
   }
 
@@ -345,7 +347,7 @@ export class AnalysisCache {
           require("node:fs").unlinkSync(filePath);
         }
       } catch {
-        // Ignore errors during cleanup
+        logger.debug("Cache eviction cleanup failed");
       }
     }
   }
@@ -363,7 +365,7 @@ export class AnalysisCache {
         require("node:fs").unlinkSync(filePath);
       }
     } catch {
-      // Ignore errors during cleanup
+      logger.debug("Cache clear failed");
     }
   }
 
@@ -388,7 +390,7 @@ export class AnalysisCache {
         totalSizeBytes += stat.size;
       }
     } catch {
-      // Ignore errors
+      logger.debug("Cache stats failed");
     }
 
     return {

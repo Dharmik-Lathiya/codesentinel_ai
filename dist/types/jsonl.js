@@ -1,10 +1,10 @@
 import { z } from "zod";
 export const SeveritySchema = z.enum(["info", "low", "medium", "high", "critical"]);
-const MAX_SUMMARY_LENGTH = 2000;
-const MAX_TITLE_LENGTH = 200;
-const MAX_DESCRIPTION_LENGTH = 1000;
-const MAX_MESSAGE_LENGTH = 1000;
-const MAX_SUGGESTION_LENGTH = 2000;
+export const MAX_SUMMARY_LENGTH = 2000;
+export const MAX_TITLE_LENGTH = 200;
+export const MAX_DESCRIPTION_LENGTH = 1000;
+export const MAX_MESSAGE_LENGTH = 1000;
+export const MAX_SUGGESTION_LENGTH = 2000;
 export const SummaryEntrySchema = z.object({
     type: z.literal("summary"),
     summary: z.string().min(1).max(MAX_SUMMARY_LENGTH),
@@ -21,9 +21,9 @@ export const StrengthEntrySchema = z.object({
 export const IssueEntrySchema = z.object({
     type: z.literal("issue"),
     severity: SeveritySchema,
-    category: z.enum(["bug", "security", "performance", "smell", "style"]),
+    category: z.enum(["bug", "security", "performance", "smell", "style", "reliability", "architecture", "testing", "praise"]),
     file: z.string().min(1),
-    line: z.number().int().positive().nullable().optional(),
+    line: z.number().int().positive().nullish(),
     message: z.string().min(1).max(MAX_MESSAGE_LENGTH),
     suggestion: z.string().max(MAX_SUGGESTION_LENGTH).optional(),
 });

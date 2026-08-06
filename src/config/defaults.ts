@@ -120,7 +120,7 @@ export const DEFAULT_MCP_CONFIG: MCPConfig = {
 
 export const DEFAULT_BATCH_CONFIG: BatchConfig = {
   enabled: true,
-  batchSize: 5,
+  batchSize: 2,
   maxFilesPerBatch: 5,
   maxLinesPerFile: 500,
 };
@@ -140,6 +140,9 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   custom_prompt_paths: {},
   project_context: "",
 
+  issue_title: undefined,
+  issue_body: undefined,
+
   default_model: { provider: "opencode", model: "deepseek-v4-flash-free" },
   models: {
     review: { provider: "opencode", model: "deepseek-v4-flash-free" },
@@ -149,6 +152,7 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
     testgen: { provider: "opencode", model: "deepseek-v4-flash-free" },
     chat: { provider: "opencode", model: "deepseek-v4-flash-free" },
     describe: { provider: "opencode", model: "deepseek-v4-flash-free" },
+    plan: { provider: "opencode", model: "deepseek-v4-flash-free" },
   },
 
   test_runner: "vitest",
@@ -191,6 +195,7 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   mcp: DEFAULT_MCP_CONFIG,
   batch: DEFAULT_BATCH_CONFIG,
   autoMerge: false,
+  use_opencode_cli: true,
 };
 
 /** Deep-merge two configs (shallow per top-level key, special-cased objects/arrays). */

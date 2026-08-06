@@ -5,45 +5,76 @@ export interface DbAdapter {
   close(): Promise<void>;
 }
 
-export async function connectDb(url?: string): Promise<DbAdapter> {
-  if (url?.startsWith("postgres://") || url?.startsWith("postgresql://")) {
-    const { default: pg } = await import("pg");
-    const pool = new pg.Pool({ connectionString: url });
-    return {
-      run: (sql, params) => pool.query(sql, params).then(() => {}),
-      get: (sql, params) => pool.query(sql, params).then((r) => r.rows[0]),
-      all: (sql, params) => pool.query(sql, params).then((r) => r.rows),
-      close: () => pool.end(),
+async function connectPostgres(url: string): Promise<DbAdapter> {
+  let pg;
+  try {
+    pg = (await import("pg")).default;
+  } catch {
+    throw new Error("pg is not installed. Run: npm install pg");
+  }
+  const pool = new pg.Pool({ connectionString: url });
+  return {
+    run: (sql, params) => pool.query(sql, params).then(() => {}),
+    get: (sql, params) => pool.query(sql, params).then((r) => r.rows[0]),
+    all: (sql, params) => pool.query(sql, params).then((r) => r.rows),
+    close: () => pool.end(),
+  };
+}
+
+async function connectMysql(url: string): Promise<DbAdapter> {
+  try {
+    const mod = await Function('return import("mysql2/promise")')() as any;
+    const conn = await mod.createConnection(url);
+    const getMysql = async (sql: string, params?: any[]) => {
+      const [rows] = await conn.execute(sql, params);
+      return (rows as any[])[0];
     };
+    const allMysql = async (sql: string, params?: any[]) => {
+      const [rows] = await conn.execute(sql, params);
+      return rows as any[];
+    };
+    return {
+      run: (sql: string, params?: any[]) => conn.execute(sql, params).then(() => {}),
+      get: getMysql,
+      all: allMysql,
+      close: () => conn.end(),
+    };
+  } catch {
+    throw new Error("mysql2 is not installed. Run: npm install mysql2");
   }
-  if (url?.startsWith("mysql://")) {
-    try {
-      const mod = await Function('return import("mysql2/promise")')() as any;
-      const conn = await mod.createConnection(url);
-      return {
-        run: (sql: string, params?: any[]) => conn.execute(sql, params).then(() => {}),
-        get: async (sql: string, params?: any[]) => {
-          const [rows] = await conn.execute(sql, params);
-          return (rows as any[])[0];
-        },
-        all: async (sql: string, params?: any[]) => {
-          const [rows] = await conn.execute(sql, params);
-          return rows as any[];
-        },
-        close: () => conn.end(),
-      };
-    } catch {
-      throw new Error("mysql2 is not installed. Run: npm install mysql2");
-    }
+}
+
+async function connectSqlite(url?: string): Promise<DbAdapter> {
+  let BetterSqlite3;
+  try {
+    BetterSqlite3 = (await import("better-sqlite3")).default;
+  } catch {
+    throw new Error("better-sqlite3 is not installed. Run: npm install better-sqlite3");
   }
-  const { default: BetterSqlite3 } = await import("better-sqlite3");
   const db = new BetterSqlite3(url ?? ":memory:");
   db.pragma("journal_mode = WAL");
   const closeDb = (): void => { db.close(); };
   return {
-    run: (sql, params) => { db.prepare(sql).run(...(params ?? [])); return Promise.resolve(); },
+    run: (sql, params) => {
+      if (params && params.length > 0) {
+        db.prepare(sql).run(...params);
+      } else {
+        db.exec(sql);
+      }
+      return Promise.resolve();
+    },
     get: (sql, params) => Promise.resolve(db.prepare(sql).get(...(params ?? [])) as any),
     all: (sql, params) => Promise.resolve(db.prepare(sql).all(...(params ?? [])) as any[]),
     close: () => { closeDb(); return Promise.resolve(); },
   };
+}
+
+export async function connectDb(url?: string): Promise<DbAdapter> {
+  if (url?.startsWith("postgres://") || url?.startsWith("postgresql://")) {
+    return connectPostgres(url);
+  }
+  if (url?.startsWith("mysql://")) {
+    return connectMysql(url);
+  }
+  return connectSqlite(url);
 }

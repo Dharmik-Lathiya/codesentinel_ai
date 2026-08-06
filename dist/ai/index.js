@@ -14,6 +14,7 @@ import { logger } from "../utils/logger.js";
 export class AIHub {
     config;
     secrets;
+    root;
     providers = new Map();
     factories = {
         openai: openaiFactory,
@@ -21,9 +22,12 @@ export class AIHub {
         gemini: geminiFactory,
         opencode: opencodeFactory,
     };
-    constructor(config, secrets) {
+    constructor(config, secrets, 
+    /** Repository root — used as the CLI working directory (e.g. opencode run). */
+    root) {
         this.config = config;
         this.secrets = secrets;
+        this.root = root;
     }
     /** Resolve the model configuration for a task, falling back to default. */
     modelForTask(task) {
@@ -38,7 +42,7 @@ export class AIHub {
         if (!factory) {
             throw new Error(`Unknown provider: "${model.provider}". Supported providers: openai, anthropic, gemini, opencode.`);
         }
-        const provider = factory(this.secrets);
+        const provider = factory(this.secrets, this.root);
         if (!provider) {
             const keyEnvMap = {
                 openai: "OPENAI_API_KEY",
@@ -56,12 +60,14 @@ export class AIHub {
     async complete(task, messages, opts = {}) {
         const model = this.modelForTask(task);
         const provider = this.providerFor(model);
-        logger.info(`AIHub.complete: task=${task} provider=${provider.name} model=${model.model}`);
+        const maxTokens = opts.maxTokens ?? model.maxTokens;
+        logger.info(`AIHub.complete: task=${task} provider=${provider.name} model=${model.model} maxTokens=${maxTokens}`);
         return retry(() => provider.complete({
             model,
             messages,
             temperature: opts.temperature,
-            maxTokens: opts.maxTokens,
+            maxTokens,
+            responseFormat: opts.responseFormat,
         }));
     }
 }

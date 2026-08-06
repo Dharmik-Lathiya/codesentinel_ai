@@ -8,8 +8,14 @@ interface ScannerTool {
   run(root: string): Finding[];
 }
 
-const MAX_BUFFER = 10 * 1024 * 1024;
-const SNIPPET_LENGTH = 80;
+const BYTES_PER_KILOBYTE = 1024;
+const ONE_KB = BYTES_PER_KILOBYTE;
+const ONE_MB = ONE_KB * ONE_KB;
+const MAX_BUFFER_SIZE_IN_MB = 10;
+const MAX_BUFFER_MB = MAX_BUFFER_SIZE_IN_MB;
+const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
+const SNIPPET_MAX_CHAR_LENGTH = 80;
+const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
 
 function parseTrufflehogLine(line: string): Finding | null {
   try {
@@ -24,6 +30,7 @@ function parseTrufflehogLine(line: string): Finding | null {
       source: "scanner" as const,
     } as Finding;
   } catch {
+    logger.warn("Failed to parse trufflehog JSON line");
     return null;
   }
 }
@@ -35,6 +42,7 @@ const gitleaks: ScannerTool = {
       execSync("which gitleaks", { stdio: "ignore" });
       return true;
     } catch {
+      logger.debug("gitleaks not found");
       return false;
     }
   },
@@ -75,6 +83,7 @@ const trufflehog: ScannerTool = {
       execSync("which trufflehog", { stdio: "ignore" });
       return true;
     } catch {
+      logger.debug("trufflehog not found");
       return false;
     }
   },

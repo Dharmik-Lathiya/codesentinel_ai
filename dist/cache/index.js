@@ -44,8 +44,9 @@ export class FileCache {
             if (Date.now() - stat.mtimeMs > this.ttlMs)
                 return null;
             // Touch file to update mtime for LRU
-            writeFileSync(path, readFileSync(path, "utf8"), "utf8");
-            return JSON.parse(readFileSync(path, "utf8"));
+            const raw = readFileSync(path, "utf8");
+            writeFileSync(path, raw, "utf8");
+            return JSON.parse(raw);
         }
         catch {
             return null;

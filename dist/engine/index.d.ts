@@ -1,6 +1,6 @@
 import { configFromInputs } from "../config/index.js";
 import type { CodeSentinelConfig, RuntimeSecrets, Mode } from "../config/types.js";
-import { AIHub } from "../ai/index.js";
+import type { EngineAI } from "../ai/providers/opencode-cli.js";
 import { type Finding } from "../analyzer/index.js";
 import { type ScoreBreakdown } from "../scorer/index.js";
 import { type GeneratedTest } from "../testgen/index.js";
@@ -47,6 +47,8 @@ export interface EngineReport {
         filesAnalyzed: number;
         findingsBySeverity: Record<string, number>;
         durationMs: number;
+        truncatedResponses?: number;
+        repairedResponses?: number;
     };
 }
 /**
@@ -56,6 +58,7 @@ export interface EngineReport {
  * comments/tests. Fix-mode uses a loop bounded by `max_iterations`.
  */
 export declare class Engine {
+    #private;
     private secrets;
     private root;
     /** Optional AI override (used in tests to avoid network calls). */
@@ -73,9 +76,13 @@ export declare class Engine {
     private readonly learning;
     private readonly eventBus;
     private aiAvailable;
+    /** Count of AI responses that were truncated (unterminated JSON). */
+    private truncatedCount;
+    /** Count of truncated responses successfully repaired via extractJson. */
+    private repairedCount;
     constructor(config: CodeSentinelConfig, secrets: RuntimeSecrets, root?: string, 
     /** Optional AI override (used in tests to avoid network calls). */
-    aiOverride?: Pick<AIHub, "complete" | "modelForTask"> | undefined);
+    aiOverride?: EngineAI | undefined);
     /** Best-effort health check: log whether the AI provider is reachable. */
     private checkAIProvider;
     /** Convenience factory used by CLI / Action. */
@@ -104,6 +111,11 @@ export declare class Engine {
     private collectedFiles;
     private analyzeFiles;
     private runReview;
+    /**
+     * Create a deep copy of the file list with secrets redacted from `content`
+     * before sending to the AI provider. Never mutates files on disk.
+     */
+    private redactFilesForAI;
     /** Ask the AI model to review each changed file (cached per file). */
     private aiReview;
     /** Record recurring patterns and auto-create rules. */
@@ -117,10 +129,14 @@ export declare class Engine {
     private applyFix;
     /** Apply fixes for ALL findings in a single file in ONE AI call. */
     private batchApplyFix;
+    /** Single-pass fix: one prompt for ALL files, one AI response, then apply every fix. */
+    private batchApplyFixAll;
     /** Apply fixes for a batch of findings without the full re-analysis loop. */
     private runFixLoopFor;
     /** Run lint + tests after a fix. Best-effort; returns true if both pass. */
     private runVerification;
+    /** Pre-fix linter baseline for delta comparison. */
+    private _linterBaseline;
     private runAudit;
     private runScoreMode;
     /** Combine the static baseline with an AI refinement of the sub-scores. */
@@ -130,6 +146,9 @@ export declare class Engine {
     private runDescribe;
     /** Public helper used by the GitHub App / Action to answer `/ask`. */
     ask(question: string): Promise<string>;
+    /** Generate an implementation plan from an issue title + description. */
+    generatePlan(title: string, description: string): Promise<string>;
+    private runPlan;
     private runImprove;
     /** AI-powered utility function generation. */
     private runGenerateUtilities;

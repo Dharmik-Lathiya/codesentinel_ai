@@ -11,7 +11,7 @@ import { parseJsonc } from "../utils/jsonc.js";
 const userConfigSchema = z
     .object({
     mode: z
-        .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve"])
+        .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan"])
         .optional(),
     max_iterations: z.number().int().positive().optional(),
     enable_auto_fix: z.boolean().optional(),
@@ -144,6 +144,7 @@ const userConfigSchema = z
         maxLinesPerFile: z.number().optional(),
     })
         .optional(),
+    use_opencode_cli: z.boolean().optional(),
 })
     .passthrough();
 /**
@@ -188,29 +189,10 @@ export function loadConfig(opts = {}) {
 }
 /** Convert a ZodError into a concise, human-readable list of issues. */
 function formatZodErrors(error) {
-    const LABELS = {
-        mode: "mode",
-        max_iterations: "max_iterations",
-        enable_auto_fix: "enable_auto_fix",
-        enable_scoring: "enable_scoring",
-        enable_test_generation: "enable_test_generation",
-        test_runner: "test_runner",
-        include: "include",
-        exclude: "exclude",
-        plugins: "plugins",
-        gate: "gate",
-        analyzer: "analyzer",
-        default_model: "default_model",
-        cache_dir: "cache_dir",
-        enable_cache: "enable_cache",
-        secretPatterns: "secretPatterns",
-        dismissalsFile: "dismissalsFile",
-        dashboard: "dashboard",
-    };
     const lines = [];
     for (const issue of error.issues) {
         const path = issue.path.map((p) => (typeof p === "number" ? `[${p}]` : p)).join(".");
-        const label = path ? (LABELS[path] ?? path) : "(root)";
+        const label = path || "(root)";
         if (issue.code === "invalid_type") {
             const expected = issue.received === "undefined" ? "optional" : `type ${issue.expected}`;
             lines.push(`  - ${label}: expected ${expected}, got ${issue.received}`);
@@ -249,6 +231,7 @@ function validateConfig(config) {
         "gate",
         "describe",
         "improve",
+        "plan",
     ];
     if (!validModes.includes(config.mode)) {
         throw new Error(`Invalid mode: ${config.mode}`);
@@ -272,16 +255,14 @@ export function configFromInputs(inputs) {
     if (inputs.test_runner)
         out.test_runner = inputs.test_runner;
     if (inputs.provider) {
-        const providerModel = { provider: inputs.provider, model: "deepseek-v4-flash-free" };
-        out.default_model = providerModel;
-        out.models = {
-            review: providerModel,
-            fix: providerModel,
-            audit: providerModel,
-            score: providerModel,
-            testgen: providerModel,
-            chat: providerModel,
-        };
+        const taskKeys = Object.keys(DEFAULT_CONFIG.models);
+        const models = {};
+        for (const key of taskKeys) {
+            const base = DEFAULT_CONFIG.models[key];
+            models[key] = { ...base, provider: inputs.provider };
+        }
+        out.models = models;
+        out.default_model = { ...DEFAULT_CONFIG.default_model, provider: inputs.provider };
     }
     if (inputs.auto_merge)
         out.autoMerge = inputs.auto_merge === "true";
@@ -295,6 +276,12 @@ export function configFromInputs(inputs) {
             dbPath: inputs.learning_db_path ?? DEFAULT_CONFIG.learning.dbPath,
         };
     }
+    if (inputs.issue_title)
+        out.issue_title = inputs.issue_title;
+    if (inputs.issue_body)
+        out.issue_body = inputs.issue_body;
+    if (inputs.use_opencode_cli !== undefined)
+        out.use_opencode_cli = inputs.use_opencode_cli === "true";
     return out;
 }
 //# sourceMappingURL=index.js.map

@@ -11,6 +11,7 @@ export interface CompletionRequest {
     /** Lower temperature for deterministic analysis tasks. */
     temperature?: number;
     maxTokens?: number;
+    responseFormat?: "json_object";
 }
 /** Normalized completion result. */
 export interface CompletionResult {
@@ -21,6 +22,7 @@ export interface CompletionResult {
     usage?: {
         promptTokens?: number;
         completionTokens?: number;
+        totalTokens?: number;
     };
 }
 /**
@@ -36,5 +38,20 @@ export interface AIProvider {
 export declare class ProviderUnavailableError extends Error {
     constructor(provider: string, reason: string);
 }
+/** Check if the response looks truncated (unterminated JSON). */
+export declare function isTruncated(text: string): boolean;
+export interface ExtractJsonResult<T> {
+    parsed: T | null;
+    truncated: boolean;
+    repaired: boolean;
+}
+/**
+ * Parse a JSON object from model response text. Returns structured result
+ * indicating whether parsing succeeded, whether truncation was detected, and
+ * whether a repair pass was applied.
+ */
 export declare function extractJson<T = unknown>(text: string): T | null;
+export declare function extractJson<T = unknown>(text: string, opts: {
+    detailed: true;
+}): ExtractJsonResult<T>;
 export type ProviderFactory = (secrets: RuntimeSecrets) => AIProvider | null;

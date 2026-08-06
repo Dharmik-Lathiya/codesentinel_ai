@@ -1,16 +1,15 @@
 import type { SecurityBlendStrategy } from "../config/types.js";
 import type { Finding } from "../analyzer/index.js";
-/** A 0-100 quality score with a weighted overall value. */
+/** A quality score from 0 to {@link MAX_SCORE} with a weighted overall value. */
 export interface ScoreBreakdown {
     readability: number;
     maintainability: number;
     security: number;
     test_coverage: number;
-    /** Weighted overall score (0-100). */
+    /** Weighted overall score (0 to {@link MAX_SCORE}). */
     overall: number;
     rationale: string;
 }
-/** Weights used to combine the four dimensions into the overall score. */
 export declare const WEIGHTS: {
     readonly readability: 0.25;
     readonly maintainability: 0.3;

@@ -1,3 +1,5 @@
+export declare const DEFAULT_FINDINGS_LIMIT = 100;
+export declare const MAX_RELEVANT_LESSONS = 10;
 export interface FindingRecord {
     id: string;
     file: string;
@@ -45,6 +47,7 @@ export declare class LearningStore {
     recordFeedback(findingId: string, feedbackType: string, comment?: string): Promise<void>;
     getRelevantLessons(fileExtension: string): Promise<string[]>;
     recordPattern(patternText: string, category: string): Promise<void>;
+    private insertPatternRecord;
     getPendingRules(): Promise<CustomRuleRecord[]>;
     approveRule(ruleId: string): Promise<void>;
     declineRule(ruleId: string): Promise<void>;
