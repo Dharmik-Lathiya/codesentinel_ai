@@ -140,7 +140,7 @@ function splitDiffByPath(diffText: string): Map<string, string> {
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
     const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
     if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const path = match[2];
     byPath.set(path, part);
   }
   return byPath;
