@@ -409,7 +409,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
-function runSetup(force: boolean): void {
+export function runSetup(force: boolean): void {
   const cwd = process.cwd();
   const workflowDir = join(cwd, ".github", "workflows");
   const workflowPath = join(workflowDir, "codesentinel.yml");
@@ -598,6 +598,7 @@ async function main(): Promise<void> {
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
       process.on(signal, () => {
         dash.stop();
+        process.exit(0);
       });
     }
     return;
@@ -629,6 +630,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     } else {
       try {
@@ -636,6 +638,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     }
     return;
@@ -647,7 +650,7 @@ async function main(): Promise<void> {
       config: { type: "string", short: "c" },
       "max-iterations": { type: "string" },
       "auto-fix": { type: "boolean", default: false },
-      scoring: { type: "boolean", default: true },
+      scoring: { type: "boolean" },
       "test-gen": { type: "boolean", default: false },
       provider: { type: "string" },
       ask: { type: "string" },
@@ -686,6 +689,25 @@ async function main(): Promise<void> {
 
   if (modeArg && !VALID_MODES.has(modeArg)) {
     process.stderr.write(`Unknown mode: '${modeArg}'\n`);
+    showHelp();
+    return;
+  }
+  const VALID_PROVIDERS = new Set<string>(["openai", "anthropic", "gemini", "opencode"]);
+  const VALID_LOG_LEVELS = new Set<string>(["debug", "info", "warn", "error"]);
+  const VALID_IMPROVE_TYPES = new Set<string>(["test", "util", "doc"]);
+
+  if (values.provider && !VALID_PROVIDERS.has(values.provider)) {
+    process.stderr.write(`Invalid provider: '${values.provider}' (expected one of: openai | anthropic | gemini | opencode)\n`);
+    showHelp();
+    return;
+  }
+  if (values["log-level"] && !VALID_LOG_LEVELS.has(values["log-level"])) {
+    process.stderr.write(`Invalid log level: '${values["log-level"]}' (expected one of: debug | info | warn | error)\n`);
+    showHelp();
+    return;
+  }
+  if (values["improve-type"] && !VALID_IMPROVE_TYPES.has(values["improve-type"])) {
+    process.stderr.write(`Invalid improve type: '${values["improve-type"]}' (expected one of: test | util | doc)\n`);
     showHelp();
     return;
   }
@@ -798,7 +820,14 @@ async function main(): Promise<void> {
       path,
       content: readText(resolve(root, path)),
     }));
-    const findings = await engine.runDeadCode(files);
+    let findings;
+    try {
+      findings = await engine.runDeadCode(files);
+    } catch (err) {
+      process.stderr.write(`Dead code analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+      return;
+    }
     if (findings.length === 0) {
       process.stdout.write("✅ No unused exports detected.\n");
     } else {
