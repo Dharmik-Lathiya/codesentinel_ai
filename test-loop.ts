@@ -26,6 +26,7 @@ function isValueObject(v: unknown): v is { value?: number } {
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
+ * Note: a legitimately parsed `0` is indistinguishable from this sentinel.
  * Finite numbers above Number.MAX_SAFE_INTEGER lose integer precision.
  */
 export function processData(input: string): { value: number } {
@@ -50,6 +51,7 @@ describe("calculate", () => {
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER * MULTIPLIER],
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
@@ -74,6 +76,10 @@ describe("processData", () => {
     ["{" + SAMPLE_VALUE + "}"],
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
+  });
+  test('values at and above Number.MAX_SAFE_INTEGER are preserved (documented precision loss)', () => {
+    expect(processData('{"value":' + Number.MAX_SAFE_INTEGER + '}')).toEqual({ value: Number.MAX_SAFE_INTEGER });
+    expect(processData('{"value":' + (Number.MAX_SAFE_INTEGER + 1) + '}')).toEqual({ value: Number.MAX_SAFE_INTEGER + 1 });
   });
 
   test('negative and decimal values are preserved', () => {
