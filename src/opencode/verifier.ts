@@ -9,6 +9,7 @@ const VAGUE_PHRASES = [
   "consider refactoring",
 ];
 
+const AI_MAX_TOKENS = 1024;
 const MIN_MESSAGE_LENGTH = 15;
 
 export interface VerifyOptions {
@@ -31,7 +32,7 @@ function applyRuleBasedFilter(findings: Issue[]): Issue[] {
     if (f.severity === "critical") return true;
     if (f.line <= 0) return false;
     if (isExcludedDir(f.file)) return false;
-    if (isVagueMessage(f.message)) return false;
+if (f.severity === "minor" && isVagueMessage(f.message)) return false;
     return true;
   });
 }
@@ -50,36 +51,38 @@ function buildAiPrompt(findings: Issue[]): string {
   ].join("\n");
 }
 
+function getValidIndices(values: unknown[], maxIndex: number): number[] {
+  return values.filter(
+    (i): i is number =>
+      typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
+  );
+}
+
+function parseArrayIndices(content: string): unknown[] | null {
+  try {
+    const parsed = JSON.parse(content);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseAiResponse(
   content: string,
   maxIndex: number,
 ): number[] | null {
-  try {
-    const parsed = JSON.parse(content);
-    if (Array.isArray(parsed)) {
-      const indices = parsed.filter(
-        (i): i is number =>
-          typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-      );
-      return indices.length > 0 ? indices : null;
-    }
-  } catch {
-    // fall through
+  const parsed = parseArrayIndices(content);
+  if (parsed) {
+    const indices = getValidIndices(parsed, maxIndex);
+    if (indices.length > 0) return indices;
   }
 
   const extracted = content.match(/\[[\d\s,]*\]/);
   if (extracted) {
-    try {
-      const parsed = JSON.parse(extracted[0]);
-      if (Array.isArray(parsed)) {
-        const indices = parsed.filter(
-          (i): i is number =>
-            typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-        );
-        return indices.length > 0 ? indices : null;
-      }
-    } catch {
-      // fall through
+    const parsedExtracted = parseArrayIndices(extracted[0]);
+    if (parsedExtracted) {
+      const indices = getValidIndices(parsedExtracted, maxIndex);
+      if (indices.length > 0) return indices;
     }
   }
 
@@ -97,7 +100,7 @@ async function aiVerify(
     result = await aiHub.complete(
       "review",
       [{ role: "user", content: prompt }],
-      { maxTokens: 1024 },
+      { maxTokens: AI_MAX_TOKENS },
     );
   } catch {
     return afterRules;
