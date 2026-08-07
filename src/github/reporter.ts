@@ -6,6 +6,8 @@ const RATE_LIMIT_THRESHOLD = 10;
 const HTTP_FORBIDDEN = 403;
 const HTTP_TOO_MANY_REQUESTS = 429;
 const RATE_LIMIT_DEFAULT_DELAY_MS = 5000;
+const HTTP_SERVICE_UNAVAILABLE = 503;
+const PAGE_SIZE = 100;
 
 /**
  * Minimal GitHub REST client for posting PR comments and creating issues,
@@ -72,7 +74,7 @@ export class GitHubReporter {
       shouldRetry: (err) => {
         if (err instanceof Error) {
           const msg = err.message.toLowerCase();
-          return msg.includes("rate limit") || msg.includes("429") || msg.includes("403") || msg.includes("503");
+          return msg.includes("rate limit") || msg.includes("429") || msg.includes(String(HTTP_FORBIDDEN)) || msg.includes(String(HTTP_SERVICE_UNAVAILABLE));
         }
         return false;
       },
@@ -113,7 +115,7 @@ export class GitHubReporter {
     if (!this.coords.pullNumber) return [];
     const comments: Array<{ id: number; body: string; created_at: string }> = [];
     let page = 1;
-    const perPage = 100;
+    const perPage = PAGE_SIZE;
 
     while (true) {
       const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues/${this.coords.pullNumber}/comments?per_page=${perPage}&page=${page}`;
