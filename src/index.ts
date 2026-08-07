@@ -464,16 +464,19 @@ function runSetup(force: boolean): void {
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
 }
 
-function showHelp(): void {
-  let pkg;
+function readPkgVersion(): string {
   try {
-    pkg = JSON.parse(
+    const pkg = JSON.parse(
       readFileSync(join(__dirname, "..", "package.json"), "utf8"),
     );
+    return pkg.version ?? "unknown";
   } catch {
-    pkg = { version: "unknown" };
+    return "unknown";
   }
-  process.stdout.write(`CodeSentinel AI v${pkg.version}
+}
+
+function showHelp(): void {
+  process.stdout.write(`CodeSentinel AI v${readPkgVersion()}
 AI-powered code review, fix, audit, scoring, and test generation.
 
 Usage:
@@ -546,15 +549,7 @@ Examples:
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
-  process.stdout.write(`${pkg.version}\n`);
+  process.stdout.write(`${readPkgVersion()}\n`);
 }
 
 /**
@@ -673,6 +668,9 @@ async function main(): Promise<void> {
   });
 
   // Use positional arg as mode if --mode not provided
+  if (values.mode && positionals[0] && values.mode !== positionals[0]) {
+    process.stderr.write(`Warning: both --mode '${values.mode}' and positional mode '${positionals[0]}' were provided; using --mode.\n`);
+  }
   const modeArg = values.mode || positionals[0];
 
   if (values.help) {
@@ -749,6 +747,7 @@ async function main(): Promise<void> {
       testgen: providerModel,
       chat: providerModel,
       describe: providerModel,
+      plan: providerModel,
     };
   }
   if (values["dry-run"]) overrides.enable_auto_fix = false;
