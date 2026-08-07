@@ -1,12 +1,8 @@
 import { describe, expect, test } from "vitest";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
-export const MULTIPLIER = 4096;
-export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
-const BELOW_THRESHOLD_INPUT = 4999;
-const MODERATE_INPUT = 5000;
-const HIGH_INPUT = 6000;
-const BELOW_EXTREME_INPUT = 9999;
+const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
+const MULTIPLIER = 4096;
+const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const SAMPLE_VALUE = 42;
 
 /**
@@ -14,21 +10,19 @@ const SAMPLE_VALUE = 42;
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
  */
-export function calculate(x: number): number {
+function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
   return x * multiplier;
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
-function isValueObject(v: unknown): v is { value?: number } {
-  return typeof v === "object" && v !== null && "value" in v;
+  return typeof v === "object" && v !== null && typeof (v as { value?: unknown }).value === "number";
 }
-export type ProcessDataResult =
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
  */
-export function processData(input: string): { value: number } {
+function processData(input: string): { value: number } {
   try {
     const parsed = JSON.parse(input) as unknown;
     if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
@@ -44,10 +38,10 @@ describe("calculate", () => {
   test.each([
     [0, 0],
     [-5, -5 * MULTIPLIER],
-    [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
-    [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
+    [4999, 4999 * MULTIPLIER],
+    [5000, 5000 * MULTIPLIER],
+    [6000, 6000 * MULTIPLIER],
+    [9999, 9999 * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
     [NaN, NaN],
@@ -59,8 +53,11 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE])('valid JSON value returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
+  });
+  test('JSON value 0 is returned as 0, which is numerically equal to the invalid-input sentinel (documented conflation)', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
   });
 
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
