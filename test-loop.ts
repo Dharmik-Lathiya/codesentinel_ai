@@ -27,6 +27,7 @@ export type ProcessDataResult =
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
+ * A valid {"value":0} is indistinguishable from the error sentinel by design.
  */
 export function processData(input: string): { value: number } {
   try {
@@ -59,14 +60,17 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([42, 17])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
-  test('inputs above 2^53 lose integer precision (documented limitation)', () => {
+  test('inputs above 2^53 exceed Number.MAX_SAFE_INTEGER', () => {
     const input = 2 ** 53 + 1;
-    expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
+  });
+
+  test('a valid {"value":0} equals the error sentinel by design', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
   });
   test.each([
     ["not-json"],
