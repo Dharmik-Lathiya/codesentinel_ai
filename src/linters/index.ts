@@ -15,30 +15,34 @@ const eslint: LinterTool = {
   detect(root: string): boolean {
     return existsSync(resolve(root, "node_modules", ".bin", "eslint"));
   },
-  run(root: string, extraArgs: string[]): Finding[] {
-    try {
-      const out = execSync(
-        `npx eslint --format json --no-color ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
-      );
+    run(root: string, extraArgs: string[]): Finding[] {
+      const bin = resolve(root, "node_modules", ".bin", "eslint");
+      let out = "";
+      try {
+        out = execSync(
+          `${bin} --format json --no-color ${extraArgs.join(" ")} .`,
+          { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        );
+      } catch (e) {
+        logger.warn(`eslint run failed: ${e}`);
+        const err = (e ?? {}) as { stdout?: string };
+        if (!err.stdout) return [];
+        out = err.stdout;
+      }
       if (!out.trim()) return [];
       const results: { filePath: string; messages: { line: number; severity: number; message: string; ruleId: string | null }[] }[] = JSON.parse(out);
       return results.flatMap((f) =>
         f.messages.map((m) => ({
           file: f.filePath,
           line: m.line || null,
-          severity: m.severity >= 2 ? "high" as const : "low" as const,
+          severity: m.severity >= 3 ? "high" as const : m.severity === 2 ? "medium" as const : "low" as const,
           category: "smell" as const,
           comment: m.message,
           suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
           source: "linter" as const,
         })),
       );
-    } catch (e) {
-      logger.warn(`eslint run failed: ${e}`);
-      return [];
-    }
-  },
+    },
 };
 
 const biome: LinterTool = {
@@ -49,7 +53,7 @@ const biome: LinterTool = {
   run(root: string, extraArgs: string[]): Finding[] {
     try {
       const out = execSync(
-        `npx biome lint --diagnostic-level=warn --max-diagnostics=200 ${extraArgs.join(" ")} . 2>/dev/null || true`,
+        `node_modules/.bin/biome lint --diagnostic-level=warn --max-diagnostics=200 ${extraArgs.join(" ")} .`,
         { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
       );
       if (!out.trim()) return [];
@@ -83,7 +87,7 @@ const pylint: LinterTool = {
   run(root: string, extraArgs: string[]): Finding[] {
     try {
       const out = execSync(
-        `pylint --output-format=json ${extraArgs.join(" ")} . 2>/dev/null || true`,
+        `pylint --output-format=json ${extraArgs.join(" ")} .`,
         { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
       );
       if (!out.trim()) return [];
