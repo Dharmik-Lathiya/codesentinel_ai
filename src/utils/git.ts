@@ -37,7 +37,28 @@ export async function git(
         err,
       );
     }
-    throw err;
+    throw new GitError(command, timedOut, err);
+  }
+}
+
+/** Structured error carrying the git command and underlying exit code. */
+export class GitError extends Error {
+  readonly command: string;
+  readonly exitCode: number | undefined;
+
+  constructor(command: string, timedOut: boolean, cause: unknown) {
+    const code = (cause as { code?: string | number }).code;
+    const reason = timedOut
+      ? `timed out after ${GIT_TIMEOUT_MS}ms`
+      : typeof code === "number"
+        ? `exited with code ${code}`
+        : code != null
+          ? `failed with ${String(code)}`
+          : "failed";
+    super(`git command ${reason}: ${command}`, { cause });
+    this.name = "GitError";
+    this.command = command;
+    this.exitCode = typeof code === "number" ? code : undefined;
   }
 }
 
@@ -102,35 +123,62 @@ export async function collectDiff(
   }
   const diffByPath = splitDiffByPath(diffText);
 
-  const files: DiffFile[] = [];
+  // Phase 1: classify every NUL-terminated name/status record first. The -z
+  // form keeps paths containing spaces, ` b/`, or newlines intact, so this is
+  // the authoritative file list even when the patch headers are ambiguous.
+  const pending: Array<{
+    path: string;
+    status: DiffFile["status"];
+    full?: string;
+  }> = [];
   const nameStatusEntries = nameStatus.split("\0");
-  for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
+  for (let i = 0; i + 1 < nameStatusEntries.length; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
-    let content = "";
-    if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
-        continue;
-      }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
+    if (status === "deleted") {
+      pending.push({ path, status });
+      continue;
     }
-    const diff = diffByPath.get(path) ?? "";
-    if (!diff && status !== "deleted") {
-      logger.warn(`Could not collect diff for ${path}`);
+    const full = resolve(workspaceRoot, path);
+    const rel = relative(workspaceRoot, full);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      logger.warn(`Skipping path outside workspace: ${path}`);
+      continue;
     }
-    files.push({ path, status, content, diff });
+    pending.push({ path, status, full });
   }
-  return files;
+
+  // Phase 2: read all file contents in parallel for large changesets.
+  const contents = await Promise.all(
+    pending.map(async ({ path, status, full }) => {
+      let content = "";
+      if (full) {
+        try {
+          content = await readContent(full, baseRef, cwd);
+        } catch {
+          logger.debug(`Could not read content for ${path}`);
+        }
+      }
+      return { path, status, content };
+    }),
+  );
+
+  // Phase 3: validate every non-deleted entry has a matching diff entry.
+  const missingDiffs = contents.filter(
+    ({ path, status }) => status !== "deleted" && !diffByPath.has(path),
+  );
+  for (const { path } of missingDiffs) {
+    logger.warn(`Could not collect diff for ${path}`);
+  }
+  return contents.map(({ path, status, content }) => ({
+    path,
+    status,
+    content,
+    diff: diffByPath.get(path) ?? "",
+  }));
 }
 
 function splitDiffByPath(diffText: string): Map<string, string> {
@@ -139,20 +187,48 @@ function splitDiffByPath(diffText: string): Map<string, string> {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
     const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
+    if (!match) {
+      logger.warn(`Skipping diff with unparseable header: ${firstLine}`);
+      continue;
+    }
     const path = match[2] === "dev/null" ? match[1] : match[2];
     byPath.set(path, part);
   }
   return byPath;
 }
 
-async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
-  if (fileStat.size > MAX_CONTENT_BYTES) {
-    logger.debug(`Skipping oversized file content: ${full}`);
+async function readContent(
+  full: string,
+  baseRef?: string,
+  cwd?: string,
+): Promise<string> {
+  if (baseRef && cwd) {
+    try {
+      const rel = relative(cwd, full);
+      if (rel !== "" && !rel.startsWith("..") && !isAbsolute(rel)) {
+        const blob = await git(["show", `${baseRef}:${rel}`], cwd, {
+          quiet: true,
+        });
+        if (!blob.includes("\0")) return blob;
+      }
+    } catch {
+      logger.debug(
+        `No committed blob for ${full} at ${baseRef}; falling back to working tree`,
+      );
+    }
+  }
+  let text: string;
+  try {
+    const fileStat = await stat(full);
+    if (fileStat.size > MAX_CONTENT_BYTES) {
+      logger.debug(`Skipping oversized file content: ${full}`);
+      return "";
+    }
+    text = await readFile(full, { encoding: "utf8" });
+  } catch (err) {
+    logger.debug(`Could not read content for ${full}`, err);
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
   if (text.includes("\0")) {
     logger.debug(`Skipping binary file content: ${full}`);
     return "";
@@ -166,13 +242,21 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
+    try {
       if (await refExists(remoteBase, cwd)) return remoteBase;
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    } catch {
+      logger.debug("Could not resolve refs from GITHUB_BASE_REF");
+    }
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch {
+      logger.debug(`Could not resolve ref ${ref}; trying next candidate`);
+    }
   }
   // No base ref found: fall back to a plain working-tree diff.
   return undefined;
