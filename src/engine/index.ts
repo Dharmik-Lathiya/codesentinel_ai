@@ -1326,9 +1326,14 @@ ${promptBody}
   // AUDIT
   // ---------------------------------------------------------------------------
   private async runAudit(): Promise<EngineReport> {
-    const files = await this.collectedFiles();
-    const staticFindings = await this.analyzeFiles(files);
-
+let files: { path: string; content: string }[] = [];
+    let staticFindings: Finding[] = [];
+    try {
+      files = await this.collectedFiles();
+      staticFindings = await this.analyzeFiles(files);
+    } catch (err) {
+      logger.warn(`runAudit: failed to collect/analyze files — ${err instanceof Error ? err.message : String(err)}`);
+    }
     const snapshot = files
       .map((f) => `### ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
       .join("\n\n")
@@ -1338,12 +1343,16 @@ ${promptBody}
       project_context: this.config.project_context || "(none)",
       repository_snapshot: snapshot,
     });
-    const res = await this.ai.complete("audit", [
-      { role: "system", content: "You are a principal engineer doing a repo audit." },
-      { role: "user", content: prompt },
-    ]);
-    const parsed = extractJson<{ summary: string; findings: any[] }>(res.content) ?? { summary: "", findings: [] };
-
+let parsed: { summary: string; findings: any[] } = { summary: "", findings: [] };
+    try {
+      const res = await this.ai.complete("audit", [
+        { role: "system", content: "You are a principal engineer doing a repo audit." },
+        { role: "user", content: prompt },
+      ]);
+      parsed = extractJson<{ summary: string; findings: any[] }>(res.content) ?? { summary: "", findings: [] };
+    } catch (err) {
+      logger.warn(`runAudit: AI review failed — ${err instanceof Error ? err.message : String(err)}`);
+    }
     const aiFindings: Finding[] = (parsed.findings ?? []).map((f) => ({
       severity: f.severity,
       category: f.category,
@@ -1372,13 +1381,19 @@ ${promptBody}
   // SCORE
   // ---------------------------------------------------------------------------
   private async runScoreMode(): Promise<EngineReport> {
-    const files = await this.collectedFiles();
-    const staticFindings = await this.analyzeFiles(files);
-    const score = await this.computeScore(files, staticFindings);
-
+    let files: { path: string; content: string }[] = [];
+    let staticFindings: Finding[] = [];
+    let score: ScoreBreakdown | null = null;
+    try {
+      files = await this.collectedFiles();
+      staticFindings = await this.analyzeFiles(files);
+      score = await this.computeScore(files, staticFindings);
+    } catch (err) {
+      logger.warn(`runScoreMode failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
     return {
       mode: "score",
-      summary: `Overall code quality score: ${score.overall}/100.`,
+      summary: score ? `Overall code quality score: ${score.overall}/100.` : "Score computation failed.",
       findings: staticFindings,
       score,
       comments: [],
@@ -1431,9 +1446,15 @@ ${promptBody}
         metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
       };
     }
-    const files = await this.collectedFiles();
-    const gen = new TestGenerator(this.config, this.ai, this.prompts);
-    const generatedTests = await gen.generate(this.root, files);
+    let files: { path: string; content: string }[] = [];
+    let generatedTests: GeneratedTest[] = [];
+    try {
+      files = await this.collectedFiles();
+      const gen = new TestGenerator(this.config, this.ai, this.prompts);
+      generatedTests = await gen.generate(this.root, files);
+    } catch (err) {
+      logger.warn(`runTestgen failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     return {
       mode: "testgen",
@@ -1469,14 +1490,19 @@ ${promptBody}
       .join("\n\n")
       .slice(0, 40000);
     const prompt = `Project context: ${this.config.project_context || "(none)"}\n\nRelevant code:\n${context}\n\nQuestion: ${question}\n\nAnswer concisely and with references to the code where possible.`;
-    const res = await this.ai.complete("chat", [
-      { role: "system", content: "You are a helpful senior engineer answering questions about this codebase." },
-      { role: "user", content: prompt },
-    ]);
+    let res: { content: string } | null = null;
+    try {
+      res = await this.ai.complete("chat", [
+        { role: "system", content: "You are a helpful senior engineer answering questions about this codebase." },
+        { role: "user", content: prompt },
+      ]);
+    } catch (err) {
+      logger.warn(`runChat failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     return {
       mode: "chat",
-      summary: res.content,
+      summary: res?.content ?? "No response from AI provider.",
       findings: [],
       score: null,
       comments: [],
