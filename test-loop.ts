@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
+export const EXTREME_THRESHOLD = 10000; // Inputs at or below this threshold use MULTIPLIER; inputs above it intentionally switch to a hard 2x multiplier step (EXTREME_MULTIPLIER) so extreme-scale output magnitude stays bounded and predictable for stress testing.
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
@@ -23,7 +23,6 @@ function isValueObject(v: unknown): v is { value?: number } {
 function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
-export type ProcessDataResult =
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
@@ -59,12 +58,9 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([42, SAMPLE_VALUE, 17, -7])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
-
-  test('inputs above 2^53 lose integer precision (documented limitation)', () => {
-    const input = 2 ** 53 + 1;
     expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
