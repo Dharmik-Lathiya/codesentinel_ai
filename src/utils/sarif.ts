@@ -53,7 +53,7 @@ function simpleHash(s: string): string {
     hash = ((hash << 5) - hash) + char;
     hash |= 0;
   }
-  return Math.abs(hash).toString(36);
+  return ((hash >>> 0) % 0x7fffffff).toString(36);
 }
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
