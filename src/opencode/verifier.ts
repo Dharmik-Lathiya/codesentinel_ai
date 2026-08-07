@@ -11,6 +11,8 @@ const VAGUE_PHRASES = [
 
 const MIN_MESSAGE_LENGTH = 15;
 
+const AI_MAX_TOKENS = 1024;
+
 export interface VerifyOptions {
   aiHub?: AIHub;
   useAi?: boolean;
@@ -50,19 +52,24 @@ function buildAiPrompt(findings: Issue[]): string {
   ].join("\n");
 }
 
+function selectIndices(parsed: unknown, maxIndex: number): number[] | null {
+  if (!Array.isArray(parsed)) return null;
+  const indices = parsed.filter(
+    (i): i is number =>
+      typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
+  );
+  return indices.length > 0 ? indices : null;
+}
+
 function parseAiResponse(
   content: string,
   maxIndex: number,
 ): number[] | null {
+  if (typeof content !== "string" || content.length === 0) return null;
+
   try {
-    const parsed = JSON.parse(content);
-    if (Array.isArray(parsed)) {
-      const indices = parsed.filter(
-        (i): i is number =>
-          typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-      );
-      return indices.length > 0 ? indices : null;
-    }
+    const indices = selectIndices(JSON.parse(content), maxIndex);
+    if (indices !== null) return indices;
   } catch {
     // fall through
   }
@@ -70,14 +77,8 @@ function parseAiResponse(
   const extracted = content.match(/\[[\d\s,]*\]/);
   if (extracted) {
     try {
-      const parsed = JSON.parse(extracted[0]);
-      if (Array.isArray(parsed)) {
-        const indices = parsed.filter(
-          (i): i is number =>
-            typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-        );
-        return indices.length > 0 ? indices : null;
-      }
+      const indices = selectIndices(JSON.parse(extracted[0]), maxIndex);
+      if (indices !== null) return indices;
     } catch {
       // fall through
     }
@@ -97,7 +98,7 @@ async function aiVerify(
     result = await aiHub.complete(
       "review",
       [{ role: "user", content: prompt }],
-      { maxTokens: 1024 },
+      { maxTokens: AI_MAX_TOKENS },
     );
   } catch {
     return afterRules;
