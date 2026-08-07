@@ -1,7 +1,7 @@
 import { writeFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 
-const DEFAULT_HIGH_SCORE_LIMIT = 10;
+const DEFAULT_HIGH_SCORE_LIMIT = 3;
 const DEFAULT_MAX_ITERATIONS = 5;
 
 const PRE_COMMIT_SCRIPT = `#!/bin/sh
