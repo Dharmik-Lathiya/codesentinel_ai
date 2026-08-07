@@ -7,9 +7,8 @@ const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
-const SAMPLE_VALUE = 42;
-
-/**
+const VALID_SAMPLE_VALUE = 42;
+const NEGATIVE_DECIMAL_VALUE = -7.25;
  * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
@@ -50,16 +49,19 @@ describe("calculate", () => {
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
-    [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
   ])('boundary value %i', (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
+
+  test('NaN input stays NaN', () => {
+    expect(calculate(NaN)).toBeNaN();
+  });
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([42, VALID_SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
@@ -72,7 +74,7 @@ describe("processData", () => {
     ["not-json"],
     ["[1,2,3]"],
     ['{"value":"42"}'],
-    ['{"value":"' + SAMPLE_VALUE + '"}'],
+    ['{"value":"' + VALID_SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
@@ -85,7 +87,7 @@ describe("processData", () => {
     expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
   });
 
-  test('whitespace-padded JSON is parsed', () => {
+    expect(processData(' {"value": ' + VALID_SAMPLE_VALUE + "} ")).toEqual({ value: VALID_SAMPLE_VALUE });
     expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
   });
 
