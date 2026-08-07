@@ -4,10 +4,37 @@ import { resolve } from "node:path";
 import type { Finding } from "../analyzer/index.js";
 import { logger } from "../utils/logger.js";
 
+const MAX_BUFFER = 10 * 1024 * 1024;
+
 export interface LinterTool {
   name: string;
   detect(root: string): boolean;
   run(root: string, extraArgs: string[]): Finding[];
+}
+
+function tryParse<T>(raw: string): T | null {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+interface EslintMessage {
+  filePath: string;
+  messages: { line: number; severity: number; message: string; ruleId: string | null }[];
+}
+
+function toEslintFindings(f: EslintMessage): Finding[] {
+  return f.messages.map((m) => ({
+    file: f.filePath,
+    line: m.line || null,
+    severity: m.severity >= 2 ? "high" as const : "low" as const,
+    category: "smell" as const,
+    comment: m.message,
+    suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
+    source: "linter" as const,
+  }));
 }
 
 const eslint: LinterTool = {
@@ -19,27 +46,25 @@ const eslint: LinterTool = {
     try {
       const out = execSync(
         `npx eslint --format json --no-color ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
-      const results: { filePath: string; messages: { line: number; severity: number; message: string; ruleId: string | null }[] }[] = JSON.parse(out);
-      return results.flatMap((f) =>
-        f.messages.map((m) => ({
-          file: f.filePath,
-          line: m.line || null,
-          severity: m.severity >= 2 ? "high" as const : "low" as const,
-          category: "smell" as const,
-          comment: m.message,
-          suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
-          source: "linter" as const,
-        })),
-      );
+      const results = tryParse<EslintMessage[]>(out);
+      if (!results) return [];
+      return results.flatMap(toEslintFindings);
     } catch (e) {
       logger.warn(`eslint run failed: ${e}`);
       return [];
     }
   },
 };
+
+interface BiomeDiagnostic {
+  location: { path: { file: string }; span: { start: { line: number } } | null };
+  severity: string;
+  message: { text: string };
+  category: string;
+}
 
 const biome: LinterTool = {
   name: "biome",
@@ -50,10 +75,11 @@ const biome: LinterTool = {
     try {
       const out = execSync(
         `npx biome lint --diagnostic-level=warn --max-diagnostics=200 ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
-      const parsed: { diagnostics: { location: { path: { file: string }; span: { start: { line: number } } | null }; severity: string; message: { text: string }; category: string }[] } = JSON.parse(out);
+      const parsed = tryParse<{ diagnostics: BiomeDiagnostic[] }>(out);
+      if (!parsed) return [];
       return (parsed.diagnostics ?? []).map((d) => ({
         file: d.location.path.file,
         line: d.location.span?.start.line ?? null,
@@ -70,6 +96,14 @@ const biome: LinterTool = {
   },
 };
 
+interface PylintMessage {
+  path: string;
+  line: number;
+  message: string;
+  symbol: string;
+  type: string;
+}
+
 const pylint: LinterTool = {
   name: "pylint",
   detect(root: string): boolean {
@@ -84,10 +118,11 @@ const pylint: LinterTool = {
     try {
       const out = execSync(
         `pylint --output-format=json ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
-      const results: { path: string; line: number; message: string; symbol: string; type: string }[] = JSON.parse(out);
+      const results = tryParse<PylintMessage[]>(out);
+      if (!results) return [];
       return results.map((m) => ({
         file: m.path,
         line: m.line || null,
