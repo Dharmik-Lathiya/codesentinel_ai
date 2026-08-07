@@ -27,10 +27,5 @@ export function githubMCPServer(token?: string): MCPServerConfig {
 }
 
 export function getDefaultMCPServers(token?: string, context7Key?: string): MCPServerConfig[] {
-  const servers: MCPServerConfig[] = [];
-  servers.push(context7Server(context7Key));
-  if (token) {
-    servers.push(githubMCPServer(token));
-  }
-  return servers;
+  return [context7Server(context7Key), ...(token ? [githubMCPServer(token)] : [])];
 }
