@@ -2,6 +2,7 @@ import { logger } from "./logger.js";
 
 const MILLISECONDS_PER_SECOND = 1000;
 const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
+const DEFAULT_MAX_DELAY_MS = 30 * MILLISECONDS_PER_SECOND;
 const HTTP_STATUS_RATE_LIMIT = "429";
 const HTTP_STATUS_SERVICE_UNAVAILABLE = "503";
 const HTTP_STATUS_BAD_GATEWAY = "502";
@@ -25,10 +26,9 @@ export interface RetryOptions {
    * Default: 1000ms (`DEFAULT_BASE_DELAY_MS`).
    */
   baseDelayMs?: number;
-  /** Max delay in ms for a single retry (cap on exponential backoff). Default: unbounded (grows with attempts). */
+  /** Max delay in ms for a single retry (cap on exponential backoff). Default: 30s (DEFAULT_MAX_DELAY_MS). */
   maxDelayMs?: number;
   /**
-   * Optional predicate: return true to retry on this error.
    * Optional predicate: return true to retry on this error.
    * Note: the default predicate only matches `Error` instances; non-Error
    * throws (strings, plain objects) are never retried.
@@ -52,9 +52,6 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(HTTP_STATUS_RATE_LIMIT) ||
-      msg.includes(HTTP_STATUS_SERVICE_UNAVAILABLE) ||
-      msg.includes(HTTP_STATUS_BAD_GATEWAY) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
@@ -75,7 +72,7 @@ export async function retry<T>(
   const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
   const baseDelayMs = Math.max(1, opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS);
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
-  const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, maxAttempts - 1);
+  const maxDelayMs = opts.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
