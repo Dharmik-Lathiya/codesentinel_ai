@@ -1,7 +1,7 @@
 import { writeFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 
-const DEFAULT_HIGH_SCORE_LIMIT = 10;
+const DEFAULT_MAX_HIGH = 10;
 const DEFAULT_MAX_ITERATIONS = 5;
 
 const PRE_COMMIT_SCRIPT = `#!/bin/sh
@@ -22,7 +22,7 @@ fi
 
 # Run CodeSentinel gate on staged files
 if command -v codesentinel &> /dev/null; then
-  codesentinel gate --min-score 0 --max-critical 0 --max-high ${DEFAULT_HIGH_SCORE_LIMIT}
+  codesentinel gate --min-score 0 --max-critical 0 --max-high ${DEFAULT_MAX_HIGH}
   GATE_EXIT=$?
   if [ $GATE_EXIT -ne 0 ]; then
     echo "❌ CodeSentinel: Gate check failed. Fix issues before committing."
@@ -46,7 +46,8 @@ set -e
 MAX_ITER=${DEFAULT_MAX_ITERATIONS}
 echo "🔧 CodeSentinel: Running post-commit build check..."
 
-for i in $(seq 1 $MAX_ITER); do
+i=1
+while [ "$i" -le "$MAX_ITER" ]; do
   echo "=== Build-Fix Iteration $i/$MAX_ITER ==="
 
   FAILED=0
@@ -75,6 +76,7 @@ for i in $(seq 1 $MAX_ITER); do
 
   git commit -m "CodeSentinel: auto-fix build errors [skip ci]"
   echo "✅ Fix committed."
+  i=$((i+1))
 done
 
 echo "❌ Build failed after $MAX_ITER iterations."
@@ -84,6 +86,8 @@ exit 1
 export type HookType = "pre-commit" | "post-commit";
 
 export function installHook(root: string, type: HookType = "pre-commit"): string {
+  // NOTE: this overwrites any existing hook at the target path (including user customizations).
+  // Install into a fresh/disposable repo or accept the overwrite when running init-hook.
   const hookDir = join(root, ".git", "hooks");
   const hookName = type === "post-commit" ? "post-commit" : "pre-commit";
   const hookPath = join(hookDir, hookName);
