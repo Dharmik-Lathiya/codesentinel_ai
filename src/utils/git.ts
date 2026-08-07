@@ -133,17 +133,33 @@ export async function collectDiff(
   return files;
 }
 
-function splitDiffByPath(diffText: string): Map<string, string> {
+export function splitDiffByPath(diffText: string): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const path = parseDiffHeaderPath(firstLine);
+    if (path === undefined) continue;
     byPath.set(path, part);
   }
   return byPath;
+}
+
+/** Extract the b-side path from a `diff --git a/<A> b/<B>` header line. */
+function parseDiffHeaderPath(firstLine: string): string | undefined {
+  // Paths are identical on both sides for non-rename diffs, so find the
+  // separator by matching the prefix against the suffix. This stays correct
+  // even when a path itself contains the ` b/` marker.
+  const body = firstLine.startsWith("a/") ? firstLine.slice(2) : firstLine;
+  for (let i = 0; i + 2 < body.length; i++) {
+    if (body[i] === " " && body[i + 1] === "b" && body[i + 2] === "/") {
+      const left = body.slice(0, i);
+      const right = body.slice(i + 3);
+      if (left === right) return left;
+    }
+  }
+  const deletion = /^(.*) b\/dev\/null$/.exec(body);
+  return deletion ? deletion[1] : undefined;
 }
 
 async function readContent(full: string): Promise<string> {
@@ -191,7 +207,10 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code === "M") return "modified";
+  if (code === "M" || code.startsWith("T") || code.startsWith("U")) {
+    return "modified";
+  }
+  if (code.startsWith("C")) return "added";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
