@@ -97,7 +97,7 @@ async function aiVerify(
   const indices = parseAiResponse(result.content, afterRules.length);
   if (indices === null) return afterRules;
 
-  return indices.map((i) => afterRules[i]);
+  return [...new Set(indices)].map((i) => afterRules[i]);
 }
 
 export async function verifyFindings(
