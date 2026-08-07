@@ -1484,7 +1484,13 @@ let parsed: { summary: string; findings: any[] } = { summary: "", findings: [] }
         metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
       };
     }
-    const files = await this.collectedFiles();
+    let files: { path: string; content: string; diff?: string }[];
+    try {
+      files = await this.collectedFiles();
+    } catch (err) {
+      logger.warn(`runChat: failed to collect files: ${err instanceof Error ? err.message : String(err)}`);
+      files = [];
+    }
     const context = files
       .map((f) => `### ${f.path}\n${f.content}`)
       .join("\n\n")
@@ -1528,7 +1534,13 @@ let parsed: { summary: string; findings: any[] } = { summary: "", findings: [] }
         metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
       };
     }
-    const files = await this.collectedFiles();
+    let files: { path: string; content: string; diff?: string }[];
+    try {
+      files = await this.collectedFiles();
+    } catch (err) {
+      logger.warn(`runDescribe: failed to collect files: ${err instanceof Error ? err.message : String(err)}`);
+      files = [];
+    }
     const diff = files
       .map((f) => `### ${f.path}${f.diff ? `\n\`\`\`diff\n${f.diff}\n\`\`\`` : ""}`)
       .join("\n\n")
@@ -1538,10 +1550,16 @@ let parsed: { summary: string; findings: any[] } = { summary: "", findings: [] }
       project_context: this.config.project_context || "(none)",
       diff,
     });
-    const res = await this.ai.complete("describe", [
-      { role: "system", content: "You write concise, structured PR descriptions." },
-      { role: "user", content: prompt },
-    ]);
+    let res: { content: string };
+    try {
+      res = await this.ai.complete("describe", [
+        { role: "system", content: "You write concise, structured PR descriptions." },
+        { role: "user", content: prompt },
+      ]);
+    } catch (err) {
+      logger.warn(`runDescribe failed: ${err instanceof Error ? err.message : String(err)}`);
+      res = { content: "" };
+    }
     const parsed = extractJson<{
       title: string;
       description: string;
@@ -1590,17 +1608,29 @@ let parsed: { summary: string; findings: any[] } = { summary: "", findings: [] }
       description,
       project_context: this.config.project_context || "(none)",
     });
-    const res = await this.ai.complete("plan", [
-      { role: "system", content: "You generate structured implementation plans for GitHub issues." },
-      { role: "user", content: prompt },
-    ]);
+    let res: { content: string };
+    try {
+      res = await this.ai.complete("plan", [
+        { role: "system", content: "You generate structured implementation plans for GitHub issues." },
+        { role: "user", content: prompt },
+      ]);
+    } catch (err) {
+      logger.warn(`generatePlan failed: ${err instanceof Error ? err.message : String(err)}`);
+      return `Error generating plan: ${err instanceof Error ? err.message : String(err)}`;
+    }
     return res.content;
   }
 
   private async runPlan(): Promise<EngineReport> {
     const title = this.config.issue_title || "Untitled Issue";
     const description = this.config.issue_body || "No description provided.";
-    const planContent = await this.generatePlan(title, description);
+    let planContent: string;
+    try {
+      planContent = await this.generatePlan(title, description);
+    } catch (err) {
+      logger.warn(`runPlan failed: ${err instanceof Error ? err.message : String(err)}`);
+      planContent = "";
+    }
     const parsed = extractJson<{
       title: string; priority: string; summary: string; rootCause: string;
       affectedFiles: { path: string; lines: string; change: string }[];
