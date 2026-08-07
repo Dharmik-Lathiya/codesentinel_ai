@@ -8,14 +8,11 @@ interface ScannerTool {
   run(root: string): Finding[];
 }
 
-const BYTES_PER_KILOBYTE = 1024;
-const ONE_KB = BYTES_PER_KILOBYTE;
+const ONE_KB = 1024;
 const ONE_MB = ONE_KB * ONE_KB;
 const MAX_BUFFER_SIZE_IN_MB = 10;
-const MAX_BUFFER_MB = MAX_BUFFER_SIZE_IN_MB;
-const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
+const MAX_BUFFER = MAX_BUFFER_SIZE_IN_MB * ONE_MB;
 const SNIPPET_MAX_CHAR_LENGTH = 80;
-const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
 
 function parseTrufflehogLine(line: string): Finding | null {
   try {
@@ -26,9 +23,9 @@ function parseTrufflehogLine(line: string): Finding | null {
       severity: "high" as const,
       category: "security" as const,
       comment: `[trufflehog] ${r.DetectorName ?? "secret"}: ${r.Description ?? ""}`,
-      suggestion: `Matched: ${(r.Raw || "").slice(0, SNIPPET_LENGTH)}`,
+      suggestion: `Matched: ${(r.Raw || "").slice(0, SNIPPET_MAX_CHAR_LENGTH)}`,
       source: "scanner" as const,
-    } as Finding;
+    };
   } catch {
     logger.warn("Failed to parse trufflehog JSON line");
     return null;
@@ -60,17 +57,23 @@ const gitleaks: ScannerTool = {
         logger.warn("gitleaks JSON parse failed");
         return [];
       }
-      return results.map((r) => ({
-        file: r.File,
-        line: r.StartLine || null,
-        severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
-        category: "security" as const,
-        comment: `[gitleaks] ${r.Description}`,
-        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
-        source: "scanner" as const,
-      }));
+      return results
+        .filter((r): r is (typeof results)[number] => typeof r.File === "string" && r.File.length > 0)
+        .map((r) => ({
+          file: r.File,
+          line: r.StartLine || null,
+          severity: r.Severity?.toLowerCase() === "high" ? "high" : "critical",
+          category: "security" as const,
+          comment: `[gitleaks] ${r.Description ?? ""}`,
+          suggestion: `Match: ${(r.Match ?? "").trim().slice(0, SNIPPET_MAX_CHAR_LENGTH)}`,
+          source: "scanner" as const,
+        }));
     } catch (e) {
-      logger.warn(`gitleaks run failed: ${e}`);
+      if ((e as { code?: string }).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+        logger.warn(`gitleaks output exceeded ${MAX_BUFFER_SIZE_IN_MB}MB maxBuffer; results truncated. Scan a smaller directory or raise maxBuffer.`);
+      } else {
+        logger.warn(`gitleaks run failed: ${e}`);
+      }
       return [];
     }
   },
@@ -90,14 +93,18 @@ const trufflehog: ScannerTool = {
   run(root: string): Finding[] {
     try {
       const out = execSync(
-        "trufflehog filesystem . --json --no-verification 2>/dev/null || true",
+        "trufflehog filesystem . --json 2>/dev/null || true",
         { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
       const lines = out.trim().split("\n").filter(Boolean);
       return lines.map(parseTrufflehogLine).filter((f): f is Finding => f !== null);
     } catch (e) {
-      logger.warn(`trufflehog run failed: ${e}`);
+      if ((e as { code?: string }).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+        logger.warn(`trufflehog output exceeded ${MAX_BUFFER_SIZE_IN_MB}MB maxBuffer; results truncated. Scan a smaller directory or raise maxBuffer.`);
+      } else {
+        logger.warn(`trufflehog run failed: ${e}`);
+      }
       return [];
     }
   },
