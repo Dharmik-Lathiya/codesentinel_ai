@@ -112,7 +112,7 @@ export class Scorer {
       default:
         // Keep the more conservative (lower) security number: static analysis
         // is more reliable for security, so we take the stricter assessment.
-        security = Math.min(ai.security ?? MAX_SCORE, baseline.security);
+        security = Math.min(ai.security ?? baseline.security, baseline.security);
         break;
     }
     const test_coverage = ai.test_coverage ?? baseline.test_coverage;
@@ -150,7 +150,11 @@ export class Scorer {
       fileCount++;
       const lines = content.split("\n");
       const commentLines = lines.filter(
-        (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
+        // Naive heuristic: count lines starting with `//`, `/*`, or a `*`
+        // continuation line as comments. `#` is excluded because it also
+        // marks TS private fields/hashbangs; over-counting continuation lines
+        // is an accepted tradeoff for a density-based readability proxy.
+        (l) => /^\s*(\/\/|\/\*|\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > 120).length;
