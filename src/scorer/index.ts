@@ -164,12 +164,13 @@ export class Scorer {
   private coverageMetric(
     files: { path: string; content: string }[],
   ): number {
+    const isTestPath = (p: string) => /(\.(test|spec)\.[jt]sx?$)/.test(p) || /__tests__\//.test(p);
     const testPaths = new Set(
       files
         .map((f) => f.path)
-        .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
+        .filter(isTestPath),
     );
-    const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
+    const sourceFiles = files.filter((f) => !isTestPath(f.path));
     if (sourceFiles.length === 0) return 100;
     let covered = 0;
     for (const f of sourceFiles) {

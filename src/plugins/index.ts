@@ -40,39 +40,50 @@ export class PluginManager {
   async load(paths: string[]): Promise<void> {
     for (const p of paths) {
       try {
-        const plugin = await this.loadPlugin(p);
-        if (plugin) {
-          this.plugins.push(plugin);
-          await plugin.init?.(this.ctx);
-          this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
-        }
+        await this.registerPlugin(p);
       } catch (err) {
         this.ctx.logger.warn(`Failed to load plugin "${p}":`, err);
       }
     }
   }
 
+  private async registerPlugin(path: string): Promise<void> {
+    const plugin = await this.loadPlugin(path);
+    if (!plugin) {
+      return;
+    }
+    this.plugins.push(plugin);
+    await plugin.init?.(this.ctx);
+    this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
+  }
+
   private async loadPlugin(path: string): Promise<CodeSentinelPlugin | null> {
     try {
       const mod = (await import(path)) as { default?: CodeSentinelPlugin };
-      const plugin = mod.default;
-      if (!plugin) {
-        this.ctx.logger.warn(
-          `Plugin "${path}" does not export a default CodeSentinelPlugin.`,
-        );
-        return null;
-      }
-      if (typeof plugin.name !== "string" || plugin.name.length === 0) {
-        this.ctx.logger.warn(
-          `Plugin "${path}" is missing a valid "name" property.`,
-        );
-        return null;
-      }
-      return plugin;
+      return this.validatePlugin(mod.default, path);
     } catch (err) {
       this.ctx.logger.warn(`Failed to load plugin "${path}":`, err);
       return null;
     }
+  }
+
+  private validatePlugin(
+    plugin: CodeSentinelPlugin | undefined,
+    path: string,
+  ): CodeSentinelPlugin | null {
+    if (!plugin) {
+      this.ctx.logger.warn(
+        `Plugin "${path}" does not export a default CodeSentinelPlugin.`,
+      );
+      return null;
+    }
+    if (typeof plugin.name !== "string" || plugin.name.length === 0) {
+      this.ctx.logger.warn(
+        `Plugin "${path}" is missing a valid "name" property.`,
+      );
+      return null;
+    }
+    return plugin;
   }
 
   get all(): CodeSentinelPlugin[] {
@@ -85,21 +96,26 @@ export class PluginManager {
   ): Promise<Finding[]> {
     try {
       const results = await Promise.all(
-        this.plugins.map(async (p) => {
-          try {
-            return (await p.analyze?.(files)) ?? [];
-          } catch (err) {
-            this.ctx.logger.warn(
-              `Analyze hook failed for plugin "${p.name}":`,
-              err,
-            );
-            return [];
-          }
-        }),
+        this.plugins.map((p) => this.analyzePlugin(p, files)),
       );
       return results.flat();
     } catch (err) {
       this.ctx.logger.warn(`Analyze phase failed:`, err);
+      return [];
+    }
+  }
+
+  private async analyzePlugin(
+    plugin: CodeSentinelPlugin,
+    files: { path: string; content: string }[],
+  ): Promise<Finding[]> {
+    try {
+      return (await plugin.analyze?.(files)) ?? [];
+    } catch (err) {
+      this.ctx.logger.warn(
+        `Analyze hook failed for plugin "${plugin.name}":`,
+        err,
+      );
       return [];
     }
   }
@@ -111,16 +127,24 @@ export class PluginManager {
   ): Promise<ScoreBreakdown> {
     let b = breakdown;
     for (const p of this.plugins) {
-      try {
-        b = (await p.score?.(b, files)) ?? b;
-      } catch (err) {
-        this.ctx.logger.warn(
-          `Score hook failed for plugin "${p.name}":`,
-          err,
-        );
-        // keep current breakdown
-      }
+      b = await this.scorePlugin(p, b, files);
     }
     return b;
+  }
+
+  private async scorePlugin(
+    plugin: CodeSentinelPlugin,
+    breakdown: ScoreBreakdown,
+    files: { path: string; content: string }[],
+  ): Promise<ScoreBreakdown> {
+    try {
+      return (await plugin.score?.(breakdown, files)) ?? breakdown;
+    } catch (err) {
+      this.ctx.logger.warn(
+        `Score hook failed for plugin "${plugin.name}":`,
+        err,
+      );
+      return breakdown;
+    }
   }
 }
