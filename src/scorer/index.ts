@@ -41,6 +41,12 @@ const SEVERITY_PENALTY: Record<Severity, number> = {
   critical: CRITICAL_SEVERITY_PENALTY,
 };
 
+const MAX_LINE_LENGTH = 120;
+const PERFECT_READABILITY = 100;
+const LONG_LINE_PENALTY = 2;
+const COMMENT_RATIO_WEIGHT = 20;
+const MIN_READABILITY_BASELINE = 20;
+
 /**
  * Scorer computes a deterministic baseline quality score from static findings
  * and code metrics, and can blend in AI-provided sub-scores.
@@ -153,11 +159,11 @@ export class Scorer {
         (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
-      const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const longLines = lines.filter((l) => l.length > MAX_LINE_LENGTH).length;
+      const score = PERFECT_READABILITY - longLines * LONG_LINE_PENALTY + commentRatio * COMMENT_RATIO_WEIGHT;
+      total += Math.max(MIN_READABILITY_BASELINE, score);
     }
-    return fileCount ? total / fileCount : 100;
+    return fileCount ? total / fileCount : PERFECT_READABILITY;
   }
 
   /** Coverage heuristic: fraction of source files that have a related test. */

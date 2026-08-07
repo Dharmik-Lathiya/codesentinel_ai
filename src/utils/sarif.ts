@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import type { EngineReport } from "../engine/index.js";
 
@@ -45,21 +46,16 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
 };
 
 const COMMENT_TRUNCATION_LENGTH = 40;
+const HASH_DIGEST_LENGTH = 16;
 
 function simpleHash(s: string): string {
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) {
-    const char = s.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36);
+  return createHash("sha256").update(s).digest("hex").slice(0, HASH_DIGEST_LENGTH);
 }
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
+      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/") || "unknown") },
       ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
@@ -96,7 +92,12 @@ export function renderSarif(report: EngineReport): string {
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
-        shortDescription: { text: f.comment },
+        shortDescription: {
+          text:
+            f.comment.length > COMMENT_TRUNCATION_LENGTH
+              ? f.comment.slice(0, COMMENT_TRUNCATION_LENGTH) + "…"
+              : f.comment,
+        },
       });
     }
     results.push({
