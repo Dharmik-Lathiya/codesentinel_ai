@@ -36,7 +36,7 @@ const REPORT_STYLES = `  <style>
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
     .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
-    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
+    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
   </style>`;
@@ -59,7 +59,7 @@ export function renderHtmlReport(report: EngineReport): string {
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
-        <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
+        <td>${escapeHtml(f.file)}${f.line != null ? `:${escapeHtml(String(f.line))}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
         <td>${f.suggestion ? escapeHtml(f.suggestion) : "—"}</td>
       </tr>`;
@@ -71,7 +71,7 @@ export function renderHtmlReport(report: EngineReport): string {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
       const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
       return `<tr>
-        <td>#${a.iteration}</td>
+        <td>#${escapeHtml(String(a.iteration))}</td>
         <td>${escapeHtml(a.file)}</td>
         <td><span style="color:${statusColor};font-weight:${BOLD_FONT_WEIGHT}">${status}</span></td>
         <td>${escapeHtml(a.explanation)}</td>
@@ -159,6 +159,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
 }
 
 function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
+  items = items.filter((item) => item.value > 0);
   if (items.length === 0) return "";
   const maxCount = Math.max(...items.map((item) => item.value));
   return `<h2>${escapeHtml(title)}</h2>
