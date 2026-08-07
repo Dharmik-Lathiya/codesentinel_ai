@@ -31,7 +31,9 @@ interface ReportingDescriptor {
 const PKG_VERSION = (() => {
   try {
     return (createRequire(import.meta.url)("../../package.json") as { version: string }).version ?? "0.0.0";
-  } catch {
+  } catch (e) {
+    console.warn(`CodeSentinel: failed to resolve package.json version, defaulting to 0.0.0:`, e);
+    return "0.0.0";
     return "0.0.0";
   }
 })();
