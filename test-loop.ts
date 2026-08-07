@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
+export const EXTREME_INPUT_START = 10000; // intentional: inputs strictly above this value use the hard 2x EXTREME_MULTIPLIER step
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
@@ -16,7 +16,7 @@ const SAMPLE_VALUE = 42;
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
-  return x * multiplier;
+  const multiplier = x > EXTREME_INPUT_START ? EXTREME_MULTIPLIER : MULTIPLIER;
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
@@ -47,8 +47,8 @@ describe("calculate", () => {
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
     [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
     [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
-    [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
+    [EXTREME_INPUT_START, EXTREME_INPUT_START * MULTIPLIER],
+    [EXTREME_INPUT_START + 1, (EXTREME_INPUT_START + 1) * EXTREME_MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
     [NaN, NaN],
     [Infinity, Infinity],
@@ -58,7 +58,7 @@ describe("calculate", () => {
   });
 });
 
-describe("processData", () => {
+  test.each([42, 17])('valid JSON value %d returns the parsed value', (value) => {
   test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
