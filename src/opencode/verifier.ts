@@ -19,7 +19,10 @@ export interface VerifyOptions {
 }
 
 function isExcludedDir(file: string): boolean {
-  return EXCLUDED_DIR_PREFIXES.some((prefix) => file.startsWith(prefix));
+  const segments = file.split("/");
+  return segments.some((seg) =>
+    EXCLUDED_DIR_PREFIXES.some((prefix) => prefix.replace(/\/$/, "") === seg),
+  );
 }
 
 function isVagueMessage(message: string): boolean {
@@ -52,7 +55,7 @@ function buildAiPrompt(findings: Issue[]): string {
   ].join("\n");
 }
 
-function selectIndices(parsed: unknown, maxIndex: number): number[] | null {
+function validateIndices(parsed: unknown, maxIndex: number): number[] | null {
   if (!Array.isArray(parsed)) return null;
   const indices = parsed.filter(
     (i): i is number =>
@@ -68,7 +71,7 @@ function parseAiResponse(
   if (typeof content !== "string" || content.length === 0) return null;
 
   try {
-    const indices = selectIndices(JSON.parse(content), maxIndex);
+    const indices = validateIndices(JSON.parse(content), maxIndex);
     if (indices !== null) return indices;
   } catch {
     // fall through
@@ -77,7 +80,7 @@ function parseAiResponse(
   const extracted = content.match(/\[[\d\s,]*\]/);
   if (extracted) {
     try {
-      const indices = selectIndices(JSON.parse(extracted[0]), maxIndex);
+      const indices = validateIndices(JSON.parse(extracted[0]), maxIndex);
       if (indices !== null) return indices;
     } catch {
       // fall through
@@ -101,10 +104,12 @@ async function aiVerify(
       { maxTokens: AI_MAX_TOKENS },
     );
   } catch {
+    // Fail open: on any AI error, keep all rule-passed findings.
     return afterRules;
   }
 
   const indices = parseAiResponse(result.content, afterRules.length);
+  // Fail open: unparseable AI output keeps all rule-passed findings.
   if (indices === null) return afterRules;
 
   return indices.map((i) => afterRules[i]);
