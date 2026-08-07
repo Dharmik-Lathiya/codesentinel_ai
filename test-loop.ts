@@ -8,6 +8,8 @@ const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
+const MAX_SAFE_INTEGER_EXPONENT = 53;
+const DECIMAL_SAMPLE_VALUE = -7.25;
 
 /**
  * Scales the input by a fixed multiplier.
@@ -20,10 +22,9 @@ export function calculate(x: number): number {
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
-function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
-export type ProcessDataResult =
+
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
@@ -63,11 +64,12 @@ describe("processData", () => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
-  test('inputs above 2^53 lose integer precision (documented limitation)', () => {
-    const input = 2 ** 53 + 1;
+  test(`inputs above 2^${MAX_SAFE_INTEGER_EXPONENT} lose integer precision (documented limitation)`, () => {
+    const input = 2 ** MAX_SAFE_INTEGER_EXPONENT + 1;
     expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
+
   test.each([
     ["not-json"],
     ["[1,2,3]"],
@@ -76,13 +78,12 @@ describe("processData", () => {
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
-  test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
   });
 
   test('negative and decimal values are preserved', () => {
-    expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
+    expect(processData('{"value":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
   });
 
   test('whitespace-padded JSON is parsed', () => {
