@@ -696,16 +696,36 @@ async function main(): Promise<void> {
     [values["max-critical"], "--max-critical"],
     [values["max-high"], "--max-high"],
   ];
+const integerFlags = new Set(["max-iterations", "max-critical", "max-high"]);
   for (const [value, name] of numericFlags) {
-    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+    if (value === undefined) continue;
+    const num = Number(value);
+    if (!Number.isFinite(num) || num < 0) {
       process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
+      showHelp();
+      return;
+    }
+    if (integerFlags.has(name.slice(2)) && !Number.isInteger(num)) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (expected an integer)\n`);
+      showHelp();
+      return;
+    }
+    if (name === "--min-score" && num > MAX_SCORE) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (must be between 0 and ${MAX_SCORE})\n`);
       showHelp();
       return;
     }
   }
 
-  if (values["log-level"]) {
-    logger.level = values["log-level"] as LogLevel;
+if (values["log-level"]) {
+    const level = values["log-level"];
+    const allowed: readonly LogLevel[] = ["debug", "info", "warn", "error"];
+    if (!(allowed as readonly string[]).includes(level)) {
+      process.stderr.write(`Invalid value for --log-level: '${level}' (expected one of: ${allowed.join(", ")})\n`);
+      showHelp();
+      return;
+    }
+    logger.level = level as LogLevel;
   }
   if (values.json) {
     logger.setJsonMode(true);
@@ -715,7 +735,7 @@ async function main(): Promise<void> {
 
   const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
-  if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
+  if (values["max-iterations"] !== undefined) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
