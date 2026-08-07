@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 
 import { loadConfig, configFromInputs } from "../config/index.js";
 import type {
@@ -36,16 +36,17 @@ import { LearningStore } from "../learning/store.js";
 import { EventBus } from "../event-bus/bus.js";
 import { parseJsonlString, validateAndNormalize, buildInlineComments } from "../jsonl-parser.js";
 import { groupIntoBatches } from "./batcher.js";
+import { retry } from "../utils/retry.js";
 
 const DEFAULT_OPENCODE_PORT = 4096;
 const CHECK_PROVIDER_TIMEOUT_MS = 2000;
 const RULE_ID_PREFIX_SLICE = 40;
-const MAX_FILE_CHARS = 30000;
 const PROMPT_PREVIEW_CHARS = 300;
 const DEFAULT_MAX_TOKENS = 65536;
 const MAX_DOUBLED_TOKENS = 32768;
 const MAX_CONTEXT_CHARS = 40000;
 const MAX_LOG_PREVIEW_CHARS = 500;
+const MAX_FIX_JSON_ATTEMPTS = 3;
 
 /** A comment to post back to a PR (inline or summary). */
 export interface ReviewComment {
@@ -84,9 +85,37 @@ export function applyHunks(content: string, hunks: Hunk[]): string {
       logger.warn(`applyHunks: skipping hunk startLine=${hunk.startLine} (file has ${lines.length} lines)`);
       continue;
     }
-    lines.splice(idx, hunk.deleteCount, ...hunk.newLines);
+    if (hunk.deleteCount < 0 || idx + hunk.deleteCount > lines.length) {
+      logger.warn(`applyHunks: skipping hunk startLine=${hunk.startLine} deleteCount=${hunk.deleteCount} (out of range)`);
+      continue;
+    }
+    const newLines = hunk.newLines.map((line) => line.replace(/^\d+:\s?/, ""));
+    lines.splice(idx, hunk.deleteCount, ...newLines);
   }
   return lines.join("\n");
+}
+
+/**
+ * Slice a unified diff so only hunks whose new-file start line falls within
+ * (or before) the 1-indexed source line range [startLine, endLine] are kept.
+ * Hunks starting beyond the range are dropped to avoid duplicating irrelevant
+ * context in later chunks. Approximate but safe — never throws.
+ */
+export function sliceDiffForRange(diff: string, startLine: number, endLine: number): string {
+  const hunkHeader = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+  const out: string[] = [];
+  let keep = false;
+  for (const line of diff.split("\n")) {
+    const m = hunkHeader.exec(line);
+    if (m) {
+      const targetStart = Number(m[2]);
+      keep = targetStart <= endLine;
+      if (keep) out.push(line);
+      continue;
+    }
+    if (keep) out.push(line);
+  }
+  return out.join("\n");
 }
 
 /** The full machine-readable report produced by a run. */
@@ -614,7 +643,9 @@ export class Engine {
           expandedFiles.push({
             path: file.path,
             content: chunkLines.join("\n"),
-            diff: file.diff,
+            diff: file.diff
+              ? sliceDiffForRange(file.diff, i * maxLines + 1, (i + 1) * maxLines)
+              : undefined,
             chunk: i + 1,
           });
         }
@@ -640,7 +671,7 @@ export class Engine {
           const cached = this.config.enable_cache
             ? this.cache.get<{ findings: any[]; summary?: string }>("review", cacheKey)
             : null;
-          const parsed = cached ?? (await this.callAI("review", "review", file));
+          const parsed = cached ?? (await retry(() => this.callAI("review", "review", file)));
           if (!cached && this.config.enable_cache) {
             this.cache.set("review", cacheKey, parsed);
           }
@@ -654,8 +685,15 @@ export class Engine {
           return fileFindings;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          logger.warn(`AI review failed for ${file.path}${chunkLabel}: ${msg}`);
-          return [];
+          logger.warn(`AI review failed for ${file.path}${chunkLabel} after retries: ${msg}`);
+          return [{
+            severity: "info",
+            category: "smell",
+            file: file.path,
+            line: null,
+            comment: `AI review was skipped for this file after transient failures: ${msg}`,
+            source: "ai" as const,
+          }];
         }
       }, 5);
       allResults.push(...results.flat());
@@ -830,17 +868,17 @@ export class Engine {
     modifiedFiles: Set<string>,
   ): Promise<boolean> {
     let anyFixed = false;
-    const MAX_FINDINGS_PER_FILE = 5;
+    const maxFindingsPerFile = this.config.settings.maxFindingsPerFile;
     const groups: [string, Finding[]][] = [];
     for (const [filePath, findings] of fileGroups) {
-      for (let pos = 0; pos < findings.length; pos += MAX_FINDINGS_PER_FILE) {
-        groups.push([filePath, findings.slice(pos, pos + MAX_FINDINGS_PER_FILE)]);
+      for (let pos = 0; pos < findings.length; pos += maxFindingsPerFile) {
+        groups.push([filePath, findings.slice(pos, pos + maxFindingsPerFile)]);
       }
     }
-    const PHASE_SIZE = 5;
-    for (let phase = 0; phase < groups.length; phase += PHASE_SIZE) {
-      const phaseGroups = groups.slice(phase, phase + PHASE_SIZE);
-      logger.info(`runFix: phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)} (${phaseGroups.length} files)`);
+    const phaseSize = this.config.settings.phaseSize;
+    for (let phase = 0; phase < groups.length; phase += phaseSize) {
+      const phaseGroups = groups.slice(phase, phase + phaseSize);
+      logger.info(`runFix: phase ${phase / phaseSize + 1}/${Math.ceil(groups.length / phaseSize)} (${phaseGroups.length} files)`);
       const batchResults = await concurrentMap(phaseGroups, async (group, idx) => {
         const [filePath, fileFindings] = group;
         logger.info(`runFix: batch ${phase + idx + 1}/${fileGroups.size} — ${filePath} (${fileFindings.length} issues)`);
@@ -861,8 +899,8 @@ export class Engine {
         }
       }, 3);
       anyFixed = this.recordProcessedAttempts(batchResults as FixAttempt[], allFixAttempts, modifiedFiles) || anyFixed;
-      if (modifiedFiles.size > 0 && phase + PHASE_SIZE < groups.length) {
-        const branch = await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)}`);
+      if (modifiedFiles.size > 0 && phase + phaseSize < groups.length) {
+        const branch = await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / phaseSize + 1}/${Math.ceil(groups.length / phaseSize)}`);
         const isDirectPush = branch === process.env.GITHUB_REF_NAME && !process.env.GITHUB_HEAD_REF;
         if (branch && !isDirectPush) {
           await this.createFixPR(branch);
@@ -889,29 +927,40 @@ export class Engine {
       }
 
       const headRef = process.env.GITHUB_HEAD_REF || "";
-      const refName = process.env.GITHUB_REF_NAME || "";
       let target: string;
+      let createdFixBranch = false;
 
       if (headRef) {
+        // We are on the PR's own feature branch — safe to update it in place.
         target = headRef;
-      } else if (refName) {
-        target = refName;
       } else {
+        // No PR context: the target is a shared/protected branch (e.g. default).
+        // Never rewrite it directly — push to a dedicated branch and open a PR.
         target = `codesentinel/fix-${Date.now()}`;
         execFileSync("git", ["checkout", "-b", target], { cwd: this.root, stdio: "pipe" });
+        createdFixBranch = true;
       }
 
       const msg = tag ? `CodeSentinel: auto-fix issues ${tag}` : 'CodeSentinel: auto-fix issues [skip ci]';
-      execFileSync("git", ["config", "user.email", "bot@codesentinel.ai"], { cwd: this.root, stdio: "pipe" });
-      execFileSync("git", ["config", "user.name", "CodeSentinel Bot"], { cwd: this.root, stdio: "pipe" });
-      execFileSync("git", ["commit", "-m", msg], { cwd: this.root, stdio: "pipe" });
-      try {
-        execFileSync("git", ["fetch", "origin", target], { cwd: this.root, stdio: "pipe", timeout: 30000 });
-        execFileSync("git", ["rebase", `origin/${target}`], { cwd: this.root, stdio: "pipe", timeout: 30000 });
-      } catch {
-        logger.warn(`pushFixes: rebase failed for ${target}, will push to fix branch instead`);
-        target = `codesentinel/fix-${Date.now()}`;
-        execFileSync("git", ["checkout", "-b", target], { cwd: this.root, stdio: "pipe" });
+      // Supply the bot identity per-invocation (env) so we never mutate the
+      // caller's repo/user-level git config.
+      const gitEnv = {
+        ...process.env,
+        GIT_AUTHOR_NAME: "CodeSentinel Bot",
+        GIT_AUTHOR_EMAIL: "bot@codesentinel.ai",
+        GIT_COMMITTER_NAME: "CodeSentinel Bot",
+        GIT_COMMITTER_EMAIL: "bot@codesentinel.ai",
+      };
+      execFileSync("git", ["commit", "-m", msg], { cwd: this.root, stdio: "pipe", env: gitEnv });
+      if (!createdFixBranch) {
+        try {
+          execFileSync("git", ["fetch", "origin", target], { cwd: this.root, stdio: "pipe", timeout: 30000 });
+          execFileSync("git", ["rebase", `origin/${target}`], { cwd: this.root, stdio: "pipe", timeout: 30000 });
+        } catch {
+          logger.warn(`pushFixes: rebase failed for ${target}, will push to fix branch instead`);
+          target = `codesentinel/fix-${Date.now()}`;
+          execFileSync("git", ["checkout", "-b", target], { cwd: this.root, stdio: "pipe" });
+        }
       }
       execFileSync("git", ["push", "origin", `HEAD:${target}`, "--set-upstream"], { cwd: this.root, stdio: "pipe", timeout: 60000 });
       logger.info(`pushFixes: pushed ${fileArray.length} file(s) to ${target}`);
@@ -951,12 +1000,34 @@ export class Engine {
     }
   }
 
+  /** Resolve a (possibly AI-supplied) path and assert it stays inside the project root. */
+  private resolveWithinRoot(p: string): string {
+    const abs = resolve(this.root, p);
+    const rootAbs = resolve(this.root);
+    if (abs !== rootAbs && !abs.startsWith(rootAbs + sep)) {
+      throw new Error(`refusing to access path outside project root: ${p}`);
+    }
+    return abs;
+  }
+
   /** Generate and (optionally) write a fix for a single finding. */
   private async applyFix(
     finding: Finding,
     iteration: number,
   ): Promise<FixAttempt> {
-    const filePath = resolve(this.root, finding.file);
+    let filePath: string;
+    try {
+      filePath = this.resolveWithinRoot(finding.file);
+    } catch (err) {
+      return {
+        iteration,
+        file: finding.file,
+        fixed: false,
+        explanation: `Unsafe path: ${err instanceof Error ? err.message : err}`,
+        verified: false,
+        newIssuesIntroduced: [],
+      };
+    }
     const content = readText(filePath);
     if (!content.trim()) {
       return {
@@ -971,8 +1042,9 @@ export class Engine {
 
     const numberedContent = content.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
     const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
-    const truncatedContent = redactedContent.length > MAX_FILE_CHARS
-      ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FILE_CHARS} chars]`
+    const maxFileChars = this.config.settings.maxFileChars;
+    const truncatedContent = redactedContent.length > maxFileChars
+      ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", maxFileChars)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${maxFileChars} chars]`
       : redactedContent;
 
     const prompt = `You are an expert engineer fixing an issue in ${finding.file}.
@@ -999,7 +1071,7 @@ Suggestion: ${finding.suggestion ?? ""}
 
     logger.info(`applyFix[${iteration}]: prompt=${JSON.stringify(finding.file)} severity=${finding.severity} category=${finding.category}`);
     let parsed: { fixed: boolean; explanation: string; hunks: Hunk[] } | null = null;
-    for (let attempt = 0; attempt < 1; attempt++) {
+    for (let attempt = 0; attempt < MAX_FIX_JSON_ATTEMPTS; attempt++) {
       if (attempt > 0) {
         logger.info(`applyFix[${iteration}]: retry ${attempt + 1} for ${finding.file}`);
       }
@@ -1013,10 +1085,10 @@ const snippet = res.content.length > MAX_LOG_PREVIEW_CHARS ? res.content.slice(0
 
       parsed = extractJson<{ fixed: boolean; explanation: string; hunks: Hunk[] }>(res.content);
       if (parsed) break;
-      logger.warn(`applyFix[${iteration}]: unparseable response (attempt ${attempt + 1}/1) — raw snippet: ${JSON.stringify(snippet)}`);
+      logger.warn(`applyFix[${iteration}]: unparseable response (attempt ${attempt + 1}/${MAX_FIX_JSON_ATTEMPTS}) — raw snippet: ${JSON.stringify(snippet)}`);
     }
     if (!parsed) {
-      return { iteration, file: finding.file, fixed: false, explanation: "AI returned unparseable response after 1 attempts", verified: false, newIssuesIntroduced: [] };
+      return { iteration, file: finding.file, fixed: false, explanation: `AI returned unparseable response after ${MAX_FIX_JSON_ATTEMPTS} attempts`, verified: false, newIssuesIntroduced: [] };
     }
 
     let verified = false;
@@ -1065,7 +1137,12 @@ const snippet = res.content.length > MAX_LOG_PREVIEW_CHARS ? res.content.slice(0
     findings: Finding[],
     iteration: number,
   ): Promise<FixAttempt> {
-    const absPath = resolve(this.root, filePath);
+    let absPath: string;
+    try {
+      absPath = this.resolveWithinRoot(filePath);
+    } catch (err) {
+      return { iteration, file: filePath, fixed: false, explanation: `Unsafe path: ${err instanceof Error ? err.message : err}`, verified: false, newIssuesIntroduced: [] };
+    }
     const content = readText(absPath);
     if (!content.trim()) {
       return { iteration, file: filePath, fixed: false, explanation: "File content is empty or file not found.", verified: false, newIssuesIntroduced: [] };
@@ -1077,9 +1154,10 @@ const snippet = res.content.length > MAX_LOG_PREVIEW_CHARS ? res.content.slice(0
     // Redact secrets before sending fix prompt to AI provider
     const numberedContent = content.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
     const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
+    const maxFileChars = this.config.settings.maxFileChars;
 
-    const truncatedContent = redactedContent.length > MAX_FILE_CHARS
-      ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FILE_CHARS} chars]`
+    const truncatedContent = redactedContent.length > maxFileChars
+      ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", maxFileChars)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${maxFileChars} chars]`
       : redactedContent;
 
     const prompt = `You are an expert engineer fixing ${findings.length} issue(s) in ${filePath}.
@@ -1102,7 +1180,7 @@ ${issuesMd}
 
     logger.info(`batchApplyFix[${iteration}]: ${filePath} — ${findings.length} issues`);
     let parsed: { fixed: boolean; explanation: string; hunks: Hunk[] } | null = null;
-    for (let attempt = 0; attempt < 1; attempt++) {
+    for (let attempt = 0; attempt < MAX_FIX_JSON_ATTEMPTS; attempt++) {
       if (attempt > 0) {
         logger.info(`batchApplyFix[${iteration}]: retry ${attempt + 1} for ${filePath}`);
       }
@@ -1116,10 +1194,10 @@ const snippet = res.content.length > MAX_LOG_PREVIEW_CHARS ? res.content.slice(0
 
       parsed = extractJson<{ fixed: boolean; explanation: string; hunks: Hunk[] }>(res.content);
       if (parsed) break;
-      logger.warn(`batchApplyFix[${iteration}]: unparseable response (attempt ${attempt + 1}/1) — raw snippet: ${JSON.stringify(snippet)}`);
+      logger.warn(`batchApplyFix[${iteration}]: unparseable response (attempt ${attempt + 1}/${MAX_FIX_JSON_ATTEMPTS}) — raw snippet: ${JSON.stringify(snippet)}`);
     }
     if (!parsed) {
-      return { iteration, file: filePath, fixed: false, explanation: "AI returned unparseable response after 1 attempts", verified: false, newIssuesIntroduced: [] };
+      return { iteration, file: filePath, fixed: false, explanation: `AI returned unparseable response after ${MAX_FIX_JSON_ATTEMPTS} attempts`, verified: false, newIssuesIntroduced: [] };
     }
 
     let verified = false;
@@ -1160,8 +1238,9 @@ const snippet = res.content.length > MAX_LOG_PREVIEW_CHARS ? res.content.slice(0
       if (!rawContent.trim()) continue;
       const numberedContent = rawContent.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
       const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
-const truncatedContent = redactedContent.length > MAX_FILE_CHARS
-        ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated]`
+      const maxFileChars = this.config.settings.maxFileChars;
+const truncatedContent = redactedContent.length > maxFileChars
+        ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", maxFileChars)) + `\n\n// ... [file truncated]`
         : redactedContent;
       fileEntries.push({ path: filePath, content: truncatedContent, findings });
     }
@@ -1206,12 +1285,28 @@ ${promptBody}
     }
 
     const allFixes: FixAttempt[] = [];
+    // Apply every fix first (keeping originals), then run a single verification
+    // pass over the final repo state. Commit all or restore all as one unit so
+    // files never land in an unsound mixed state.
+    const applied: {
+      absPath: string;
+      originalContent: string;
+      fixedContent: string;
+      entry: FixAttempt;
+    }[] = [];
+
     for (const ff of parsed.fileFixes) {
       if (!ff.hunks?.length) {
         allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: ff.explanation || "No hunks returned", verified: false, newIssuesIntroduced: [] });
         continue;
       }
-      const absPath = resolve(this.root, ff.file);
+      let absPath: string;
+      try {
+        absPath = this.resolveWithinRoot(ff.file);
+      } catch (err) {
+        allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: `Unsafe path: ${err instanceof Error ? err.message : err}`, verified: false, newIssuesIntroduced: [] });
+        continue;
+      }
       const originalContent = readText(absPath);
       if (!originalContent.trim()) {
         allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "File not found", verified: false, newIssuesIntroduced: [] });
@@ -1222,16 +1317,33 @@ ${promptBody}
         allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "Hunks produced no changes", verified: false, newIssuesIntroduced: [] });
         continue;
       }
+      const entry: FixAttempt = {
+        iteration: 0,
+        file: ff.file,
+        fixed: false,
+        explanation: ff.explanation,
+        verified: false,
+        newIssuesIntroduced: [],
+      };
       writeFileSync(absPath, fixedContent, "utf8");
+      applied.push({ absPath, originalContent, fixedContent, entry });
+      allFixes.push(entry);
+    }
+
+    if (applied.length > 0) {
       const verified = await this.runVerification();
-      if (!verified) {
-        writeFileSync(absPath, originalContent, "utf8");
-        allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "Fix failed verification, rolled back", verified: false, newIssuesIntroduced: [] });
-      } else {
-        const newIssues = this.findNewIssues(ff.file, fixedContent, fileGroups);
-        allFixes.push({ iteration: 0, file: ff.file, fixed: true, explanation: ff.explanation, verified, newIssuesIntroduced: newIssues });
+      for (const a of applied) {
+        if (!verified) {
+          writeFileSync(a.absPath, a.originalContent, "utf8");
+          a.entry.explanation = "Fix failed verification — all fixes rolled back atomically";
+        } else {
+          a.entry.fixed = true;
+          a.entry.verified = true;
+          a.entry.newIssuesIntroduced = this.findNewIssues(a.entry.file, a.fixedContent, fileGroups);
+        }
       }
     }
+
     return allFixes;
   }
 
