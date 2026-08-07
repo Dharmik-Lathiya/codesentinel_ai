@@ -28,7 +28,13 @@ interface ReportingDescriptor {
   shortDescription: { text: string };
 }
 
-const PKG_VERSION = (createRequire(import.meta.url)("../../package.json") as { version: string }).version;
+const PKG_VERSION = (() => {
+  try {
+    return (createRequire(import.meta.url)("../../package.json") as { version: string }).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   critical: "error",
