@@ -139,7 +139,7 @@ export class Engine {
     if (aiOverride) this.aiAvailable = true;
     this.prompts = new PromptRegistry(config);
     this.cache = new FileCache(resolve(root, config.cache_dir));
-    this.plugins = new PluginManager({ config, logger });
+    this.plugins = new PluginManager({ config, logger, root });
     this.eventBus = new EventBus();
 
     // Initialize analyzer with configuration
@@ -230,21 +230,46 @@ export class Engine {
     await this.init();
     const start = Date.now();
     logger.info(`Running mode: ${this.config.mode}`);
-    await this.checkAIProvider();
+    try {
+      await this.checkAIProvider();
+    } catch (err) {
+      logger.warn(`checkAIProvider failed: ${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    }
 
     let report: EngineReport;
     switch (this.config.mode) {
       case "review":
+      try {
         report = await this.runReview();
+      } catch (err) {
+        logger.warn(`runReview failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
         break;
       case "fix":
+      try {
         report = await this.runFix();
+      } catch (err) {
+        logger.warn(`runFix failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
         break;
       case "audit":
+      try {
         report = await this.runAudit();
+      } catch (err) {
+        logger.warn(`runAudit failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
         break;
       case "score":
+      try {
         report = await this.runScoreMode();
+      } catch (err) {
+        logger.warn(`runScoreMode failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
         break;
       case "testgen":
         report = await this.runTestgen();
