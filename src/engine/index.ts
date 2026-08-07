@@ -37,6 +37,10 @@ import { EventBus } from "../event-bus/bus.js";
 import { parseJsonlString, validateAndNormalize, buildInlineComments } from "../jsonl-parser.js";
 import { groupIntoBatches } from "./batcher.js";
 
+const DEFAULT_OPENCODE_PORT = 4096;
+const CHECK_PROVIDER_TIMEOUT_MS = 2000;
+const RULE_ID_PREFIX_SLICE = 40;
+
 /** A comment to post back to a PR (inline or summary). */
 export interface ReviewComment {
   file: string;
@@ -179,11 +183,11 @@ export class Engine {
   private async checkAIProvider(): Promise<void> {
     if (this.aiOverride || this.config.use_opencode_cli) return;
     const model = this.ai.modelForTask("review");
-    const baseUrl = (this.secrets.opencode_base_url || "http://localhost:4096").replace(/\/v1$/, "");
+    const baseUrl = (this.secrets.opencode_base_url || `http://localhost:${DEFAULT_OPENCODE_PORT}`).replace(/\/v1$/, "");
     if (model.provider === "opencode") {
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 2000);
+        const timer = setTimeout(() => controller.abort(), CHECK_PROVIDER_TIMEOUT_MS);
         const res = await fetch(`${baseUrl}/v1/models`, { signal: controller.signal });
         clearTimeout(timer);
         if (res.ok) {
@@ -457,7 +461,7 @@ export class Engine {
         if (highFp.length) {
           const mutedRuleIds = new Set(highFp.map((r) => r.ruleId));
           const result = filtered.filter((f) => {
-            const ruleId = `${f.category}:${f.comment.slice(0, 40)}`;
+            const ruleId = `${f.category}:${f.comment.slice(0, RULE_ID_PREFIX_SLICE)}`;
             return !mutedRuleIds.has(ruleId);
           });
           if (result.length < filtered.length) {
@@ -745,60 +749,9 @@ export class Engine {
       // Try single-pass fix first (all files in one AI call)
       const singlePassAttempts = await this.batchApplyFixAll(fileGroups);
       if (singlePassAttempts.length > 0) {
-        for (const attempt of singlePassAttempts) {
-          allFixAttempts.push(attempt);
-          if (attempt.fixed === true && this.config.enable_auto_fix && !this.config.dry_run) {
-            modifiedFiles.add(attempt.file);
-            anyFixed = true;
-          }
-        }
+        anyFixed = this.recordProcessedAttempts(singlePassAttempts, allFixAttempts, modifiedFiles);
       } else {
-        // Fall back to per-file batching
-        const MAX_FINDINGS_PER_FILE = 5;
-        const groups: [string, Finding[]][] = [];
-        for (const [filePath, findings] of fileGroups) {
-          for (let pos = 0; pos < findings.length; pos += MAX_FINDINGS_PER_FILE) {
-            groups.push([filePath, findings.slice(pos, pos + MAX_FINDINGS_PER_FILE)]);
-          }
-        }
-        const PHASE_SIZE = 5;
-        for (let phase = 0; phase < groups.length; phase += PHASE_SIZE) {
-          const phaseGroups = groups.slice(phase, phase + PHASE_SIZE);
-          logger.info(`runFix: phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)} (${phaseGroups.length} files)`);
-          const batchResults = await concurrentMap(phaseGroups, async ([filePath, fileFindings], idx) => {
-            logger.info(`runFix: batch ${phase + idx + 1}/${fileGroups.size} — ${filePath} (${fileFindings.length} issues)`);
-            try {
-              const attempt = await this.batchApplyFix(filePath, fileFindings, phase + idx + 1);
-              logger.info(`runFix: batch result — fixed=${attempt.fixed} verified=${attempt.verified}`);
-              return attempt;
-            } catch (err) {
-              logger.warn(`runFix: batch fix failed for ${filePath}: ${err instanceof Error ? err.message : err}`);
-              return {
-                iteration: phase + idx + 1,
-                file: filePath,
-                fixed: false,
-                explanation: `Error: ${err instanceof Error ? err.message : err}`,
-                verified: false,
-                newIssuesIntroduced: [],
-              } as FixAttempt;
-            }
-          }, 3);
-          for (const attempt of batchResults as FixAttempt[]) {
-            allFixAttempts.push(attempt);
-            if (attempt.fixed === true && this.config.enable_auto_fix && !this.config.dry_run) {
-              modifiedFiles.add(attempt.file);
-              anyFixed = true;
-            }
-          }
-          if (modifiedFiles.size > 0 && phase + PHASE_SIZE < groups.length) {
-            const branch = await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)}`);
-            const isDirectPush = branch === process.env.GITHUB_REF_NAME && !process.env.GITHUB_HEAD_REF;
-            if (branch && !isDirectPush) {
-              await this.createFixPR(branch);
-            }
-            modifiedFiles.clear();
-          }
-        }
+        anyFixed = await this.processFixInBatches(fileGroups, allFixAttempts, modifiedFiles);
       }
 
       if (!anyFixed) {
@@ -826,6 +779,73 @@ export class Engine {
       fixAttempts: allFixAttempts,
       metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
     };
+  }
+
+  /** Record a batch of fix attempts, tracking modified files. Returns whether any fix was applied. */
+  private recordProcessedAttempts(
+    attempts: FixAttempt[],
+    allFixAttempts: FixAttempt[],
+    modifiedFiles: Set<string>,
+  ): boolean {
+    let anyFixed = false;
+    for (const attempt of attempts) {
+      allFixAttempts.push(attempt);
+      if (attempt.fixed === true && this.config.enable_auto_fix && !this.config.dry_run) {
+        modifiedFiles.add(attempt.file);
+        anyFixed = true;
+      }
+    }
+    return anyFixed;
+  }
+
+  /** Fallback path: group findings per file and apply fixes in batched phases. Returns whether any fix was applied. */
+  private async processFixInBatches(
+    fileGroups: Map<string, Finding[]>,
+    allFixAttempts: FixAttempt[],
+    modifiedFiles: Set<string>,
+  ): Promise<boolean> {
+    let anyFixed = false;
+    const MAX_FINDINGS_PER_FILE = 5;
+    const groups: [string, Finding[]][] = [];
+    for (const [filePath, findings] of fileGroups) {
+      for (let pos = 0; pos < findings.length; pos += MAX_FINDINGS_PER_FILE) {
+        groups.push([filePath, findings.slice(pos, pos + MAX_FINDINGS_PER_FILE)]);
+      }
+    }
+    const PHASE_SIZE = 5;
+    for (let phase = 0; phase < groups.length; phase += PHASE_SIZE) {
+      const phaseGroups = groups.slice(phase, phase + PHASE_SIZE);
+      logger.info(`runFix: phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)} (${phaseGroups.length} files)`);
+      const batchResults = await concurrentMap(phaseGroups, async (group, idx) => {
+        const [filePath, fileFindings] = group;
+        logger.info(`runFix: batch ${phase + idx + 1}/${fileGroups.size} — ${filePath} (${fileFindings.length} issues)`);
+        try {
+          const attempt = await this.batchApplyFix(filePath, fileFindings, phase + idx + 1);
+          logger.info(`runFix: batch result — fixed=${attempt.fixed} verified=${attempt.verified}`);
+          return attempt;
+        } catch (err) {
+          logger.warn(`runFix: batch fix failed for ${filePath}: ${err instanceof Error ? err.message : err}`);
+          return {
+            iteration: phase + idx + 1,
+            file: filePath,
+            fixed: false,
+            explanation: `Error: ${err instanceof Error ? err.message : err}`,
+            verified: false,
+            newIssuesIntroduced: [],
+          } as FixAttempt;
+        }
+      }, 3);
+      anyFixed = this.recordProcessedAttempts(batchResults as FixAttempt[], allFixAttempts, modifiedFiles) || anyFixed;
+      if (modifiedFiles.size > 0 && phase + PHASE_SIZE < groups.length) {
+        const branch = await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)}`);
+        const isDirectPush = branch === process.env.GITHUB_REF_NAME && !process.env.GITHUB_HEAD_REF;
+        if (branch && !isDirectPush) {
+          await this.createFixPR(branch);
+        }
+        modifiedFiles.clear();
+      }
+    }
+    return anyFixed;
   }
 
   /** Commit and push fixed files, returning the target branch name. */
@@ -898,8 +918,8 @@ export class Engine {
       logger.info(`createFixPR: created PR #${prNumber} from ${fixBranch} to ${defaultBranch}`);
 
       if (this.config.autoMerge) {
-        await reporter.enableAutoMerge(prNumber, "squash");
-        logger.info(`createFixPR: enabled auto-merge on PR #${prNumber}`);
+        await reporter.mergePR(prNumber, "squash");
+        logger.info(`createFixPR: merged PR #${prNumber}`);
       }
     } catch (err) {
       logger.warn("createFixPR: failed:", err);
@@ -1185,12 +1205,20 @@ ${promptBody}
         writeFileSync(absPath, originalContent, "utf8");
         allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "Fix failed verification, rolled back", verified: false, newIssuesIntroduced: [] });
       } else {
-        const newIssues = this.analyzer.analyzeMany([{ path: ff.file, content: fixedContent }])
-          .filter((f) => !fileGroups.get(ff.file)?.some((of) => `${of.category}:${of.line}:${of.comment}` === `${f.category}:${f.line}:${f.comment}`));
+        const newIssues = this.findNewIssues(ff.file, fixedContent, fileGroups);
         allFixes.push({ iteration: 0, file: ff.file, fixed: true, explanation: ff.explanation, verified, newIssuesIntroduced: newIssues });
       }
     }
     return allFixes;
+  }
+
+  /** Compute findings introduced by a fix that were not already present in the original file findings. */
+  private findNewIssues(file: string, content: string, fileGroups: Map<string, Finding[]>): Finding[] {
+    const originalKeys = new Set(
+      (fileGroups.get(file) ?? []).map((of) => `${of.category}:${of.line}:${of.comment}`),
+    );
+    return this.analyzer.analyzeMany([{ path: file, content }])
+      .filter((f) => !originalKeys.has(`${f.category}:${f.line}:${f.comment}`));
   }
 
   /** Apply fixes for a batch of findings without the full re-analysis loop. */
@@ -1200,30 +1228,12 @@ ${promptBody}
     const maxFixesPerFinding = 3;
 
     for (const finding of actionable) {
-      let success = false;
-      for (let attempt = 1; attempt <= maxFixesPerFinding; attempt++) {
-        try {
-          const result = await this.applyFix(finding, attempt);
-          allFixAttempts.push(result);
-          if (result.fixed && result.verified) {
-            modifiedFiles.add(finding.file);
-            success = true;
-            break;
-          }
-          if (result.fixed) {
-            modifiedFiles.add(finding.file);
-          }
-        } catch (err) {
-          allFixAttempts.push({
-            iteration: attempt,
-            file: finding.file,
-            fixed: false,
-            explanation: `Error: ${err instanceof Error ? err.message : err}`,
-            verified: false,
-            newIssuesIntroduced: [],
-          });
-        }
-      }
+      const success = await this.attemptFixFinding(
+        finding,
+        maxFixesPerFinding,
+        allFixAttempts,
+        modifiedFiles,
+      );
       if (!success) {
         logger.warn(`runFixLoopFor: failed to fix ${finding.file}:${finding.line} after ${maxFixesPerFinding} attempts`);
       }
@@ -1234,6 +1244,40 @@ ${promptBody}
     }
 
     return { fixAttempts: allFixAttempts };
+  }
+
+  /** Try to fix a single finding up to maxAttempts times. Returns true if a verified fix was applied. */
+  private async attemptFixFinding(
+    finding: Finding,
+    maxAttempts: number,
+    allFixAttempts: FixAttempt[],
+    modifiedFiles: Set<string>,
+  ): Promise<boolean> {
+    let success = false;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const result = await this.applyFix(finding, attempt);
+        allFixAttempts.push(result);
+        if (result.fixed && result.verified) {
+          modifiedFiles.add(finding.file);
+          success = true;
+          break;
+        }
+        if (result.fixed) {
+          modifiedFiles.add(finding.file);
+        }
+      } catch (err) {
+        allFixAttempts.push({
+          iteration: attempt,
+          file: finding.file,
+          fixed: false,
+          explanation: `Error: ${err instanceof Error ? err.message : err}`,
+          verified: false,
+          newIssuesIntroduced: [],
+        });
+      }
+    }
+    return success;
   }
 
   /** Run lint + tests after a fix. Best-effort; returns true if both pass. */
@@ -1927,70 +1971,79 @@ ${promptBody}
     }
 
     if (this.truncatedCount > 0) {
-      parts.push(`⚠ **AI response truncation:** ${this.truncatedCount} file(s) hit the output token limit, ${this.repairedCount} repaired automatically. Some findings may be incomplete.`);
+      parts.push(`(**AI response truncation:** ${this.truncatedCount} file(s) hit the output token limit, ${this.repairedCount} corrected automatically. Some findings may be incomplete.`);
     }
     parts.push("");
     parts.push(`**Ready to merge?** ${readyToMerge}`);
 
-    if (issues.length > 0) {
-      const top = issues.slice(0, 3);
-      const reasons = top.map(
-        (i) => `${i.file}${i.line ? `:${i.line}` : ""} — ${i.comment}`,
-      );
-      parts.push(`\n**Reasoning:** ${reasons.join("; ")}`);
-    }
-
-    if (strengths.length > 0) {
-      parts.push(`\n### Strengths\n`);
-      for (const s of strengths) {
-        parts.push(
-          `- **${s.file}${s.line ? `:${s.line}` : ""}** — ${s.comment}`,
-        );
-      }
-    }
-
-    if (issues.length > 0) {
-      const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-      const MAX_VISIBLE = 5;
-      const sorted = [...issues].sort(
-        (a, b) => (SEVERITY_ORDER[a.severity] ?? 99) - (SEVERITY_ORDER[b.severity] ?? 99),
-      );
-      const visible = sorted.slice(0, MAX_VISIBLE);
-      const hidden = sorted.length - MAX_VISIBLE;
-
-      parts.push(`\n### Issues (showing ${visible.length} of ${sorted.length})\n`);
-      for (const i of visible) {
-        const label =
-          i.severity === "critical" || i.severity === "high"
-            ? `**[${i.severity.toUpperCase()}]** `
-            : "";
-        parts.push(
-          `- ${label}**${i.file}${i.line ? `:${i.line}` : ""}** — ${i.comment}${i.suggestion ? `\n  > Suggestion: ${i.suggestion}` : ""}`,
-        );
-      }
-      if (hidden > 0) {
-        parts.push(`\n_… and ${hidden} more issues. Check the report file for the full list._`);
-      }
-    }
-
-    if (fixAttempts && fixAttempts.length > 0) {
-      const success = fixAttempts.filter((a) => a.fixed && a.verified).length;
-      const MAX_ATTEMPTS = 10;
-      const show = fixAttempts.slice(-MAX_ATTEMPTS);
-      const hidden = fixAttempts.length - MAX_ATTEMPTS;
-      parts.push(`\n### Fix Attempts\n`);
-      parts.push(`Fixes applied & verified: **${success}/${fixAttempts.length}**`);
-      for (const a of show) {
-        parts.push(
-          `- ${a.fixed ? "✅" : "❌"} **${a.file}** — ${a.explanation}`,
-        );
-      }
-      if (hidden > 0) {
-        parts.push(`\n_… and ${hidden} earlier attempts omitted._`);
-      }
-    }
+    this.appendReasoningSummary(parts, issues);
+    this.appendStrengths(parts, strengths);
+    this.appendIssues(parts, issues);
+    if (fixAttempts) this.appendFixAttempts(parts, fixAttempts);
 
     return parts.join("\n");
+  }
+
+  private appendReasoningSummary(parts: string[], issues: Finding[]): void {
+    if (issues.length === 0) return;
+    const top = issues.slice(0, 3);
+    const reasons = top.map(
+      (i) => `${i.file}${i.line ? `:${i.line}` : ""} — ${i.comment}`,
+    );
+    parts.push(`\n**Reasoning:** ${reasons.join("; ")}`);
+  }
+
+  private appendStrengths(parts: string[], strengths: Finding[]): void {
+    if (strengths.length === 0) return;
+    parts.push(`\n### Strengths\n`);
+    for (const s of strengths) {
+      parts.push(
+        `- **${s.file}${s.line ? `:${s.line}` : ""}** — ${s.comment}`,
+      );
+    }
+  }
+
+  private appendIssues(parts: string[], issues: Finding[]): void {
+    if (issues.length === 0) return;
+    const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+    const MAX_VISIBLE = 5;
+    const sorted = [...issues].sort(
+      (a, b) => (SEVERITY_ORDER[a.severity] ?? 99) - (SEVERITY_ORDER[b.severity] ?? 99),
+    );
+    const visible = sorted.slice(0, MAX_VISIBLE);
+    const hidden = sorted.length - MAX_VISIBLE;
+
+    parts.push(`\n### Issues (showing ${visible.length} of ${sorted.length})\n`);
+    for (const i of visible) {
+      const label =
+        i.severity === "critical" || i.severity === "high"
+          ? `**[${i.severity.toUpperCase()}]** `
+          : "";
+      parts.push(
+        `- ${label}**${i.file}${i.line ? `:${i.line}` : ""}** — ${i.comment}${i.suggestion ? `\n  > Suggestion: ${i.suggestion}` : ""}`,
+      );
+    }
+    if (hidden > 0) {
+      parts.push(`\n_… and ${hidden} more issues. Check the report file for the full list._`);
+    }
+  }
+
+  private appendFixAttempts(parts: string[], fixAttempts: FixAttempt[]): void {
+    if (fixAttempts.length === 0) return;
+    const success = fixAttempts.filter((a) => a.fixed && a.verified).length;
+    const MAX_ATTEMPTS = 10;
+    const show = fixAttempts.slice(-MAX_ATTEMPTS);
+    const hidden = fixAttempts.length - MAX_ATTEMPTS;
+    parts.push(`\n### Fix Attempts\n`);
+    parts.push(`Fixes applied & verified: **${success}/${fixAttempts.length}**`);
+    for (const a of show) {
+      parts.push(
+        `- ${a.fixed ? "✅" : "❌"} **${a.file}** — ${a.explanation}`,
+      );
+    }
+    if (hidden > 0) {
+      parts.push(`\n_… and ${hidden} earlier attempts omitted._`);
+    }
   }
 
   private tallySeverity(findings: Finding[]): Record<string, number> {
