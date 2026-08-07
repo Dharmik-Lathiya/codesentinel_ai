@@ -647,9 +647,9 @@ export class Engine {
         const existing = groups.get(key);
         if (existing) {
           existing.count++;
-        } else {
-          groups.set(key, { count: 1, category: f.category, comment: f.comment, suggestion: f.suggestion });
+          continue;
         }
+        groups.set(key, { count: 1, category: f.category, comment: f.comment, suggestion: f.suggestion });
       }
       for (const [, g] of groups) {
         if (g.count < 2) continue;
