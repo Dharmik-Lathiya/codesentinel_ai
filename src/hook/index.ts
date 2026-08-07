@@ -1,7 +1,10 @@
-import { writeFileSync, chmodSync } from "node:fs";
-import { join } from "node:path";
+import { writeFileSync, chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
+import { join, isAbsolute } from "node:path";
+import { execFileSync } from "node:child_process";
 
-const DEFAULT_HIGH_SCORE_LIMIT = 10;
+// Max number of high-severity findings the pre-commit gate will tolerate.
+// This is a finding count, not a score; baked in at install time.
+const DEFAULT_MAX_HIGH_FINDINGS = 10;
 const DEFAULT_MAX_ITERATIONS = 5;
 
 const PRE_COMMIT_SCRIPT = `#!/bin/sh
@@ -22,7 +25,7 @@ fi
 
 # Run CodeSentinel gate on staged files
   if command -v codesentinel >/dev/null 2>&1; then
-  codesentinel gate --min-score 0 --max-critical 0 --max-high ${DEFAULT_HIGH_SCORE_LIMIT}
+  codesentinel gate --min-score 0 --max-critical 0 --max-high ${DEFAULT_MAX_HIGH_FINDINGS}
   GATE_EXIT=$?
   if [ $GATE_EXIT -ne 0 ]; then
     echo "❌ CodeSentinel: Gate check failed. Fix issues before committing."
@@ -31,8 +34,9 @@ fi
   fi
   echo "✅ CodeSentinel: All checks passed."
 else
-  echo "⚠️  CodeSentinel not found in PATH — skipping check."
+  echo "❌ CodeSentinel not found in PATH — refusing to commit."
   echo "   Install: npm install -g @dharmiklathiya/codesentinel_ai"
+  exit 1
 fi
 `;
 
@@ -51,7 +55,9 @@ fi
 MAX_ITER=${DEFAULT_MAX_ITERATIONS}
 echo "🔧 CodeSentinel: Running post-commit build check..."
 
-for i in $(seq 1 $MAX_ITER); do
+i=0
+while [ $i -lt $MAX_ITER ]; do
+  i=$((i + 1))
   echo "=== Build-Fix Iteration $i/$MAX_ITER ==="
 
   FAILED=0
@@ -89,10 +95,26 @@ exit 1
 export type HookType = "pre-commit" | "post-commit";
 
 export function installHook(root: string, type: HookType = "pre-commit"): string {
-  const hookDir = join(root, ".git", "hooks");
+  let hooksRel: string;
+  try {
+    hooksRel = execFileSync("git", ["rev-parse", "--git-path", "hooks"], {
+      cwd: root,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+  } catch {
+    throw new Error(`CodeSentinel: '${root}' is not a git repository — cannot install ${type} hook.`);
+  }
+  const hookDir = isAbsolute(hooksRel) ? hooksRel : join(root, hooksRel);
+  mkdirSync(hookDir, { recursive: true });
   const hookName = type === "post-commit" ? "post-commit" : "pre-commit";
   const hookPath = join(hookDir, hookName);
   const script = type === "post-commit" ? POST_COMMIT_SCRIPT : PRE_COMMIT_SCRIPT;
+  if (existsSync(hookPath)) {
+    renameSync(hookPath, `${hookPath}.bak`);
+    console.warn(`CodeSentinel: backed up existing ${hookName} hook to ${hookPath}.bak`);
+  }
   writeFileSync(hookPath, script, "utf8");
   chmodSync(hookPath, 0o755);
   return hookPath;
