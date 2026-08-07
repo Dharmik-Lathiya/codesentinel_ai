@@ -230,42 +230,52 @@ export class Engine {
     await this.init();
     const start = Date.now();
     logger.info(`Running mode: ${this.config.mode}`);
-    await this.checkAIProvider();
+    try {
+      await this.checkAIProvider();
+    } catch (err) {
+      logger.warn(`run: AI provider health check failed`, err);
+      this.aiAvailable = false;
+    }
 
     let report: EngineReport;
-    switch (this.config.mode) {
-      case "review":
-        report = await this.runReview();
-        break;
-      case "fix":
-        report = await this.runFix();
-        break;
-      case "audit":
-        report = await this.runAudit();
-        break;
-      case "score":
-        report = await this.runScoreMode();
-        break;
-      case "testgen":
-        report = await this.runTestgen();
-        break;
-      case "gate":
-        report = await this.runGate();
-        break;
-      case "describe":
-        report = await this.runDescribe();
-        break;
-      case "chat":
-        report = await this.runChat("(no prompt supplied; use ask())");
-        break;
-      case "improve":
-        report = await this.runImprove();
-        break;
-      case "plan":
-        report = await this.runPlan();
-        break;
-      default:
-        throw new Error(`Unsupported mode: ${this.config.mode}`);
+    try {
+      switch (this.config.mode) {
+        case "review":
+          report = await this.runReview();
+          break;
+        case "fix":
+          report = await this.runFix();
+          break;
+        case "audit":
+          report = await this.runAudit();
+          break;
+        case "score":
+          report = await this.runScoreMode();
+          break;
+        case "testgen":
+          report = await this.runTestgen();
+          break;
+        case "gate":
+          report = await this.runGate();
+          break;
+        case "describe":
+          report = await this.runDescribe();
+          break;
+        case "chat":
+          report = await this.runChat("(no prompt supplied; use ask())");
+          break;
+        case "improve":
+          report = await this.runImprove();
+          break;
+        case "plan":
+          report = await this.runPlan();
+          break;
+        default:
+          throw new Error(`Unsupported mode: ${this.config.mode}`);
+      }
+    } catch (err) {
+      logger.error(`run: mode ${this.config.mode} failed`, err);
+      throw err;
     }
 
     report.metrics.durationMs = Date.now() - start;
@@ -693,17 +703,32 @@ export class Engine {
       cycle++;
       logger.info(`runFix: === cycle ${cycle}/${maxCycles} ===`);
 
-      const files = await this.collectedFiles();
+      let files: { path: string; content: string; diff?: string }[] = [];
+      try {
+        files = await this.collectedFiles();
+      } catch (err) {
+        logger.warn(`runFix: failed to collect files: ${err instanceof Error ? err.message : err}`);
+      }
       if (files.length === 0) {
         logger.info("runFix: no files to analyze, exiting loop");
         break;
       }
 
-      const staticFindings = await this.analyzeFiles(files);
+      let staticFindings: Finding[] = [];
+      try {
+        staticFindings = await this.analyzeFiles(files);
+      } catch (err) {
+        logger.warn(`runFix: static analysis failed: ${err instanceof Error ? err.message : err}`);
+      }
       let findings = staticFindings;
       if (cycle === 1 && this.aiAvailable) {
         const aiFiles = this.redactFilesForAI(files);
-        const { findings: aiFindings } = await this.aiReview(aiFiles);
+        let aiFindings: Finding[] = [];
+        try {
+          ({ findings: aiFindings } = await this.aiReview(aiFiles));
+        } catch (err) {
+          logger.warn(`runFix: AI review failed: ${err instanceof Error ? err.message : err}`);
+        }
         if (aiFindings.length) findings = [...staticFindings, ...aiFindings];
       }
       allFindings.length = 0;
@@ -743,7 +768,12 @@ export class Engine {
 
       let anyFixed = false;
       // Try single-pass fix first (all files in one AI call)
-      const singlePassAttempts = await this.batchApplyFixAll(fileGroups);
+      let singlePassAttempts: FixAttempt[] = [];
+      try {
+        singlePassAttempts = await this.batchApplyFixAll(fileGroups);
+      } catch (err) {
+        logger.warn(`runFix: single-pass fix failed: ${err instanceof Error ? err.message : err}`);
+      }
       if (singlePassAttempts.length > 0) {
         for (const attempt of singlePassAttempts) {
           allFixAttempts.push(attempt);
@@ -807,10 +837,20 @@ export class Engine {
     }
 
     if (modifiedFiles.size > 0 && !this.config.dry_run) {
-      const branch = await this.pushFixes(modifiedFiles);
+      let branch: string;
+      try {
+        branch = await this.pushFixes(modifiedFiles);
+      } catch (err) {
+        logger.warn(`runFix: failed to push fixes: ${err instanceof Error ? err.message : err}`);
+        branch = "";
+      }
       const isDirectPush = branch === process.env.GITHUB_REF_NAME && !process.env.GITHUB_HEAD_REF;
       if (branch && !isDirectPush) {
-        await this.createFixPR(branch);
+        try {
+          await this.createFixPR(branch);
+        } catch (err) {
+          logger.warn(`runFix: failed to create PR: ${err instanceof Error ? err.message : err}`);
+        }
       }
     }
 
