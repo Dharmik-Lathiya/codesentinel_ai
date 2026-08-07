@@ -140,10 +140,14 @@ export class LearningStore {
   }
 
   private async insertPatternRecord(patternText: string, category: string): Promise<void> {
-    await this.db!.run(
-      "INSERT INTO patterns (id, pattern_text, category) VALUES (?, ?, ?)",
-      [generateId(), patternText, category],
-    );
+    try {
+      await this.db!.run(
+        "INSERT INTO patterns (id, pattern_text, category) VALUES (?, ?, ?)",
+        [generateId(), patternText, category],
+      );
+    } catch (err) {
+      logger.warn(`insertPatternRecord failed: ${err}`);
+    }
   }
 
   async getPendingRules(): Promise<CustomRuleRecord[]> {

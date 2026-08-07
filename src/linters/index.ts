@@ -4,11 +4,34 @@ import { resolve } from "node:path";
 import type { Finding } from "../analyzer/index.js";
 import { logger } from "../utils/logger.js";
 
+const MAX_BUFFER = 10 * 1024 * 1024;
 export interface LinterTool {
   name: string;
   detect(root: string): boolean;
   run(root: string, extraArgs: string[]): Finding[];
 }
+
+function eslintFindings(out: string): Finding[] {
+  if (!out.trim()) return [];
+  try {
+    const results: { filePath: string; messages: { line: number; severity: number; message: string; ruleId: string | null }[] }[] = JSON.parse(out);
+    return results.flatMap((f) =>
+      f.messages.map((m) => ({
+        file: f.filePath,
+        line: m.line || null,
+        severity: m.severity >= 2 ? "high" as const : "low" as const,
+        category: "smell" as const,
+        comment: m.message,
+        suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
+        source: "linter" as const,
+      })),
+    );
+  } catch (e) {
+    logger.warn(`eslint parse failed: ${e}`);
+    return [];
+  }
+}
+
 
 const eslint: LinterTool = {
   name: "eslint",
@@ -19,21 +42,9 @@ const eslint: LinterTool = {
     try {
       const out = execSync(
         `npx eslint --format json --no-color ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
-      if (!out.trim()) return [];
-      const results: { filePath: string; messages: { line: number; severity: number; message: string; ruleId: string | null }[] }[] = JSON.parse(out);
-      return results.flatMap((f) =>
-        f.messages.map((m) => ({
-          file: f.filePath,
-          line: m.line || null,
-          severity: m.severity >= 2 ? "high" as const : "low" as const,
-          category: "smell" as const,
-          comment: m.message,
-          suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
-          source: "linter" as const,
-        })),
-      );
+      return eslintFindings(out);
     } catch (e) {
       logger.warn(`eslint run failed: ${e}`);
       return [];
@@ -50,10 +61,16 @@ const biome: LinterTool = {
     try {
       const out = execSync(
         `npx biome lint --diagnostic-level=warn --max-diagnostics=200 ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
-      const parsed: { diagnostics: { location: { path: { file: string }; span: { start: { line: number } } | null }; severity: string; message: { text: string }; category: string }[] } = JSON.parse(out);
+      let parsed: { diagnostics: { location: { path: { file: string }; span: { start: { line: number } } | null }; severity: string; message: { text: string }; category: string }[] };
+      try {
+        parsed = JSON.parse(out);
+      } catch (e) {
+        logger.warn(`biome parse failed: ${e}`);
+        return [];
+      }
       return (parsed.diagnostics ?? []).map((d) => ({
         file: d.location.path.file,
         line: d.location.span?.start.line ?? null,
@@ -84,10 +101,16 @@ const pylint: LinterTool = {
     try {
       const out = execSync(
         `pylint --output-format=json ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
-      const results: { path: string; line: number; message: string; symbol: string; type: string }[] = JSON.parse(out);
+      let results: { path: string; line: number; message: string; symbol: string; type: string }[];
+      try {
+        results = JSON.parse(out);
+      } catch (e) {
+        logger.warn(`pylint parse failed: ${e}`);
+        return [];
+      }
       return results.map((m) => ({
         file: m.path,
         line: m.line || null,
