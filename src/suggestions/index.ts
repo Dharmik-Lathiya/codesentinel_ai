@@ -22,7 +22,7 @@ export function buildSuggestionsComment(
   for (const f of shown) {
     const content = fileContents.get(f.file) ?? "";
     const lines = content.split("\n");
-    const suggested = (f.suggestion ?? "").trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "");
+    const suggested = (f.suggestion ?? "").trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "").replace(/`/g, "\\`");
     if (f.line && f.line > 0 && f.line <= lines.length) {
       const ctxBefore = lines.slice(Math.max(0, f.line - 1 - CONTEXT_BEFORE), f.line - 1).join("\n");
       const ctxAfter = lines.slice(f.line, Math.min(lines.length, f.line + CONTEXT_AFTER)).join("\n");

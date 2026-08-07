@@ -29,7 +29,6 @@ const MAX_SCORE = 100;
 
 const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
 
-
 const HIGH_SEVERITY_PENALTY = 16;
 const CRITICAL_SEVERITY_PENALTY = 30;
 /** Severity penalty weights applied to the security dimension. */
