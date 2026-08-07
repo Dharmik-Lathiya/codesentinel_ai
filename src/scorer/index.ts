@@ -27,6 +27,13 @@ export const WEIGHTS = {
 
 const MAX_SCORE = 100;
 
+/** Floor applied to per-file readability scores to avoid outliers. */
+const MAX_READABILITY_FLOOR = 20;
+
+/** Returns true when a path refers to a unit test file (spec/__tests__). */
+const isTestFile = (path: string): boolean =>
+  /\.(test|spec)\.[jt]sx?$/.test(path) || /__tests__\//.test(path);
+
 const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
 
 
@@ -154,8 +161,10 @@ export class Scorer {
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      // Readability heuristic: penalize 2 pts per line longer than 120 chars
+      // and reward up to 20 pts based on comment density.
+      const score = MAX_SCORE - longLines * 2 + commentRatio * 20;
+      total += Math.max(MAX_READABILITY_FLOOR, score);
     }
     return fileCount ? total / fileCount : 100;
   }
@@ -166,16 +175,16 @@ export class Scorer {
   ): number {
     const testPaths = new Set(
       files
-        .map((f) => f.path)
-        .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
+        .filter((f) => isTestFile(f.path))
+        .map((f) => f.path.replace(/\.(test|spec)\.[jt]sx?$/, "")),
     );
-    const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
-    if (sourceFiles.length === 0) return 100;
+    const sourceFiles = files.filter((f) => !isTestFile(f.path));
+    if (sourceFiles.length === 0) return MAX_SCORE;
     let covered = 0;
     for (const f of sourceFiles) {
-      const base = f.path.replace(/\.[^.]+$/, "");
-      if ([...testPaths].some((t) => t.startsWith(base))) covered++;
+      const base = f.path.replace(/\. [^.]+$/, "").replace(/\.(test|spec)$/, "");
+      if (testPaths.has(base)) covered++;
     }
-    return (covered / sourceFiles.length) * 100;
+    return (covered / sourceFiles.length) * MAX_SCORE;
   }
 }
