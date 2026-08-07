@@ -798,7 +798,14 @@ async function main(): Promise<void> {
       path,
       content: readText(resolve(root, path)),
     }));
-    const findings = await engine.runDeadCode(files);
+    let findings;
+    try {
+      findings = await engine.runDeadCode(files);
+    } catch (err) {
+      process.stderr.write(`Dead code analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+      return;
+    }
     if (findings.length === 0) {
       process.stdout.write("✅ No unused exports detected.\n");
     } else {
