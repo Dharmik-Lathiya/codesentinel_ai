@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { writeFileSync, appendFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -99,11 +99,11 @@ export async function runAction(): Promise<void> {
     );
   }
 
-  await publishOutputs(report, secrets, autoMerge);
+  await publishOutputs(report, secrets, autoMerge, outputMode);
 }
 
 /** Post comments / issues and write the step summary + metrics outputs. */
-async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, autoMerge = false): Promise<void> {
+async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, autoMerge = false, displayMode = "plan"): Promise<void> {
   const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
   const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
   const pullNumber = process.env.GITHUB_PR_NUMBER
@@ -186,29 +186,20 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, aut
   // Step summary (rendered in the Actions UI).
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (summaryPath) {
-    writeFileSync(summaryPath, renderSummary(report), "utf8");
+    writeFileSync(summaryPath, renderSummary(report, displayMode), "utf8");
   }
 
   // Metrics as workflow outputs via GITHUB_OUTPUT (legacy ::set-output is deprecated).
   const outputPath = process.env.GITHUB_OUTPUT;
   if (outputPath) {
-        let appendFileSync: typeof import("node:fs").appendFileSync;
-        try {
-          ({ appendFileSync } = await import("node:fs"));
-        } catch (err) {
-          logger.warn(`failed to load node:fs (${err})`);
-          return;
-        }
-        const score = report.score?.overall ?? "n/a";
-        const findings = String(report.findings.length);
-        appendFileSync(outputPath, `score=${score}\n`);
-        appendFileSync(outputPath, `findings=${findings}\n`);
-    appendFileSync(outputPath, `findings=${findings}\n`);
+    const score = report.score?.overall ?? "n/a";
+    const findings = String(report.findings.length);
+    appendFileSync(outputPath, `score=${score}\nfindings=${findings}\n`);
   }
 }
 
-function renderSummary(report: EngineReport): string {
-  const lines = [`# CodeSentinel — ${report.mode}`, "", report.summary, ""];
+function renderSummary(report: EngineReport, displayMode = "plan"): string {
+  const lines = [`# CodeSentinel — ${report.mode ?? displayMode}`, "", report.summary, ""];
   if (report.score) {
     lines.push(
       `**Score:** ${report.score.overall}/100 ` +
@@ -224,5 +215,5 @@ function renderSummary(report: EngineReport): string {
 
 runAction().catch((err) => {
   logger.error("Action failed:", err);
-  process.exit(1);
+  process.exitCode = 1;
 });
