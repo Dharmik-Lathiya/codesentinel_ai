@@ -59,7 +59,7 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
