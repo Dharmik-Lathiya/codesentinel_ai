@@ -76,7 +76,12 @@ export interface Hunk {
   newLines: string[];
 }
 
-/** Apply hunks to file content (sorts bottom-to-top to preserve line numbers). */
+/**
+ * Apply hunks to file content (sorts bottom-to-top to preserve line numbers).
+ * Hunks sharing the same startLine are applied in their original array order
+ * (`Array.prototype.sort` is stable in modern engines). deleteCount is clamped
+ * so a hunk can never splice past the end of the line array.
+ */
 export function applyHunks(content: string, hunks: Hunk[]): string {
   const lines = content.split("\n");
   const sorted = [...hunks].sort((a, b) => b.startLine - a.startLine);
@@ -86,7 +91,8 @@ export function applyHunks(content: string, hunks: Hunk[]): string {
       logger.warn(`applyHunks: skipping hunk startLine=${hunk.startLine} (file has ${lines.length} lines)`);
       continue;
     }
-    lines.splice(idx, hunk.deleteCount, ...hunk.newLines);
+    const deleteCount = Math.min(hunk.deleteCount, lines.length - idx);
+    lines.splice(idx, deleteCount, ...hunk.newLines);
   }
   return lines.join("\n");
 }
@@ -270,7 +276,7 @@ export class Engine {
         report = await this.runTestgen();
         break;
       case "gate":
-        report = await this.runGate();
+        report = await this.runGate(start);
         break;
       case "describe":
         report = await this.runDescribe();
@@ -290,7 +296,6 @@ export class Engine {
 
     report.metrics.durationMs = Date.now() - start;
     this.finalizeReport(report);
-    report.metrics.durationMs = Date.now() - start;
 
     if (this.config.output.writeReportFile) this.writeReportFile(report);
     return report;
@@ -299,7 +304,7 @@ export class Engine {
   // ---------------------------------------------------------------------------
   // GATE
   // ---------------------------------------------------------------------------
-  private async runGate(): Promise<EngineReport> {
+  private async runGate(startedAt: number): Promise<EngineReport> {
     const files = await this.collectedFiles();
     const findings = await this.analyzeFiles(files);
 
@@ -314,7 +319,7 @@ export class Engine {
       logger.warn(`Gate FAILED: ${gateResult.reason}`);
     }
 
-    this.recordDashboardRun("gate", findings, score, 0);
+    this.recordDashboardRun("gate", findings, score, Date.now() - startedAt);
 
     return {
       mode: "gate",
@@ -325,7 +330,11 @@ export class Engine {
       generatedTests: [],
       fixAttempts: [],
       gatePassed: gateResult.passed,
-      metrics: { filesAnalyzed: files.length, findingsBySeverity: {}, durationMs: 0 },
+      metrics: {
+        filesAnalyzed: files.length,
+        findingsBySeverity: this.tallySeverity(findings),
+        durationMs: 0,
+      },
     };
   }
 
@@ -751,7 +760,6 @@ export class Engine {
         const { findings: aiFindings } = await this.aiReview(aiFiles);
         if (aiFindings.length) findings = [...staticFindings, ...aiFindings];
       }
-      allFindings.length = 0;
       allFindings.push(...findings);
 
       const actionable = findings.filter((f) => f.category !== "praise");
