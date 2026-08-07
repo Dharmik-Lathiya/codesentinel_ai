@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Engine } from "./engine/index.js";
+import { Engine, type EngineReport } from "./engine/index.js";
 import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 import type { CodeSentinelConfig, Mode, ModelConfig, Provider, RuntimeSecrets } from "./config/types.js";
 import { logger, type LogLevel } from "./utils/logger.js";
@@ -295,7 +295,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  build-fix:",
-  "    if: ${{ github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
+    "if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]')) }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
   "        with:",
@@ -409,7 +409,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
-function runSetup(force: boolean): void {
+function writeWorkflowFiles(force: boolean): void {
   const cwd = process.cwd();
   const workflowDir = join(cwd, ".github", "workflows");
   const workflowPath = join(workflowDir, "codesentinel.yml");
@@ -434,7 +434,9 @@ function runSetup(force: boolean): void {
   }
   writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
   process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
+}
 
+function printSetupNextSteps(): void {
   process.stdout.write("Next steps:\n");
   process.stdout.write("  git add .github/workflows/\n");
   process.stdout.write('  git commit -m "Add CodeSentinel AI workflows"\n');
@@ -454,27 +456,33 @@ function runSetup(force: boolean): void {
   process.stdout.write("  generates an implementation plan and asks clarifying questions.\n");
   process.stdout.write("  Reply with /fix to start implementation.\n\n");
   process.stdout.write("Build-Fix (auto-fixes on push):\n");
-  process.stdout.write("  The build-fix workflow triggers on push to main/master/develop.\n");
+  process.stdout.write("  The build-workflow triggers on push to main/master/develop.\n");
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
 }
 
-function showHelp(): void {
-  let pkg;
+function runSetup(force: boolean): void {
+  writeWorkflowFiles(force);
+  printSetupNextSteps();
+}
+
+function loadPackageVersion(): string {
   try {
-    pkg = JSON.parse(
+    const pkg = JSON.parse(
       readFileSync(join(__dirname, "..", "package.json"), "utf8"),
     );
+    return pkg.version ?? "unknown";
   } catch {
-    pkg = { version: "unknown" };
+    return "unknown";
   }
-  process.stdout.write(`CodeSentinel AI v${pkg.version}
-AI-powered code review, fix, audit, scoring, and test generation.
+}
+
+const HELP_TEXT = `AI-powered code review, fix, audit, scoring, and test generation.
 
 Usage:
   codesentinel [mode] [options]
@@ -542,34 +550,21 @@ Examples:
   codesentinel dashboard
   codesentinel deadcode
   codesentinel describe
-`);
+`;
+
+function showHelp(): void {
+  process.stdout.write(`CodeSentinel AI v${loadPackageVersion()}\n`);
+  process.stdout.write(HELP_TEXT);
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
-  process.stdout.write(`${pkg.version}\n`);
+  process.stdout.write(`${loadPackageVersion()}\n`);
 }
 
-/**
- * Command-line interface. Usage:
- *   codesentinel --mode review --config ./codesentinel.config.json
- *   codesentinel score --provider opencode
- *   codesentinel chat --ask "How does auth work?"
- */
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-
-  // Handle top-level commands
+async function handleTopLevelCommand(args: string[]): Promise<boolean> {
   if (args[0] === "setup") {
     runSetup(args.includes("--force"));
-    return;
+    return true;
   }
 
   if (args[0] === "init-hook") {
@@ -581,7 +576,7 @@ async function main(): Promise<void> {
     if (hookType === "post-commit") {
       process.stdout.write("This hook will run build + typecheck after every commit and auto-fix failures.\n");
     }
-    return;
+    return true;
   }
 
   if (args[0] === "dashboard") {
@@ -590,7 +585,7 @@ async function main(): Promise<void> {
     if (!dash) {
       process.stderr.write("Dashboard is not available.\n");
       process.exitCode = 1;
-      return;
+      return true;
     }
     dash.start();
     process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
@@ -600,17 +595,17 @@ async function main(): Promise<void> {
         dash.stop();
       });
     }
-    return;
+    return true;
   }
 
   if (args[0] === "dismiss") {
     if (args.includes("--help") || args.includes("-h")) {
       showHelp();
-      return;
+      return true;
     }
     if (args.includes("--version")) {
       showVersion();
-      return;
+      return true;
     }
     const parsed = parseDismissArgs(args.slice(1));
     if (parsed.error) {
@@ -619,7 +614,7 @@ async function main(): Promise<void> {
       if (parsed.error.startsWith("Options")) {
         process.stdout.write("Options --rule and --file are mutually exclusive.\n");
       }
-      return;
+      return true;
     }
 
     const engine = Engine.fromInputs({ secrets: loadSecrets() });
@@ -638,6 +633,116 @@ async function main(): Promise<void> {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
       }
     }
+    return true;
+  }
+
+  return false;
+}
+
+async function runChatQuery(engine: Engine, question: string): Promise<void> {
+  try {
+    const answer = await engine.ask(question);
+    process.stdout.write(answer + "\n");
+  } catch (err) {
+    process.stderr.write(`Chat query failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+  }
+}
+
+async function runDeadcodeBlock(engine: Engine): Promise<void> {
+  const root = process.cwd();
+  const rels = collectFiles(root, engine.config.include, engine.config.exclude);
+  const files = rels.map((path) => ({
+    path,
+    content: readText(resolve(root, path)),
+  }));
+  let findings: Awaited<ReturnType<Engine["runDeadCode"]>>;
+  try {
+    findings = await engine.runDeadCode(files);
+  } catch (err) {
+    process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (findings.length === 0) {
+    process.stdout.write("✅ No unused exports detected.\n");
+  } else {
+    process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
+    process.stdout.write(`Unused exports (${findings.length}):\n`);
+    for (const f of findings) {
+      process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
+    }
+  }
+}
+
+function printEngineReport(report: EngineReport, opts: { json: boolean; sarif: boolean; dryRun: boolean }): void {
+  // JSON output mode
+  if (opts.json) {
+    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    if (report.mode === "gate" && report.gatePassed === false) {
+      process.stderr.write("Gate check failed\n");
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  // SARIF output mode
+  if (opts.sarif) {
+    process.stdout.write(renderSarif(report) + "\n");
+    if (report.mode === "gate" && report.gatePassed === false) {
+      process.stderr.write("Gate check failed\n");
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  // Human-readable console output
+  process.stdout.write(`\n=== CodeSentinel [${report.mode}] ===\n`);
+  if (opts.dryRun && report.mode === "fix") {
+    process.stdout.write("[DRY RUN] No files were modified.\n");
+  }
+  process.stdout.write(report.summary + "\n");
+  if (report.score) {
+    process.stdout.write(
+      `Score: ${report.score.overall}/${MAX_SCORE} ` +
+        `(readability ${report.score.readability}, ` +
+        `maintainability ${report.score.maintainability}, ` +
+        `security ${report.score.security}, ` +
+        `coverage ${report.score.test_coverage})\n`,
+    );
+  }
+  if (report.findings.length && (report.mode !== "review" && report.mode !== "fix")) {
+    process.stdout.write(`\nFindings (${report.findings.length}):\n`);
+    for (const f of report.findings) {
+      process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${stripAnsi(f.comment)}\n`);
+    }
+  }
+  if (report.generatedTests.length) {
+    process.stdout.write(`\nGenerated tests:\n`);
+    for (const t of report.generatedTests) {
+      process.stdout.write(`  + ${t.testFilePath}\n`);
+    }
+  }
+  process.stdout.write(`\nDone in ${report.metrics.durationMs}ms.\n`);
+
+  // Exit non-zero if gate fails
+  if (report.mode === "gate" && report.gatePassed === false) {
+    process.stderr.write("Gate check failed\n");
+    process.exitCode = 1;
+  }
+}
+
+/**
+ * Command-line interface. Usage:
+ *   codesentinel --mode review --config ./codesentinel.config.json
+ *   codesentinel score --provider opencode
+ *   codesentinel chat --ask "How does auth work?"
+ */
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+
+  // Handle top-level commands
+  if (await handleTopLevelCommand(args)) {
     return;
   }
 
@@ -780,100 +885,30 @@ async function main(): Promise<void> {
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    try {
-      const answer = await engine.ask(values["ask"]);
-      process.stdout.write(answer + "\n");
-    } catch (err) {
-      process.stderr.write(`Chat query failed: ${err instanceof Error ? err.message : String(err)}\n`);
-      process.exitCode = 1;
-    }
+    await runChatQuery(engine, values["ask"]);
     return;
   }
 
   // Special handling for deadcode mode — run in-process without AI
   if (modeArg === "deadcode") {
-    const root = process.cwd();
-    const rels = collectFiles(root, engine.config.include, engine.config.exclude);
-    const files = rels.map((path) => ({
-      path,
-      content: readText(resolve(root, path)),
-    }));
-    let findings: Awaited<ReturnType<typeof engine.runDeadCode>>;
-    try {
-      findings = await engine.runDeadCode(files);
-    } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
-      process.exitCode = 1;
-      return;
-    }
-    if (findings.length === 0) {
-      process.stdout.write("✅ No unused exports detected.\n");
-    } else {
-      process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
-      process.stdout.write(`Unused exports (${findings.length}):\n`);
-      for (const f of findings) {
-        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
-      }
-    }
+    await runDeadcodeBlock(engine);
     return;
   }
 
-  const report = await engine.run();
-
-  // JSON output mode
-  if (values.json) {
-    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
-    if (report.mode === "gate" && report.gatePassed === false) {
-      process.stderr.write("Gate check failed\n");
-      process.exitCode = 1;
-    }
-    return;
-  }
-
-  // SARIF output mode
-  if (values.sarif) {
-    process.stdout.write(renderSarif(report) + "\n");
-    if (report.mode === "gate" && report.gatePassed === false) {
-      process.stderr.write("Gate check failed\n");
-      process.exitCode = 1;
-    }
-    return;
-  }
-
-  // Human-readable console output.
-  process.stdout.write(`\n=== CodeSentinel [${report.mode}] ===\n`);
-  if (values["dry-run"] && report.mode === "fix") {
-    process.stdout.write("[DRY RUN] No files were modified.\n");
-  }
-  process.stdout.write(report.summary + "\n");
-  if (report.score) {
-    process.stdout.write(
-      `Score: ${report.score.overall}/${MAX_SCORE} ` +
-        `(readability ${report.score.readability}, ` +
-        `maintainability ${report.score.maintainability}, ` +
-        `security ${report.score.security}, ` +
-        `coverage ${report.score.test_coverage})\n`,
-    );
-  }
-  if (report.findings.length && (report.mode !== "review" && report.mode !== "fix")) {
-    process.stdout.write(`\nFindings (${report.findings.length}):\n`);
-    for (const f of report.findings) {
-      process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${stripAnsi(f.comment)}\n`);
-    }
-  }
-  if (report.generatedTests.length) {
-    process.stdout.write(`\nGenerated tests:\n`);
-    for (const t of report.generatedTests) {
-      process.stdout.write(`  + ${t.testFilePath}\n`);
-    }
-  }
-  process.stdout.write(`\nDone in ${report.metrics.durationMs}ms.\n`);
-
-  // Exit non-zero if gate fails
-  if (report.mode === "gate" && report.gatePassed === false) {
-    process.stderr.write("Gate check failed\n");
+  let report: EngineReport;
+  try {
+    report = await engine.run();
+  } catch (err) {
+    process.stderr.write(`Run failed: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;
+    return;
   }
+
+  printEngineReport(report, {
+    json: values.json ?? false,
+    sarif: values.sarif ?? false,
+    dryRun: values["dry-run"] ?? false,
+  });
 }
 
 main().catch((err) => {
