@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -10,6 +10,7 @@ const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER = 64 * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
+const CONCURRENCY = 8;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -56,6 +57,9 @@ export interface DiffFile {
  * Collect the changed files for the current PR/branch relative to a base ref.
  * Falls back to the working tree diff when no base ref is supplied and no
  * upstream branch is configured.
+ *
+ * Note: when a base ref is used, only committed changes are diffed; any
+ * uncommitted working-tree edits are skipped.
  */
 export async function collectDiff(
   base?: string,
@@ -63,14 +67,14 @@ export async function collectDiff(
 ): Promise<DiffFile[]> {
   const baseRef = base ?? (await defaultBaseRef(cwd));
   const rangeArgs = baseRef ? [baseRef + "..."] : [];
-  let nameStatus: string;
+  let rawStatus: string;
   try {
-    nameStatus = await git(
+    rawStatus = await git(
       [
         "-c",
         "core.quotepath=false",
         "diff",
-        "--name-status",
+        "--raw",
         "-z",
         "--no-renames",
         ...rangeArgs,
@@ -86,6 +90,9 @@ export async function collectDiff(
   }
 
   const workspaceRoot = resolve(cwd);
+  const realWorkspaceRoot = await realpath(workspaceRoot).catch(
+    () => workspaceRoot,
+  );
 
   let diffText: string;
   try {
@@ -102,35 +109,90 @@ export async function collectDiff(
   }
   const diffByPath = splitDiffByPath(diffText);
 
-  const files: DiffFile[] = [];
-  const nameStatusEntries = nameStatus.split("\0");
-  for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
-    const statusCode = nameStatusEntries[i];
-    const path = nameStatusEntries[i + 1];
-    if (!statusCode || !path) continue;
-    const status = mapStatus(statusCode);
-    if (!status) continue;
-    let content = "";
-    if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
+  const entries = parseRawStatus(rawStatus);
+  const results: (DiffFile | null)[] = [];
+  const queue = entries.map(({ code, path }, index) => ({
+    status: mapStatus(code),
+    path,
+    index,
+  }));
+  let cursor = 0;
+  async function worker() {
+    while (cursor < queue.length) {
+      const item = queue[cursor++];
+      if (!item.status) {
+        results[item.index] = null;
         continue;
       }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
+      let content = "";
+      if (item.status !== "deleted") {
+        const full = resolve(workspaceRoot, item.path);
+        const real = await realpath(full).catch(() => full);
+        const rel = relative(realWorkspaceRoot, real);
+        if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+          logger.warn(`Skipping path outside workspace: ${item.path}`);
+          results[item.index] = null;
+          continue;
+        }
+        try {
+          content = await readContent(full);
+        } catch {
+          logger.warn(`Could not read content for ${item.path}`);
+          content = "";
+        }
       }
+      let diff = diffByPath.get(item.path) ?? "";
+      if (!diff && item.status !== "deleted") {
+        diff = await collectDiffForPath(item.path, rangeArgs, cwd);
+        if (!diff) logger.warn(`Could not collect diff for ${item.path}`);
+      }
+      results[item.index] = {
+        path: item.path,
+        status: item.status,
+        content,
+        diff,
+      };
     }
-    const diff = diffByPath.get(path) ?? "";
-    if (!diff && status !== "deleted") {
-      logger.warn(`Could not collect diff for ${path}`);
-    }
-    files.push({ path, status, content, diff });
   }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, entries.length) }, worker),
+  );
+
+  const files: DiffFile[] = [];
+  for (const result of results) if (result) files.push(result);
   return files;
+}
+
+function parseRawStatus(raw: string): { code: string; path: string }[] {
+  const records: { code: string; path: string }[] = [];
+  const tokens = raw.split("\0");
+  for (let i = 0; i < tokens.length - 1; i += 2) {
+    const header = tokens[i];
+    const path = tokens[i + 1];
+    if (!header || !path) continue;
+    const spaceIdx = header.lastIndexOf(" ");
+    if (spaceIdx < 0) continue;
+    const code = header.slice(spaceIdx + 1);
+    if (!code) continue;
+    records.push({ code, path });
+  }
+  return records;
+}
+
+async function collectDiffForPath(
+  path: string,
+  rangeArgs: string[],
+  cwd: string,
+): Promise<string> {
+  try {
+    return await git(
+      ["-c", "core.quotepath=false", "diff", "--no-renames", ...rangeArgs, "--", path],
+      cwd,
+    );
+  } catch (err) {
+    logger.warn(`Failed to collect diff for ${path}:`, err);
+    return "";
+  }
 }
 
 function splitDiffByPath(diffText: string): Map<string, string> {
@@ -166,8 +228,8 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
