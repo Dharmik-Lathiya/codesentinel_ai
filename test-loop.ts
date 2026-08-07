@@ -20,23 +20,23 @@ export function calculate(x: number): number {
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
-function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
-export type ProcessDataResult =
+export type ProcessDataResult = { value: number | null };
 /**
- * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
+ * Returns the parsed numeric `value`, or `null` for every invalid
  * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
  */
-export function processData(input: string): { value: number } {
+export function processData(input: string): ProcessDataResult {
   try {
     const parsed = JSON.parse(input) as unknown;
     if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
       return { value: parsed.value };
     }
-    return { value: 0 };
+    return { value: null };
   } catch {
-    return { value: 0 };
+    console.debug("processData: failed to parse input", input);
+    return { value: null };
   }
 }
 
@@ -59,7 +59,7 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([0, 42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
@@ -76,9 +76,8 @@ describe("processData", () => {
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
-  test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
   ])('invalid input %s returns the default result', (input) => {
-    expect(processData(input)).toEqual({ value: 0 });
+    expect(processData(input)).toEqual({ value: null });
   });
 
   test('negative and decimal values are preserved', () => {
@@ -90,6 +89,6 @@ describe("processData", () => {
   });
 
   test('empty string input is handled', () => {
-    expect(processData("")).toEqual({ value: 0 });
+    expect(processData("")).toEqual({ value: null });
   });
 });
