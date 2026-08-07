@@ -108,7 +108,7 @@ export async function collectDiff(
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
     if (!statusCode || !path) continue;
-    const status = mapStatus(statusCode);
+    const status = mapStatus(statusCode, i);
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
@@ -138,9 +138,12 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const sepIndex = firstLine.lastIndexOf(" b/");
+    if (sepIndex === -1) continue;
+    let path = firstLine.slice(sepIndex + 3);
+    if (path === "dev/null") {
+      path = firstLine.slice(2, sepIndex);
+    }
     byPath.set(path, part);
   }
   return byPath;
@@ -188,10 +191,10 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
   }
 }
 
-function mapStatus(code: string): DiffFile["status"] | null {
+function mapStatus(code: string, index = 0): DiffFile["status"] | null {
+  if (code.includes("M") || code.includes("T") || code.includes("U")) return "modified";
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code === "M") return "modified";
-  logger.warn(`Unknown git status code: ${code}`);
+  logger.warn(`Unknown git status code ${code} at index ${index}`);
   return null;
 }
