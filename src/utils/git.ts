@@ -100,16 +100,21 @@ export async function collectDiff(
     );
     throw err;
   }
-  const diffByPath = splitDiffByPath(diffText);
-
-  const files: DiffFile[] = [];
   const nameStatusEntries = nameStatus.split("\0");
+  const changes: Array<{ status: DiffFile["status"]; path: string }> = [];
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
+    changes.push({ status, path });
+  }
+  const knownPaths = new Set(changes.map((c) => c.path));
+  const diffByPath = splitDiffByPath(diffText, knownPaths);
+
+  const files: DiffFile[] = [];
+  for (const { status, path } of changes) {
     let content = "";
     if (status !== "deleted") {
       const full = resolve(workspaceRoot, path);
@@ -133,17 +138,33 @@ export async function collectDiff(
   return files;
 }
 
-function splitDiffByPath(diffText: string): Map<string, string> {
+function splitDiffByPath(
+  diffText: string,
+  knownPaths: Set<string>,
+): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const path = matchDiffHeader(firstLine, knownPaths);
+    if (!path) continue;
     byPath.set(path, part);
   }
   return byPath;
+}
+
+function matchDiffHeader(
+  header: string,
+  knownPaths: Set<string>,
+): string | undefined {
+  for (const path of knownPaths) {
+    const aPath = `a/${path}`;
+    const bPath = `b/${path}`;
+    if (header === `${aPath} ${bPath}`) return path;
+    if (header === `/dev/null ${bPath}`) return path;
+    if (header === `${aPath} /dev/null`) return path;
+  }
+  return undefined;
 }
 
 async function readContent(full: string): Promise<string> {
@@ -152,7 +173,13 @@ async function readContent(full: string): Promise<string> {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
+  let text: string;
+  try {
+    text = await readFile(full, { encoding: "utf8" });
+  } catch (err) {
+    logger.debug(`Could not read file: ${full}`, err);
+    return "";
+  }
   if (text.includes("\0")) {
     logger.debug(`Skipping binary file content: ${full}`);
     return "";
@@ -166,13 +193,25 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
+    try {
       if (await refExists(remoteBase, cwd)) return remoteBase;
+    } catch (err) {
+      logger.debug(`Failed to check ref ${remoteBase}:`, err);
+    }
+    try {
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    } catch (err) {
+      logger.debug(`Failed to check ref ${githubBaseRef}:`, err);
+    }
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch (err) {
+      logger.debug(`Failed to check ref ${ref}:`, err);
+    }
   }
   // No base ref found: fall back to a plain working-tree diff.
   return undefined;
