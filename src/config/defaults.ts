@@ -5,6 +5,9 @@ const MAX_CRITICAL_FINDINGS = 10;
 const MAX_HIGH_FINDINGS = 50;
 const AWS_ACCESS_KEY_ID_LENGTH = 16;
 const AWS_CONTEXT_PROXIMITY_SPAN = 20;
+const DEFAULT_DASHBOARD_PORT = 4173;
+const DEFAULT_META_REVIEW_INTERVAL = 10;
+const DEFAULT_MAX_LINES_PER_FILE = 500;
 /**
  * Default severity adjustment configuration.
  */
@@ -73,7 +76,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
   { id: "aws-secret", name: "AWS Secret Key", regex: `(?i)aws(.{0,${AWS_CONTEXT_PROXIMITY_SPAN}})?(secret|access)_?key\\s*[=:]\\s*['\"][A-Za-z0-9/+=]{40}['\"]`, severity: "critical", message: "Hardcoded AWS Secret Access Key detected.", suggestion: "Use IAM roles or environment variables instead." },
   { id: "github-token", name: "GitHub Token", regex: "(?i)github[-_]?(token|pat|key)\\s*[=:]\\s*['\"](ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}['\"]", severity: "critical", message: "Hardcoded GitHub token detected.", suggestion: "Use GITHUB_TOKEN secret or environment variables." },
   { id: "slack-token", name: "Slack Token", regex: "(xox[baprs]-[0-9a-zA-Z]{10,})", severity: "high", message: "Hardcoded Slack token detected.", suggestion: "Use environment variables for Slack tokens." },
-  { id: "ssh-key", name: "SSH Private Key", regex: "(?i)-----BEGIN\\s+(?:(?:RSA|DSA|EC|OPENSSH)\\s+)?PRIVATE\\s+KEY-----", severity: "critical", message: "Hardcoded SSH private key detected.", suggestion: "Use SSH agent or secrets manager." },
+  { id: "ssh-key", name: "SSH Private Key", regex: "(?i)-----BEGIN\\s+(?:RSA|DSA|EC|OPENSSH)\\s+PRIVATE\\s+KEY-----", severity: "critical", message: "Hardcoded SSH private key detected.", suggestion: "Use SSH agent or secrets manager." },
   { id: "jwt-token", name: "JWT Token", regex: "(?i)(jwt|bearer)\\s*[=:]\\s*['\"]eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}['\"]", severity: "high", message: "Hardcoded JWT token detected.", suggestion: "Use short-lived tokens from a secure source." },
   { id: "pg-conn-str", name: "PostgreSQL Connection String", regex: "postgres(ql)?://\\w+:\\w+@", severity: "high", message: "Hardcoded PostgreSQL connection string detected.", suggestion: "Use environment variables for database URLs." },
   { id: "redis-conn-str", name: "Redis Connection String", regex: "redis://\\w+:\\w+@", severity: "high", message: "Hardcoded Redis connection string detected.", suggestion: "Use environment variables for Redis URLs." },
@@ -100,7 +103,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
 ];
 
 export const DEFAULT_DASHBOARD_CONFIG: DashboardConfig = {
-  port: 4173,
+  port: DEFAULT_DASHBOARD_PORT,
   dataDir: ".codesentinel-dashboard",
 };
 
@@ -115,7 +118,7 @@ export const DEFAULT_LEARNING_CONFIG: LearningConfig = {
   dbPath: ".codesentinel/learning.db",
   metaReview: true,
   patternDiscovery: true,
-  metaReviewInterval: 10,
+  metaReviewInterval: DEFAULT_META_REVIEW_INTERVAL,
 };
 
 export const DEFAULT_MCP_CONFIG: MCPConfig = {
@@ -127,7 +130,7 @@ export const DEFAULT_BATCH_CONFIG: BatchConfig = {
   enabled: true,
   batchSize: 2,
   maxFilesPerBatch: 5,
-  maxLinesPerFile: 500,
+  maxLinesPerFile: DEFAULT_MAX_LINES_PER_FILE,
 };
 
 /**
@@ -214,7 +217,14 @@ export function mergeConfig(
     merged.default_model = { ...base.default_model, ...override.default_model };
   }
   if (override.models) {
-    merged.models = { ...base.models, ...override.models };
+    merged.models = { ...base.models };
+    for (const key of Object.keys(base.models)) {
+      const k = key as keyof typeof merged.models;
+      merged.models[k] =
+        override.models[k] ?
+          { ...base.models[k], ...override.models[k] } :
+          base.models[k];
+    }
   }
   if (override.output) {
     merged.output = { ...base.output, ...override.output };
