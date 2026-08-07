@@ -229,53 +229,72 @@ export class Engine {
 
   /** Load configured plugins before running. */
   async init(): Promise<void> {
-    await this.plugins.load(this.config.plugins);
-    if (this.learning) await this.learning.init();
+    try {
+      await this.plugins.load(this.config.plugins);
+    } catch (err) {
+      logger.warn(`init: failed to load plugins: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (this.learning) {
+      try {
+        await this.learning.init();
+      } catch (err) {
+        logger.warn(`init: failed to initialize learning store: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
   // Entry point: dispatch to the mode-specific runner.
   // ---------------------------------------------------------------------------
   async run(): Promise<EngineReport> {
-    await this.init();
+    await this.init().catch((err) =>
+      logger.warn(`run: init failed: ${err instanceof Error ? err.message : String(err)}`),
+    );
     const start = Date.now();
     logger.info(`Running mode: ${this.config.mode}`);
-    await this.checkAIProvider();
+    await this.checkAIProvider().catch((err) =>
+      logger.warn(`run: provider check failed: ${err instanceof Error ? err.message : String(err)}`),
+    );
 
     let report: EngineReport;
-    switch (this.config.mode) {
-      case "review":
-        report = await this.runReview();
-        break;
-      case "fix":
-        report = await this.runFix();
-        break;
-      case "audit":
-        report = await this.runAudit();
-        break;
-      case "score":
-        report = await this.runScoreMode();
-        break;
-      case "testgen":
-        report = await this.runTestgen();
-        break;
-      case "gate":
-        report = await this.runGate();
-        break;
-      case "describe":
-        report = await this.runDescribe();
-        break;
-      case "chat":
-        report = await this.runChat("(no prompt supplied; use ask())");
-        break;
-      case "improve":
-        report = await this.runImprove();
-        break;
-      case "plan":
-        report = await this.runPlan();
-        break;
-      default:
-        throw new Error(`Unsupported mode: ${this.config.mode}`);
+    try {
+      switch (this.config.mode) {
+        case "review":
+          report = await this.runReview();
+          break;
+        case "fix":
+          report = await this.runFix();
+          break;
+        case "audit":
+          report = await this.runAudit();
+          break;
+        case "score":
+          report = await this.runScoreMode();
+          break;
+        case "testgen":
+          report = await this.runTestgen();
+          break;
+        case "gate":
+          report = await this.runGate();
+          break;
+        case "describe":
+          report = await this.runDescribe();
+          break;
+        case "chat":
+          report = await this.runChat("(no prompt supplied; use ask())");
+          break;
+        case "improve":
+          report = await this.runImprove();
+          break;
+        case "plan":
+          report = await this.runPlan();
+          break;
+        default:
+          throw new Error(`Unsupported mode: ${this.config.mode}`);
+      }
+    } catch (err) {
+      logger.error(`run: mode "${this.config.mode}" failed: ${err instanceof Error ? err.message : String(err)}`);
+      throw err;
     }
 
     report.metrics.durationMs = Date.now() - start;
