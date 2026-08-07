@@ -16,6 +16,7 @@ export interface GitHubCoordinates {
 
 export class GitHubReporter {
   private readonly api = "https://api.github.com";
+  private readonly apiVersion = "2022-11-28";
 
   constructor(private coords: GitHubCoordinates) {}
 
@@ -24,8 +25,25 @@ export class GitHubReporter {
       Authorization: `Bearer ${this.coords.token}`,
       Accept: "application/vnd.github+json",
       "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
+      "X-GitHub-Api-Version": this.apiVersion,
     };
+  }
+  private rateLimitDelayMs(res: Response): number {
+    const retryAfter = res.headers.get("retry-after");
+    const resetTime = res.headers.get("x-ratelimit-reset");
+    let delayMs = 5000;
+    if (retryAfter) {
+      delayMs = Number(retryAfter) * 1000;
+    } else if (resetTime) {
+      delayMs = Math.max(0, Number(resetTime) * 1000 - Date.now()) + 1000;
+    }
+    return delayMs;
+  }
+
+  private isRetryableError(err: unknown): boolean {
+    if (!(err instanceof Error)) return false;
+    const msg = err.message.toLowerCase();
+    return msg.includes("rate limit") || msg.includes("429") || msg.includes("403") || msg.includes("503");
   }
 
   private async request(method: string, url: string, body?: Record<string, unknown>): Promise<unknown> {
@@ -43,14 +61,7 @@ export class GitHubReporter {
       }
 
       if (res.status === 403 || res.status === 429) {
-        const retryAfter = res.headers.get("retry-after");
-        const resetTime = res.headers.get("x-ratelimit-reset");
-        let delayMs = 5000;
-        if (retryAfter) {
-          delayMs = Number(retryAfter) * 1000;
-        } else if (resetTime) {
-          delayMs = Math.max(0, Number(resetTime) * 1000 - Date.now()) + 1000;
-        }
+        const delayMs = this.rateLimitDelayMs(res);
         logger.warn(`GitHub API rate limited, retrying after ${delayMs}ms`);
         throw new Error(`Rate limited (${res.status}), retrying after ${delayMs}ms`);
       }
@@ -63,13 +74,7 @@ export class GitHubReporter {
     }, {
       maxAttempts: 3,
       baseDelayMs: 2000,
-      shouldRetry: (err) => {
-        if (err instanceof Error) {
-          const msg = err.message.toLowerCase();
-          return msg.includes("rate limit") || msg.includes("429") || msg.includes("403") || msg.includes("503");
-        }
-        return false;
-      },
+      shouldRetry: (err) => this.isRetryableError(err),
     });
   }
 
@@ -100,6 +105,13 @@ export class GitHubReporter {
     if (!this.coords.pullNumber) return;
     const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues/${this.coords.pullNumber}/comments`;
     await this.request("POST", url, { body });
+  }
+
+  /** Resolve the PR head commit SHA (required for inline review comments). */
+  async getPullRequestHeadSha(pullNumber: number): Promise<string | undefined> {
+    const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/pulls/${pullNumber}/commits?per_page=1`;
+    const commits = await this.request("GET", url) as Array<{ sha: string }> | null;
+    return commits && commits.length > 0 ? commits[commits.length - 1].sha : undefined;
   }
 
   /** List all comments on a PR with pagination. */
