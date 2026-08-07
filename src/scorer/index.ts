@@ -160,7 +160,13 @@ export class Scorer {
     return fileCount ? total / fileCount : 100;
   }
 
-  /** Coverage heuristic: fraction of source files that have a related test. */
+/**
+   * Coverage heuristic: fraction of source files that have a related test.
+   *
+   * Precondition: `files[]` MUST include sibling test files (any `*.test.*`,
+   * `*.spec.*`, or paths under `__tests__/`). If callers omit test files from
+   * the array, coverage silently reports 0, which can crush the overall score.
+   */
   private coverageMetric(
     files: { path: string; content: string }[],
   ): number {
