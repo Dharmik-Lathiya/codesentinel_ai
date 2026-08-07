@@ -13,9 +13,10 @@ export interface ScoreBreakdown {
 }
 
 /** Weights used to combine the four dimensions into the overall score. */
-const READABILITY_WEIGHT = 0.25;
+const QUARTER_WEIGHT = 0.25;
+const READABILITY_WEIGHT = QUARTER_WEIGHT;
 const MAINTAINABILITY_WEIGHT = 0.3;
-const SECURITY_WEIGHT = 0.25;
+const SECURITY_WEIGHT = QUARTER_WEIGHT;
 const TEST_COVERAGE_WEIGHT = 0.2;
 
 export const WEIGHTS = {
@@ -25,13 +26,16 @@ export const WEIGHTS = {
   test_coverage: TEST_COVERAGE_WEIGHT,
 } as const;
 
-const MAX_SCORE = 100;
+const FULL_SCORE = 100;
+const MAX_SCORE = FULL_SCORE;
 
 const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
 
 
-const HIGH_SEVERITY_PENALTY = 16;
-const CRITICAL_SEVERITY_PENALTY = 30;
+const HIGH_SEVERITY_PENALTY_VALUE = 16;
+const HIGH_SEVERITY_PENALTY = HIGH_SEVERITY_PENALTY_VALUE;
+const CRITICAL_SEVERITY_PENALTY_VALUE = 30;
+const CRITICAL_SEVERITY_PENALTY = CRITICAL_SEVERITY_PENALTY_VALUE;
 /** Severity penalty weights applied to the security dimension. */
 const SEVERITY_PENALTY: Record<Severity, number> = {
   info: 2,
@@ -110,9 +114,10 @@ export class Scorer {
         break;
       case "min":
       default:
-        // Keep the more conservative (lower) security number: static analysis
-        // is more reliable for security, so we take the stricter assessment.
-        security = Math.min(ai.security ?? MAX_SCORE, baseline.security);
+        // The AI assessment can only lower the security score: static analysis
+        // is more reliable for security, so we keep the stricter estimate.
+        security = baseline.security;
+        if (ai.security !== undefined) security = Math.min(ai.security, baseline.security);
         break;
     }
     const test_coverage = ai.test_coverage ?? baseline.test_coverage;
