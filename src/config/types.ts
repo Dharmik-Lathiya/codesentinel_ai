@@ -15,11 +15,13 @@ export type Provider = "openai" | "anthropic" | "gemini" | "opencode" | "opencod
 /** Supported test runners targeted by the test generation module. */
 export type TestRunner = "jest" | "vitest";
 
+export const DEFAULT_MAX_TOKENS = 4096;
+
 /** Per-task model routing: each capability can use its own provider + model. */
 export interface ModelConfig {
   provider: Provider;
   model: string;
-  /** Max output tokens. Defaults to 4096 if unset. */
+  /** Max output tokens. Defaults to DEFAULT_MAX_TOKENS if unset. */
   maxTokens?: number;
 }
 
@@ -180,6 +182,7 @@ export interface CodeSentinelConfig {
     testgen?: ModelConfig;
     chat?: ModelConfig;
     describe?: ModelConfig;
+    improve?: ModelConfig;
     plan?: ModelConfig;
   };
 
@@ -334,6 +337,6 @@ export interface RuntimeSecrets {
   opencode_api_key?: string;
   /** Optional base URL for self-hosted OpenCode-compatible endpoints. */
   opencode_base_url?: string;
-  /** When "true", the OpenCode provider uses the CLI binary instead of HTTP. */
+  /** "true" (case-sensitive) only; any other value ('false', '0', '1', '') is treated as false. */
   use_opencode_cli?: string;
 }
