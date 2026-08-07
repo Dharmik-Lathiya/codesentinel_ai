@@ -20,10 +20,8 @@ export function calculate(x: number): number {
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
-function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
-export type ProcessDataResult =
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
@@ -76,13 +74,17 @@ describe("processData", () => {
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
-  test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
   });
 
   test('negative and decimal values are preserved', () => {
     expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
+  });
+  test('JSON -0 is preserved (not coerced to 0)', () => {
+    const result = processData('{"value":-0}');
+    expect(result.value).toBe(-0);
+    expect(Object.is(result.value, -0)).toBe(true);
   });
 
   test('whitespace-padded JSON is parsed', () => {
