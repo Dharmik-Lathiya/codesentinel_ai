@@ -66,7 +66,7 @@ export class MCPManager {
       }
       const timeout = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const abort = AbortSignal.timeout(timeout);
-      await client.connect(transport);
+      await client.connect(transport, { signal: abort });
       this.clients.set(cfg.name, client);
       logger.info(`MCP: connected to "${cfg.name}"`);
     } catch (err) {

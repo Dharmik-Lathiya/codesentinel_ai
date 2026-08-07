@@ -18,24 +18,40 @@ const MAX_VERIFY_TOKENS = 1024;
 export interface VerifyOptions {
   aiHub?: AIHub;
   useAi?: boolean;
+  excludedDirPrefixes?: string[];
+  vaguePhrases?: string[];
+  minMessageLength?: number;
 }
 
-function isExcludedDir(file: string): boolean {
-  return EXCLUDED_DIR_PREFIXES.some((prefix) => file.startsWith(prefix));
+function isExcludedDir(file: string, prefixes: string[]): boolean {
+  return prefixes.some((prefix) => file.startsWith(prefix));
 }
 
-function isVagueMessage(message: string): boolean {
-  if (message.length < MIN_MESSAGE_LENGTH) return true;
+function isVagueMessage(
+  message: string,
+  vaguePhrases: string[],
+  minMessageLength: number,
+): boolean {
+  if (message.length < minMessageLength) return true;
   const lower = message.toLowerCase();
-  return VAGUE_PHRASES.some((phrase) => lower.includes(phrase));
+  return vaguePhrases.some((phrase) => lower.includes(phrase));
 }
 
-function applyRuleBasedFilter(findings: Issue[]): Issue[] {
+function applyRuleBasedFilter(
+  findings: Issue[],
+  options: VerifyOptions = {},
+): Issue[] {
+  const excludedDirPrefixes =
+    options.excludedDirPrefixes ?? EXCLUDED_DIR_PREFIXES;
+  const vaguePhrases = options.vaguePhrases ?? VAGUE_PHRASES;
+  const minMessageLength = options.minMessageLength ?? MIN_MESSAGE_LENGTH;
+
   return findings.filter((f) => {
+    // Critical findings intentionally bypass all guards so they are always reported.
     if (f.severity === "critical") return true;
     if (f.line <= 0) return false;
-    if (isExcludedDir(f.file)) return false;
-    if (isVagueMessage(f.message)) return false;
+    if (isExcludedDir(f.file, excludedDirPrefixes)) return false;
+    if (isVagueMessage(f.message, vaguePhrases, minMessageLength)) return false;
     return true;
   });
 }
@@ -64,12 +80,21 @@ function buildAiPrompt(findings: Issue[]): string {
   ].join("\n");
 }
 
+function isValidIndex(value: unknown, maxIndex: number): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value < maxIndex
+  );
+}
+
 function extractValidIndices(parsed: unknown, maxIndex: number): number[] | null {
   if (!Array.isArray(parsed)) return null;
-  const indices = parsed.filter(
-    (i): i is number =>
-      typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-  );
+  const indices = [
+    ...new Set(parsed.filter((i) => isValidIndex(i, maxIndex))),
+  ];
+  if (parsed.length === 0) return indices;
   return indices.length > 0 ? indices : null;
 }
 
@@ -117,7 +142,8 @@ async function aiVerify(
   const indices = parseAiResponse(result.content, afterRules.length);
   if (indices === null) return afterRules;
 
-  return indices.map((i) => afterRules[i]);
+  const unique = [...new Set(indices)];
+  return unique.map((i) => afterRules[i]);
 }
 
 export async function verifyFindings(
@@ -126,7 +152,7 @@ export async function verifyFindings(
 ): Promise<Issue[]> {
   if (findings.length === 0) return [];
 
-  const afterRules = applyRuleBasedFilter(findings);
+  const afterRules = applyRuleBasedFilter(findings, options);
 
   if (options.useAi && options.aiHub && afterRules.length > 0) {
     return aiVerify(afterRules, options.aiHub);
