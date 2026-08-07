@@ -62,11 +62,11 @@ export class Scorer {
   ): ScoreBreakdown {
     const securityPenalty = findings
       .filter((f) => f.category === "security")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity], 0);
+      .reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0), 0);
 
     const smellPenalty = findings
       .filter((f) => f.category === "smell" || f.category === "style")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity] / 2, 0);
+      .reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0) / 2, 0);
 
     const security = clamp(MAX_SCORE - securityPenalty);
     const maintainability = clamp(MAX_SCORE - smellPenalty);
@@ -118,7 +118,7 @@ export class Scorer {
       default:
         // Keep the more conservative (lower) security number: static analysis
         // is more reliable for security, so we take the stricter assessment.
-        security = Math.min(ai.security ?? MAX_SCORE, baseline.security);
+        security = ai.security === undefined ? baseline.security : Math.min(ai.security, baseline.security);
         break;
     }
     const test_coverage = ai.test_coverage ?? baseline.test_coverage;
@@ -170,17 +170,33 @@ export class Scorer {
   private coverageMetric(
     files: { path: string; content: string }[],
   ): number {
+    const isTestFile = (p: string) =>
+      /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p);
     const testPaths = new Set(
-      files
-        .map((f) => f.path)
-        .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
+      files.map((f) => f.path).filter((p) => isTestFile(p)),
     );
-    const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
+    const sourceFiles = files.filter((f) => !isTestFile(f.path));
     if (sourceFiles.length === 0) return 100;
+    const dirName = (p: string) =>
+      p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "";
+    const baseName = (p: string) =>
+      p
+        .slice(p.lastIndexOf("/") + 1)
+        .replace(/\.([^.]+)$/, "")
+        .replace(/\.(test|spec)$/, "");
     let covered = 0;
     for (const f of sourceFiles) {
-      const base = f.path.replace(/\.[^.]+$/, "");
-      if ([...testPaths].some((t) => t.startsWith(base))) covered++;
+      const base = f.path.replace(/\.([^.]+)$/, "");
+      const matched = [...testPaths].some((t) => {
+        if (t.startsWith(base + ".")) return true;
+        const sep = t.indexOf("/__tests__/");
+        if (sep === -1) return false;
+        return (
+          t.slice(0, sep) === dirName(f.path) &&
+          baseName(t) === baseName(f.path)
+        );
+      });
+      if (matched) covered++;
     }
     return (covered / sourceFiles.length) * 100;
   }
