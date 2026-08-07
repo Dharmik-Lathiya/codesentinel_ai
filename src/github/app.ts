@@ -9,6 +9,10 @@ const MAX_PROCESSED_COMMENT_IDS = 10000;
 const KEEP_LAST_PROCESSED_IDS = 5000;
 const MAX_SCORE = 100;
 
+// In-memory dedupe of processed comment IDs. NOTE: process-scoped only — not
+// durable across restarts or app instances. If cross-instance dedupe is
+// required (e.g. multiple replicas receiving webhooks), move to a persisted
+// store such as Redis or a DB table keyed by comment ID.
 const processedCommentIds = new Set<number>();
 
 /**
