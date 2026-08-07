@@ -20,13 +20,13 @@ export function calculate(x: number): number {
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
-function isValueObject(v: unknown): v is { value?: number } {
-  return typeof v === "object" && v !== null && "value" in v;
-}
+function isValueObject(v: unknown): v is { value: number } {
+  return typeof v === "object" && v !== null && typeof (v as { value?: unknown }).value === "number";
 export type ProcessDataResult =
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
+ */
  */
 export function processData(input: string): { value: number } {
   try {
@@ -58,7 +58,7 @@ describe("calculate", () => {
   });
 });
 
-describe("processData", () => {
+  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
   test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
