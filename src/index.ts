@@ -295,7 +295,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  build-fix:",
-  "    if: ${{ github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
+  "    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]')) }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
   "        with:",
@@ -318,7 +318,8 @@ const BUILD_WORKFLOW_CONTENT = [
   "      - name: Install CodeSentinel CLI dependencies",
   "        run: npm ci --prefix \"${{ runner.temp }}/codesentinel\" --omit=dev --ignore-scripts --no-audit --no-fund",
   "      - name: Install dependencies (includes devDeps for tsc/build)",
-  "        run: npm ci --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --ignore-scripts --no-audit --no-fund",
+  "      - name: Install dependencies (includes devDeps for tsc/build)",
+  "        run: npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund",
   "",
   "      - name: Build and auto-fix loop",
   "        env:",
@@ -359,21 +360,23 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            PUSH_URL=\"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\"",
+  "            git pull --rebase \"$PUSH_URL\" ${{ github.ref_name }} 2>&1 || true",
+  "            git push \"$PUSH_URL\" HEAD:${{ github.ref_name }} 2>&1",
   "            if [ $? -ne 0 ]; then",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
   "              git fetch origin ${{ github.ref_name }} 2>&1",
   "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
-  "              git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "              git push \"$PUSH_URL\" HEAD:${{ github.ref_name }} 2>&1",
+  "              if [ $? -ne 0 ]; then",
+  '                echo "❌ Push still failing after recovery — not verifying the fix"',
+  '                echo "::endgroup::"',
+  "                exit 1",
+  "              fi",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
@@ -714,7 +717,7 @@ async function main(): Promise<void> {
   const secrets = loadSecrets();
 
   const overrides: Partial<CodeSentinelConfig> = {};
-  if (modeArg) overrides.mode = modeArg as Mode;
+  if (modeArg && modeArg !== "deadcode") overrides.mode = modeArg as Mode;
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
