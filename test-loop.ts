@@ -4,8 +4,8 @@ export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a 
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
-const MODERATE_INPUT = 5000;
-const HIGH_INPUT = 6000;
+const BELOW_THRESHOLD_INPUT_2 = 5000;
+const BELOW_THRESHOLD_INPUT_3 = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 
@@ -19,8 +19,8 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-function isValueObject(v: unknown): v is { value?: number } {
-function isValueObject(v: unknown): v is { value?: number } {
+function isValueObject(v: unknown): v is { value: unknown } {
+function isValueObject(v: unknown): v is { value: unknown } {
   return typeof v === "object" && v !== null && "value" in v;
 }
 export type ProcessDataResult =
@@ -45,8 +45,8 @@ describe("calculate", () => {
     [0, 0],
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
+    [BELOW_THRESHOLD_INPUT_2, BELOW_THRESHOLD_INPUT_2 * MULTIPLIER],
+    [BELOW_THRESHOLD_INPUT_3, BELOW_THRESHOLD_INPUT_3 * MULTIPLIER],
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
@@ -65,7 +65,8 @@ describe("processData", () => {
 
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
     const input = 2 ** 53 + 1;
-    expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
+    const expected = Number(BigInt(input) * BigInt(EXTREME_MULTIPLIER));
+    expect(calculate(input)).toBe(expected);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
