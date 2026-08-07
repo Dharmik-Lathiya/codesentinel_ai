@@ -25,11 +25,13 @@ export interface CacheBackend {
   remove(key: string): Promise<void>;
 }
 
+const CACHE_KEY_LENGTH = 16;
+
 export function buildCacheKey(filePath: string, pattern: string): string {
   return createHash("sha256")
     .update(filePath + "::" + pattern)
     .digest("hex")
-    .slice(0, 16);
+    .slice(0, CACHE_KEY_LENGTH);
 }
 
 class FileSystemBackend implements CacheBackend {
@@ -53,7 +55,10 @@ class FileSystemBackend implements CacheBackend {
   }
 
   async set(key: string, entry: CacheEntry): Promise<void> {
-    await this.ensureDir();
+    try {
+      await this.ensureDir();
+    } catch {
+    }
     const target = this.filePath(key);
     const tmp = target + ".tmp." + process.pid;
     try {
@@ -66,7 +71,10 @@ class FileSystemBackend implements CacheBackend {
   }
 
   async list(): Promise<string[]> {
-    await this.ensureDir();
+    try {
+      await this.ensureDir();
+    } catch {
+    }
     try {
       return (await readdir(this.cacheDir)).filter((f) => f.endsWith(".json"));
     } catch {
@@ -114,7 +122,12 @@ export class LearningCache {
   }
 
   async get(key: string): Promise<Lesson[]> {
-    const entry = await this.backend.get(key);
+    let entry: CacheEntry | null = null;
+    try {
+      entry = await this.backend.get(key);
+    } catch {
+      entry = null;
+    }
     if (!entry) return [];
     for (const l of entry.lessons) l.hitCount++;
     await this.backend.set(key, entry);
