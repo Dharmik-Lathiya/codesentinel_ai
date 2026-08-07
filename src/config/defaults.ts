@@ -69,10 +69,15 @@ export const DEFAULT_GATE_CONFIG: GateConfig = {
 
 export const DEFAULT_AWS_ACCESS_KEY_ID_LENGTH = 16;
 export const DEFAULT_AWS_SECRET_PREFIX_WINDOW = 20;
+const DEFAULT_GITHUB_TOKEN_BODY_LENGTH = 36;
+const DEFAULT_SENDGRID_KEY_PREFIX_LENGTH = 22;
+const DEFAULT_SENDGRID_KEY_SUFFIX_LENGTH = 43;
+const DEFAULT_MAILCHIMP_API_KEY_LENGTH = 32;
+const DEFAULT_SQUARE_TOKEN_LENGTH = 50;
 export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
   { id: "aws-key", name: "AWS Access Key", regex: `AKIA[0-9A-Z]{${DEFAULT_AWS_ACCESS_KEY_ID_LENGTH}}`, severity: "critical", message: "Hardcoded AWS Access Key ID detected.", suggestion: "Use IAM roles or environment variables instead." },
   { id: "aws-secret", name: "AWS Secret Key", regex: `(?i)aws(.{0,${DEFAULT_AWS_SECRET_PREFIX_WINDOW}})?(secret|access)_?key\\s*[=:]\\s*['\"][A-Za-z0-9/+=]{40}['\"]`, severity: "critical", message: "Hardcoded AWS Secret Access Key detected.", suggestion: "Use IAM roles or environment variables instead." },
-  { id: "github-token", name: "GitHub Token", regex: "(?i)github[-_]?(token|pat|key)\\s*[=:]\\s*['\"](ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}['\"]", severity: "critical", message: "Hardcoded GitHub token detected.", suggestion: "Use GITHUB_TOKEN secret or environment variables." },
+  { id: "github-token", name: "GitHub Token", regex: "(?i)github[-_]?(token|pat|key)\\s*[=:]\\s*['\"](ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{${DEFAULT_GITHUB_TOKEN_BODY_LENGTH},}['\"]", severity: "critical", message: "Hardcoded GitHub token detected.", suggestion: "Use GITHUB_TOKEN secret or environment variables." },
   { id: "slack-token", name: "Slack Token", regex: "(xox[baprs]-[0-9a-zA-Z]{10,})", severity: "high", message: "Hardcoded Slack token detected.", suggestion: "Use environment variables for Slack tokens." },
   { id: "ssh-key", name: "SSH Private Key", regex: "(?i)-----BEGIN\\s+(?:(?:RSA|DSA|EC|OPENSSH)\\s+)?PRIVATE\\s+KEY-----", severity: "critical", message: "Hardcoded SSH private key detected.", suggestion: "Use SSH agent or secrets manager." },
   { id: "jwt-token", name: "JWT Token", regex: "(?i)(jwt|bearer)\\s*[=:]\\s*['\"]eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}['\"]", severity: "high", message: "Hardcoded JWT token detected.", suggestion: "Use short-lived tokens from a secure source." },
@@ -91,9 +96,9 @@ export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
   { id: "twilio-account-sid", name: "Twilio Account SID", regex: "(?i)AC[0-9a-f]{32}", severity: "high", message: "Hardcoded Twilio Account SID detected.", suggestion: "Use environment variables for Twilio credentials." },
   { id: "twilio-auth-token", name: "Twilio Auth Token", regex: "(?i)twilio(.{0,20})?(auth|secret|token)\\s*[=:]\\s*['\"][0-9a-f]{32}['\"]", severity: "critical", message: "Hardcoded Twilio auth token detected.", suggestion: "Use environment variables for Twilio credentials." },
   { id: "heroku-api-key", name: "Heroku API Key", regex: "(?i)heroku(.{0,20})?(api[-_]?key|token)\\s*[=:]\\s*['\"][A-Za-z0-9_-]{36,}['\"]", severity: "high", message: "Hardcoded Heroku API key detected.", suggestion: "Use environment variables for Heroku API access." },
-  { id: "sendgrid-api-key", name: "SendGrid API Key", regex: "(?i)SG\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}", severity: "critical", message: "Hardcoded SendGrid API key detected.", suggestion: "Use environment variables for SendGrid credentials." },
-  { id: "mailchimp-api-key", name: "Mailchimp API Key", regex: "[0-9a-f]{32}-us[0-9]{1,2}", severity: "high", message: "Hardcoded Mailchimp API key detected.", suggestion: "Use environment variables for Mailchimp API access." },
-  { id: "square-access-token", name: "Square Access Token", regex: "(?i)EAAA[A-Za-z0-9_\\-]{50,}", severity: "critical", message: "Hardcoded Square access token detected.", suggestion: "Use environment variables for Square credentials." },
+  { id: "sendgrid-api-key", name: "SendGrid API Key", regex: "(?i)SG\\.[A-Za-z0-9_-]{${DEFAULT_SENDGRID_KEY_PREFIX_LENGTH}}\\.[A-Za-z0-9_-]{${DEFAULT_SENDGRID_KEY_SUFFIX_LENGTH}}", severity: "critical", message: "Hardcoded SendGrid API key detected.", suggestion: "Use environment variables for SendGrid credentials." },
+  { id: "mailchimp-api-key", name: "Mailchimp API Key", regex: "[0-9a-f]{${DEFAULT_MAILCHIMP_API_KEY_LENGTH}}-us[0-9]{1,2}", severity: "high", message: "Hardcoded Mailchimp API key detected.", suggestion: "Use environment variables for Mailchimp API access." },
+  { id: "square-access-token", name: "Square Access Token", regex: "(?i)EAAA[A-Za-z0-9_\\-]{${DEFAULT_SQUARE_TOKEN_LENGTH},}", severity: "critical", message: "Hardcoded Square access token detected.", suggestion: "Use environment variables for Square credentials." },
   { id: "pypi-api-token", name: "PyPI API Token", regex: "(?i)pypi[-_]?token\\s*[=:]\\s*['\"]pypi-[A-Za-z0-9_]{36,}['\"]", severity: "high", message: "Hardcoded PyPI API token detected.", suggestion: "Use environment variables for package registry tokens." },
   { id: "docker-hub-token", name: "Docker Hub Token", regex: "(?i)docker[-_]?(hub|token|pat)\\s*[=:]\\s*['\"][A-Za-z0-9_\\-]{36,}['\"]", severity: "high", message: "Hardcoded Docker Hub token detected.", suggestion: "Use Docker Hub credentials via environment variables." },
   { id: "sentry-dsn", name: "Sentry DSN", regex: "https://[0-9a-f]{32}@[a-z0-9]+\\.ingest\\.sentry\\.io", severity: "medium", message: "Sentry DSN exposed.", suggestion: "Sentry DSNs are public but should use environment variables." },
