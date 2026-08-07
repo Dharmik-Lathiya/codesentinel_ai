@@ -60,15 +60,18 @@ const gitleaks: ScannerTool = {
         logger.warn("gitleaks JSON parse failed");
         return [];
       }
-      return results.map((r) => ({
-        file: r.File,
-        line: r.StartLine || null,
-        severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
-        category: "security" as const,
-        comment: `[gitleaks] ${r.Description}`,
-        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
-        source: "scanner" as const,
-      }));
+      return results.map((r) => {
+        const s = r.Severity?.toLowerCase();
+        return {
+          file: r.File,
+          line: r.StartLine || null,
+          severity: (s === "high" || s === "critical" ? s : "high") as Finding["severity"],
+          category: "security" as const,
+          comment: `[gitleaks] ${r.Description}`,
+          suggestion: `Match: ${(r.Match ?? "").trim().slice(0, SNIPPET_LENGTH)}`,
+          source: "scanner" as const,
+        };
+      });
     } catch (e) {
       logger.warn(`gitleaks run failed: ${e}`);
       return [];

@@ -30,6 +30,12 @@ const MAX_SCORE = 100;
 const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
 
 
+
+const MAX_LINE_LENGTH = 120;
+const LONG_LINE_PENALTY = 2;
+const COMMENT_BONUS = 20;
+const MIN_READABILITY = 20;
+
 const HIGH_SEVERITY_PENALTY = 16;
 const CRITICAL_SEVERITY_PENALTY = 30;
 /** Severity penalty weights applied to the security dimension. */
@@ -153,9 +159,9 @@ export class Scorer {
         (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
-      const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const longLines = lines.filter((l) => l.length > MAX_LINE_LENGTH).length;
+      const score = 100 - longLines * LONG_LINE_PENALTY + commentRatio * COMMENT_BONUS;
+      total += Math.max(MIN_READABILITY, score);
     }
     return fileCount ? total / fileCount : 100;
   }
