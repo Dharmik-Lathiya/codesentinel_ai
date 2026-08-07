@@ -79,6 +79,14 @@ export function applyHunks(content: string, hunks: Hunk[]): string {
   return lines.join("\n");
 }
 
+function nonDeletedFiles(
+  diffs: DiffFile[],
+): { path: string; content: string; diff?: string }[] {
+  return diffs
+    .filter((d) => d.status !== "deleted")
+    .map((d) => ({ path: d.path, content: d.content, diff: d.diff }));
+}
+
 /** The full machine-readable report produced by a run. */
 export interface EngineReport {
   mode: Mode;
@@ -180,26 +188,26 @@ export class Engine {
     if (this.aiOverride || this.config.use_opencode_cli) return;
     const model = this.ai.modelForTask("review");
     const baseUrl = (this.secrets.opencode_base_url || "http://localhost:4096").replace(/\/v1$/, "");
-    if (model.provider === "opencode") {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch(`${baseUrl}/v1/models`, { signal: controller.signal });
-        clearTimeout(timer);
-        if (res.ok) {
-          logger.info(`OpenCode is REACHABLE at ${baseUrl}`);
-        } else {
-          this.aiAvailable = false;
-          logger.warn(`OpenCode at ${baseUrl} returned status ${res.status} — AI review will fail`);
-        }
-      } catch {
-        this.aiAvailable = false;
-        logger.warn(`OpenCode at ${baseUrl} is NOT reachable — AI review will be skipped (this is expected unless you have opencode running locally)`);
-      }
-    } else {
+    if (model.provider !== "opencode") {
       const keyName = `${model.provider}_api_key` as keyof RuntimeSecrets;
       const hasKey = !!this.secrets[keyName];
       logger.info(`AI provider: ${model.provider}, API key ${hasKey ? "SET" : "NOT SET"}`);
+      return;
+    }
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch(`${baseUrl}/v1/models`, { signal: controller.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        logger.info(`OpenCode is REACHABLE at ${baseUrl}`);
+      } else {
+        this.aiAvailable = false;
+        logger.warn(`OpenCode at ${baseUrl} returned status ${res.status} — AI review will fail`);
+      }
+    } catch {
+      this.aiAvailable = false;
+      logger.warn(`OpenCode at ${baseUrl} is NOT reachable — AI review will be skipped (this is expected unless you have opencode running locally)`);
     }
   }
 
@@ -388,9 +396,7 @@ export class Engine {
     if (this.config.mode === "review" || this.config.mode === "fix") {
       const diffs: DiffFile[] = await collectDiff(undefined, this.root);
       if (diffs.length > 0) {
-        return diffs
-          .filter((d) => d.status !== "deleted")
-          .map((d) => ({ path: d.path, content: d.content, diff: d.diff }));
+        return nonDeletedFiles(diffs);
       }
       logger.info("No diff found — falling back to full repo scan");
     }
