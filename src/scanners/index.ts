@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import type { Finding } from "../analyzer/index.js";
 import { logger } from "../utils/logger.js";
 
@@ -9,31 +9,50 @@ interface ScannerTool {
 }
 
 const BYTES_PER_KILOBYTE = 1024;
-const ONE_KB = BYTES_PER_KILOBYTE;
-const ONE_MB = ONE_KB * ONE_KB;
+const ONE_MB = BYTES_PER_KILOBYTE * BYTES_PER_KILOBYTE;
 const MAX_BUFFER_SIZE_IN_MB = 10;
-const MAX_BUFFER_MB = MAX_BUFFER_SIZE_IN_MB;
-const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
+const MAX_BUFFER = MAX_BUFFER_SIZE_IN_MB * ONE_MB;
 const SNIPPET_MAX_CHAR_LENGTH = 80;
-const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
 
-function parseTrufflehogLine(line: string): Finding | null {
-  try {
-    const r = JSON.parse(line);
-    return {
-      file: r.SourceMetadata?.Data?.Filesystem?.file ?? "unknown",
-      line: r.SourceMetadata?.Data?.Filesystem?.line ?? null,
-      severity: "high" as const,
-      category: "security" as const,
-      comment: `[trufflehog] ${r.DetectorName ?? "secret"}: ${r.Description ?? ""}`,
-suggestion: `Matched: ${String(r.Raw ?? "").trim().slice(0, SNIPPET_LENGTH)}`,
-      source: "scanner" as const,
-    } as Finding;
-  } catch {
-    logger.warn("Failed to parse trufflehog JSON line");
+interface TrufflehogRecord {
+  DetectorName?: string;
+  Description?: string;
+  Raw?: string;
+  SourceMetadata?: {
+    Data?: {
+      Filesystem?: {
+        file?: string;
+        line?: number;
+      };
+    };
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function parseTrufflehogRecord(r: unknown): Finding | null {
+  if (!isRecord(r)) {
+    logger.warn("Failed to parse trufflehog JSON record");
     return null;
   }
+  const record = r as Partial<TrufflehogRecord>;
+  const raw = typeof record.Raw === "string" ? record.Raw : "";
+  const rawLine = record.SourceMetadata?.Data?.Filesystem?.line;
+  const line = typeof rawLine === "number" && Number.isFinite(rawLine) ? rawLine : null;
+  const filePath = record.SourceMetadata?.Data?.Filesystem?.file;
+  return {
+    file: typeof filePath === "string" ? filePath : "unknown",
+    line,
+    severity: "high" as const,
+    category: "security" as const,
+    comment: `[trufflehog] ${record.DetectorName ?? "secret"}: ${record.Description ?? ""}`,
+    suggestion: `Matched: ${raw.trim().slice(0, SNIPPET_MAX_CHAR_LENGTH)}`,
+    source: "scanner" as const,
+  };
 }
+
 
 const gitleaks: ScannerTool = {
   name: "gitleaks",
@@ -48,11 +67,19 @@ const gitleaks: ScannerTool = {
   },
   run(root: string): Finding[] {
     try {
-      const out = execSync(
-        "gitleaks detect --no-git --source . --report-format json --report-path /dev/stdout 2>/dev/null || true",
+      const res = spawnSync(
+        "gitleaks",
+        ["detect", "--no-git", "--source", ".", "--report-format", "json", "--report-path", "/dev/stdout"],
         { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
-      if (!out.trim()) return [];
+      if (res.error) throw res.error;
+      const out = res.stdout ?? "";
+      if (!out.trim()) {
+        if (res.status !== 0) {
+          logger.warn(`gitleaks run failed (exit ${res.status})${res.stderr ? `: ${res.stderr}` : ""}`);
+        }
+        return [];
+      }
       let results: { File: string; StartLine: number; RuleID: string; Description: string; Match: string; Severity: string }[];
       try {
         results = JSON.parse(out);
@@ -66,7 +93,7 @@ const gitleaks: ScannerTool = {
 severity: (r.Severity?.toLowerCase() ?? "medium") as Finding["severity"],
         category: "security" as const,
         comment: `[gitleaks] ${r.Description}`,
-        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
+        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_MAX_CHAR_LENGTH)}`,
         source: "scanner" as const,
       }));
     } catch (e) {
@@ -93,9 +120,30 @@ const trufflehog: ScannerTool = {
         "trufflehog filesystem . --json --no-verification 2>/dev/null || true",
         { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
-      if (!out.trim()) return [];
-      const lines = out.trim().split("\n").filter(Boolean);
-      return lines.map(parseTrufflehogLine).filter((f): f is Finding => f !== null);
+      const trimmed = out.trim();
+      if (!trimmed) return [];
+      let records: unknown[] = [];
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) records = parsed;
+      } catch {
+      }
+      if (records.length === 0) {
+        for (const line of trimmed.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            records.push(JSON.parse(line) as unknown);
+          } catch {
+            logger.warn("Failed to parse trufflehog JSON record");
+          }
+        }
+      }
+      const findings: Finding[] = [];
+      for (const record of records) {
+        const finding = parseTrufflehogRecord(record);
+        if (finding) findings.push(finding);
+      }
+      return findings;
     } catch (e) {
       logger.warn(`trufflehog run failed: ${e}`);
       return [];
