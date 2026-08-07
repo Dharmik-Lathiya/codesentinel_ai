@@ -63,6 +63,11 @@ export const DEFAULT_GATE_CONFIG: GateConfig = {
   blockOnBugs: false,
 };
 
+const HEROKU_API_KEY_LENGTH = 36;
+const SENDGRID_SECRET_LENGTH = 22;
+const SENDGRID_ID_LENGTH = 43;
+const MAILCHIMP_API_KEY_LENGTH = 32;
+const SQUARE_ACCESS_TOKEN_LENGTH = 50;
 export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
   { id: "aws-key", name: "AWS Access Key", regex: "AKIA[0-9A-Z]{16}", severity: "critical", message: "Hardcoded AWS Access Key ID detected.", suggestion: "Use IAM roles or environment variables instead." },
   { id: "aws-secret", name: "AWS Secret Key", regex: "(?i)aws(.{0,20})?(secret|access)_?key\\s*[=:]\\s*['\"][A-Za-z0-9/+=]{40}['\"]", severity: "critical", message: "Hardcoded AWS Secret Access Key detected.", suggestion: "Use IAM roles or environment variables instead." },
@@ -81,13 +86,13 @@ export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
   { id: "stripe-publishable-key", name: "Stripe Publishable Key", regex: "(?i)pk_(live|test)_[0-9a-zA-Z]{24,}", severity: "low", message: "Stripe publishable key exposed.", suggestion: "Stripe publishable keys are public but should still be in env vars." },
   { id: "mongodb-conn-str", name: "MongoDB Connection String", regex: "mongodb(?:\\+srv)?://[^\\s@]+:[^\\s@]+@", severity: "critical", message: "Hardcoded MongoDB connection string with credentials detected.", suggestion: "Use environment variables for MongoDB URIs." },
   { id: "discord-token", name: "Discord Bot Token", regex: "[MN][A-Za-z0-9_-]{23}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27}", severity: "critical", message: "Hardcoded Discord bot token detected.", suggestion: "Use environment variables for Discord tokens." },
-  { id: "telegram-token", name: "Telegram Bot Token", regex: "[0-9]{8,10}:[A-Za-z0-9_-]{35}", severity: "critical", message: "Hardcoded Telegram bot token detected.", suggestion: "Use environment variables for Telegram tokens." },
+{ id: "telegram-token", name: "Telegram Bot Token", regex: "(?i)(telegram|bot)(.{0,20})?\\s*[=:]\\s*['\\\"][0-9]{10}:[A-Za-z0-9_-]{35}['\\\"]", severity: "critical", message: "Hardcoded Telegram bot token detected.", suggestion: "Use environment variables for Telegram tokens." },
   { id: "twilio-account-sid", name: "Twilio Account SID", regex: "(?i)AC[0-9a-f]{32}", severity: "high", message: "Hardcoded Twilio Account SID detected.", suggestion: "Use environment variables for Twilio credentials." },
   { id: "twilio-auth-token", name: "Twilio Auth Token", regex: "(?i)twilio(.{0,20})?(auth|secret|token)\\s*[=:]\\s*['\"][0-9a-f]{32}['\"]", severity: "critical", message: "Hardcoded Twilio auth token detected.", suggestion: "Use environment variables for Twilio credentials." },
-  { id: "heroku-api-key", name: "Heroku API Key", regex: "(?i)heroku(.{0,20})?(api[-_]?key|token)\\s*[=:]\\s*['\"][A-Za-z0-9_-]{36,}['\"]", severity: "high", message: "Hardcoded Heroku API key detected.", suggestion: "Use environment variables for Heroku API access." },
-  { id: "sendgrid-api-key", name: "SendGrid API Key", regex: "(?i)SG\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}", severity: "critical", message: "Hardcoded SendGrid API key detected.", suggestion: "Use environment variables for SendGrid credentials." },
-  { id: "mailchimp-api-key", name: "Mailchimp API Key", regex: "[0-9a-f]{32}-us[0-9]{1,2}", severity: "high", message: "Hardcoded Mailchimp API key detected.", suggestion: "Use environment variables for Mailchimp API access." },
-  { id: "square-access-token", name: "Square Access Token", regex: "(?i)EAAA[A-Za-z0-9_\\-]{50,}", severity: "critical", message: "Hardcoded Square access token detected.", suggestion: "Use environment variables for Square credentials." },
+  { id: "heroku-api-key", name: "Heroku API Key", regex: `(?i)heroku(.{0,20})?(api[-_]?key|token)\\s*[=:]\\s*['\\"][A-Za-z0-9_-]{${HEROKU_API_KEY_LENGTH},}['\\"]`, severity: "high", message: "Hardcoded Heroku API key detected.", suggestion: "Use environment variables for Heroku API access." },
+  { id: "sendgrid-api-key", name: "SendGrid API Key", regex: `(?i)SG\\.[A-Za-z0-9_-]{${SENDGRID_SECRET_LENGTH}}\\.[A-Za-z0-9_-]{${SENDGRID_ID_LENGTH}}`, severity: "critical", message: "Hardcoded SendGrid API key detected.", suggestion: "Use environment variables for SendGrid credentials." },
+  { id: "mailchimp-api-key", name: "Mailchimp API Key", regex: `[0-9a-f]{${MAILCHIMP_API_KEY_LENGTH}}-us[0-9]{1,2}`, severity: "high", message: "Hardcoded Mailchimp API key detected.", suggestion: "Use environment variables for Mailchimp API access." },
+  { id: "square-access-token", name: "Square Access Token", regex: `(?i)EAAA[A-Za-z0-9_\\-]{${SQUARE_ACCESS_TOKEN_LENGTH},}`, severity: "critical", message: "Hardcoded Square access token detected.", suggestion: "Use environment variables for Square credentials." },
   { id: "pypi-api-token", name: "PyPI API Token", regex: "(?i)pypi[-_]?token\\s*[=:]\\s*['\"]pypi-[A-Za-z0-9_]{36,}['\"]", severity: "high", message: "Hardcoded PyPI API token detected.", suggestion: "Use environment variables for package registry tokens." },
   { id: "docker-hub-token", name: "Docker Hub Token", regex: "(?i)docker[-_]?(hub|token|pat)\\s*[=:]\\s*['\"][A-Za-z0-9_\\-]{36,}['\"]", severity: "high", message: "Hardcoded Docker Hub token detected.", suggestion: "Use Docker Hub credentials via environment variables." },
   { id: "sentry-dsn", name: "Sentry DSN", regex: "https://[0-9a-f]{32}@[a-z0-9]+\\.ingest\\.sentry\\.io", severity: "medium", message: "Sentry DSN exposed.", suggestion: "Sentry DSNs are public but should use environment variables." },
@@ -221,13 +226,13 @@ export function mergeConfig(
     };
   }
   if (override.include) {
-    merged.include = [...base.include, ...override.include];
+    merged.include = [...override.include];
   }
   if (override.exclude) {
-    merged.exclude = [...base.exclude, ...override.exclude];
+    merged.exclude = [...override.exclude];
   }
   if (override.plugins) {
-    merged.plugins = [...base.plugins, ...override.plugins];
+    merged.plugins = [...override.plugins];
   }
   if (override.gate) {
     merged.gate = { ...base.gate, ...override.gate };
@@ -244,9 +249,6 @@ export function mergeConfig(
       ...override.linters,
       args: { ...base.linters.args, ...override.linters.args },
     };
-  }
-  if (override.enableSecretScanner !== undefined) {
-    merged.enableSecretScanner = override.enableSecretScanner;
   }
   if (override.analyzer) {
     merged.analyzer = {
@@ -270,11 +272,8 @@ export function mergeConfig(
       },
     };
     if (override.analyzer.customRules) {
-      merged.analyzer.customRules = [...base.analyzer.customRules, ...override.analyzer.customRules];
+      merged.analyzer.customRules = [...override.analyzer.customRules];
     }
-  }
-  if (override.autoMerge !== undefined) {
-    merged.autoMerge = override.autoMerge;
   }
   return merged;
 }
