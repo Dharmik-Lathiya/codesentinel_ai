@@ -2,10 +2,10 @@ import { logger } from "./logger.js";
 
 const MILLISECONDS_PER_SECOND = 1000;
 const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
-const HTTP_STATUS_RATE_LIMIT = "429";
-const HTTP_STATUS_SERVICE_UNAVAILABLE = "503";
-const HTTP_STATUS_BAD_GATEWAY = "502";
-const RETRYABLE_STATUS_CODES = new Set([429, 502, 503]);
+const HTTP_STATUS_RATE_LIMIT = 429;
+const HTTP_STATUS_SERVICE_UNAVAILABLE = 503;
+const HTTP_STATUS_BAD_GATEWAY = 502;
+const RETRYABLE_STATUS_CODES = new Set([HTTP_STATUS_RATE_LIMIT, HTTP_STATUS_BAD_GATEWAY, HTTP_STATUS_SERVICE_UNAVAILABLE]);
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -19,7 +19,6 @@ export interface RetryOptions {
   maxDelayMs?: number;
   /**
    * Optional predicate: return true to retry on this error.
-   * Optional predicate: return true to retry on this error.
    * Note: the default predicate only matches `Error` instances; non-Error
    * throws (strings, plain objects) are never retried.
    */
@@ -29,7 +28,8 @@ export interface RetryOptions {
 const getErrorStatus = (err: unknown): number | undefined => {
   if (typeof err !== "object" || err === null) return undefined;
   const status = (err as Record<string, unknown>).status ?? (err as Record<string, unknown>).statusCode;
-  return typeof status === "number" ? status : undefined;
+  const n = typeof status === "string" ? Number(status) : status;
+  return typeof n === "number" && Number.isInteger(n) ? n : undefined;
 };
 
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
@@ -42,9 +42,6 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(HTTP_STATUS_RATE_LIMIT) ||
-      msg.includes(HTTP_STATUS_SERVICE_UNAVAILABLE) ||
-      msg.includes(HTTP_STATUS_BAD_GATEWAY) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
