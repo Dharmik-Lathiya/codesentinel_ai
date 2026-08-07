@@ -62,23 +62,64 @@ const HTML_PAGE = `<!DOCTYPE html>
 </table>
 </div>
 <script>
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const SEVERITY_COLORS = { critical: '#f85149', high: '#d29922', medium: '#58a6ff', low: '#3fb950' };
+const PALETTE = ['#f85149', '#d29922', '#58a6ff', '#3fb950', '#8b949e'];
+
+function colorFor(key, explicit = {}) {
+  if (Object.prototype.hasOwnProperty.call(explicit, key)) return explicit[key];
+  let hash = 0;
+  for (const ch of String(key)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return PALETTE[hash % PALETTE.length];
+}
+
 async function loadData() {
-  const res = await fetch('/api/data');
-  const data = await res.json();
-  const runs = data.runs || [];
+  let runs;
+  try {
+    const res = await fetch('/api/data');
+    if (!res.ok) throw new Error('Bad response');
+    const data = await res.json();
+    runs = data.runs || [];
+  } catch (e) {
+    console.error('Failed to load dashboard data', e);
+    const empty = document.getElementById('empty-state');
+    empty.textContent = 'Failed to load dashboard data.';
+    empty.style.display = 'block';
+    return;
+  }
   if (runs.length === 0) { document.getElementById('empty-state').style.display = 'block'; return; }
   const latest = runs[runs.length - 1];
-  const totalFindings = runs.reduce((s,r) => s + r.totalFindings, 0);
+  const totalFindings = runs.reduce((s, r) => s + r.totalFindings, 0);
   document.getElementById('stats').innerHTML = \`
     <div class="stat-card"><h3>Total Runs</h3><div class="value">\${runs.length}</div></div>
     <div class="stat-card"><h3>Latest Score</h3><div class="value">\${latest.score ?? 'N/A'}</div></div>
     <div class="stat-card"><h3>Total Findings</h3><div class="value">\${totalFindings}</div></div>
-    <div class="stat-card"><h3>Latest Mode</h3><div class="value">\${latest.mode}</div></div>
+    <div class="stat-card"><h3>Latest Mode</h3><div class="value">\${escapeHtml(latest.mode)}</div></div>
   \`;
-  new Chart(document.getElementById('severityChart'), { type: 'bar', data: { labels: Object.keys(latest.findingsBySeverity), datasets: [{ label: 'Findings', data: Object.values(latest.findingsBySeverity), backgroundColor: ['#3fb950','#58a6ff','#d29922','#f85149'] }] }, options: { responsive: true, plugins: { legend: { display: false } } } });
-  new Chart(document.getElementById('categoryChart'), { type: 'doughnut', data: { labels: Object.keys(latest.findingsByCategory), datasets: [{ data: Object.values(latest.findingsByCategory), backgroundColor: ['#f85149','#d29922','#58a6ff','#3fb950','#8b949e'] }] }, options: { responsive: true } });
+  const severityKeys = Object.keys(latest.findingsBySeverity);
+  new Chart(document.getElementById('severityChart'), { type: 'bar', data: { labels: severityKeys, datasets: [{ label: 'Findings', data: severityKeys.map(k => latest.findingsBySeverity[k]), backgroundColor: severityKeys.map(k => colorFor(k, SEVERITY_COLORS)) }] }, options: { responsive: true, plugins: { legend: { display: false } } } });
+  const categoryKeys = Object.keys(latest.findingsByCategory);
+  new Chart(document.getElementById('categoryChart'), { type: 'doughnut', data: { labels: categoryKeys, datasets: [{ data: categoryKeys.map(k => latest.findingsByCategory[k]), backgroundColor: categoryKeys.map(k => colorFor(k)) }] }, options: { responsive: true } });
   new Chart(document.getElementById('scoreChart'), { type: 'line', data: { labels: runs.map(r => new Date(r.timestamp).toLocaleTimeString()), datasets: [{ label: 'Score', data: runs.map(r => r.score), borderColor: '#58a6ff', tension: 0.3 }] }, options: { responsive: true, scales: { y: { min: 0, max: 100 } } } });
-  document.getElementById('runs-body').innerHTML = runs.slice().reverse().map(r => \`<tr><td>\${new Date(r.timestamp).toLocaleString()}</td><td>\${r.mode}</td><td class="severity-\${Object.keys(r.findingsBySeverity)[0] || ''}">\${r.totalFindings}</td><td>\${r.score ?? 'N/A'}</td><td>\${r.durationMs}ms</td></tr>\`).join('');
+  const tbody = document.getElementById('runs-body');
+  runs.slice().reverse().forEach((r) => {
+    const tr = document.createElement('tr');
+    const tdTime = document.createElement('td');
+    tdTime.textContent = new Date(r.timestamp).toLocaleString();
+    const tdMode = document.createElement('td');
+    tdMode.textContent = r.mode;
+    const tdFindings = document.createElement('td');
+    tdFindings.textContent = r.totalFindings;
+    const tdScore = document.createElement('td');
+    tdScore.textContent = r.score ?? 'N/A';
+    const tdDuration = document.createElement('td');
+    tdDuration.textContent = \`\${r.durationMs}ms\`;
+    tr.append(tdTime, tdMode, tdFindings, tdScore, tdDuration);
+    tbody.appendChild(tr);
+  });
 }
 loadData();
 </script>
@@ -88,6 +129,7 @@ loadData();
 export class DashboardServer {
   private server: ReturnType<typeof createServer> | null = null;
   private data: DashboardData = { runs: [] };
+  private shutdownRegistered = false;
 
   constructor(
     private port: number,
@@ -104,7 +146,8 @@ export class DashboardServer {
     const p = this.dataPath();
     if (existsSync(p)) {
       try {
-        this.data = JSON.parse(readFileSync(p, "utf8"));
+        const parsed = JSON.parse(readFileSync(p, "utf8"));
+        this.data = parsed && Array.isArray(parsed.runs) ? parsed : { runs: [] };
       } catch {
         this.data = { runs: [] };
       }
@@ -138,6 +181,12 @@ export class DashboardServer {
       logger.info(`Dashboard server started at http://localhost:${this.port}`);
     });
 
+    this.registerShutdownHandlers();
+  }
+
+  private registerShutdownHandlers(): void {
+    if (this.shutdownRegistered) return;
+    this.shutdownRegistered = true;
     const shutdown = () => {
       logger.info("Shutting down dashboard server...");
       this.stop();
