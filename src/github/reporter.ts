@@ -6,6 +6,10 @@ import { logger } from "../utils/logger.js";
  * implemented with `fetch` so we avoid an extra SDK dependency. It is used by
  * both the GitHub Action and (optionally) the Probot app.
  */
+
+const MS_PER_SECOND = 1000;
+const BASE_DELAY_MS = 2000;
+const HTTP_TOO_MANY_REQUESTS = 429;
 export interface GitHubCoordinates {
   token: string;
   owner: string;
@@ -47,9 +51,9 @@ export class GitHubReporter {
         const resetTime = res.headers.get("x-ratelimit-reset");
         let delayMs = 5000;
         if (retryAfter) {
-          delayMs = Number(retryAfter) * 1000;
+          delayMs = Number(retryAfter) * MS_PER_SECOND;
         } else if (resetTime) {
-          delayMs = Math.max(0, Number(resetTime) * 1000 - Date.now()) + 1000;
+          delayMs = Math.max(0, Number(resetTime) * MS_PER_SECOND - Date.now()) + MS_PER_SECOND;
         }
         logger.warn(`GitHub API rate limited, retrying after ${delayMs}ms`);
         throw new Error(`Rate limited (${res.status}), retrying after ${delayMs}ms`);
@@ -62,11 +66,11 @@ export class GitHubReporter {
       return res.json().catch(() => null);
     }, {
       maxAttempts: 3,
-      baseDelayMs: 2000,
+      baseDelayMs: BASE_DELAY_MS,
       shouldRetry: (err) => {
         if (err instanceof Error) {
           const msg = err.message.toLowerCase();
-          return msg.includes("rate limit") || msg.includes("429") || msg.includes("403") || msg.includes("503");
+          return msg.includes("rate limit") || msg.includes(String(HTTP_TOO_MANY_REQUESTS)) || msg.includes("403") || msg.includes("503");
         }
         return false;
       },
@@ -124,6 +128,13 @@ export class GitHubReporter {
   async createIssue(title: string, body: string): Promise<void> {
     const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues`;
     await this.request("POST", url, { title, body });
+  }
+
+  /** Find an open issue with an exact title, returning its number (or undefined). */
+  async findIssueByTitle(title: string): Promise<number | undefined> {
+    const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues?state=open&per_page=100`;
+    const result = await this.request("GET", url) as Array<{ number: number; title: string }> | null;
+    return result?.find((i) => i.title === title)?.number;
   }
 
   /** Create a GitHub Check Run with annotations. */
