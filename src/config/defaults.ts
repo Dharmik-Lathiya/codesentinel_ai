@@ -32,11 +32,13 @@ export const DEFAULT_PROGRESSIVE_ANALYSIS: ProgressiveAnalysisConfig = {
   escalationThreshold: 5,
 };
 
+export const DEFAULT_MAX_CONCURRENT_FILES = 10;
+
 /**
  * Default multi-file analysis configuration.
  */
 export const DEFAULT_MULTI_FILE_ANALYSIS: MultiFileAnalysisConfig = {
-  maxConcurrentFiles: 10,
+  maxConcurrentFiles: DEFAULT_MAX_CONCURRENT_FILES,
   analyzeDependencies: true,
   analyzeImports: true,
   analyzePatterns: true,
@@ -55,17 +57,21 @@ export const DEFAULT_ANALYZER_CONFIG: AnalyzerConfig = {
   multiFileAnalysis: DEFAULT_MULTI_FILE_ANALYSIS,
 };
 
+export const DEFAULT_MAX_CRITICAL_FINDINGS = 10;
+export const DEFAULT_MAX_HIGH_FINDINGS = 50;
 export const DEFAULT_GATE_CONFIG: GateConfig = {
   minScore: 0,
-  maxCritical: 10,
-  maxHigh: 50,
+  maxCritical: DEFAULT_MAX_CRITICAL_FINDINGS,
+  maxHigh: DEFAULT_MAX_HIGH_FINDINGS,
   blockOnSecurity: false,
   blockOnBugs: false,
 };
 
+export const DEFAULT_AWS_ACCESS_KEY_ID_LENGTH = 16;
+export const DEFAULT_AWS_SECRET_PREFIX_WINDOW = 20;
 export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
-  { id: "aws-key", name: "AWS Access Key", regex: "AKIA[0-9A-Z]{16}", severity: "critical", message: "Hardcoded AWS Access Key ID detected.", suggestion: "Use IAM roles or environment variables instead." },
-  { id: "aws-secret", name: "AWS Secret Key", regex: "(?i)aws(.{0,20})?(secret|access)_?key\\s*[=:]\\s*['\"][A-Za-z0-9/+=]{40}['\"]", severity: "critical", message: "Hardcoded AWS Secret Access Key detected.", suggestion: "Use IAM roles or environment variables instead." },
+  { id: "aws-key", name: "AWS Access Key", regex: `AKIA[0-9A-Z]{${DEFAULT_AWS_ACCESS_KEY_ID_LENGTH}}`, severity: "critical", message: "Hardcoded AWS Access Key ID detected.", suggestion: "Use IAM roles or environment variables instead." },
+  { id: "aws-secret", name: "AWS Secret Key", regex: `(?i)aws(.{0,${DEFAULT_AWS_SECRET_PREFIX_WINDOW}})?(secret|access)_?key\\s*[=:]\\s*['\"][A-Za-z0-9/+=]{40}['\"]`, severity: "critical", message: "Hardcoded AWS Secret Access Key detected.", suggestion: "Use IAM roles or environment variables instead." },
   { id: "github-token", name: "GitHub Token", regex: "(?i)github[-_]?(token|pat|key)\\s*[=:]\\s*['\"](ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}['\"]", severity: "critical", message: "Hardcoded GitHub token detected.", suggestion: "Use GITHUB_TOKEN secret or environment variables." },
   { id: "slack-token", name: "Slack Token", regex: "(xox[baprs]-[0-9a-zA-Z]{10,})", severity: "high", message: "Hardcoded Slack token detected.", suggestion: "Use environment variables for Slack tokens." },
   { id: "ssh-key", name: "SSH Private Key", regex: "(?i)-----BEGIN\\s+(?:(?:RSA|DSA|EC|OPENSSH)\\s+)?PRIVATE\\s+KEY-----", severity: "critical", message: "Hardcoded SSH private key detected.", suggestion: "Use SSH agent or secrets manager." },
