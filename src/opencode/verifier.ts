@@ -1,5 +1,6 @@
 import type { Issue } from "./jsonl-parser.js";
 import type { AIHub } from "../ai/index.js";
+import { logger } from "../utils/logger.js";
 
 const EXCLUDED_DIR_PREFIXES = ["node_modules/", ".git/", "dist/"];
 
@@ -9,21 +10,21 @@ const VAGUE_PHRASES = [
   "consider refactoring",
 ];
 
-const MIN_MESSAGE_LENGTH = 15;
-
 export interface VerifyOptions {
   aiHub?: AIHub;
   useAi?: boolean;
 }
-
 function isExcludedDir(file: string): boolean {
-  return EXCLUDED_DIR_PREFIXES.some((prefix) => file.startsWith(prefix));
+  const normalized = file.startsWith("./") ? file.slice(2) : file;
+  return EXCLUDED_DIR_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
 function isVagueMessage(message: string): boolean {
-  if (message.length < MIN_MESSAGE_LENGTH) return true;
   const lower = message.toLowerCase();
-  return VAGUE_PHRASES.some((phrase) => lower.includes(phrase));
+  return VAGUE_PHRASES.some((phrase) => {
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`\\b${escaped}\\b`).test(lower);
+  });
 }
 
 function applyRuleBasedFilter(findings: Issue[]): Issue[] {
@@ -50,40 +51,40 @@ function buildAiPrompt(findings: Issue[]): string {
   ].join("\n");
 }
 
+function sanitize(raw: unknown, max: number): number[] {
+  return Array.isArray(raw)
+    ? raw.filter(
+        (i): i is number =>
+          typeof i === "number" && Number.isInteger(i) && i >= 0 && i < max,
+      )
+    : [];
+}
+
 function parseAiResponse(
   content: string,
   maxIndex: number,
 ): number[] | null {
+  let indices: number[];
   try {
-    const parsed = JSON.parse(content);
-    if (Array.isArray(parsed)) {
-      const indices = parsed.filter(
-        (i): i is number =>
-          typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-      );
-      return indices.length > 0 ? indices : null;
-    }
+    indices = sanitize(JSON.parse(content), maxIndex);
   } catch {
-    // fall through
+    indices = [];
   }
 
-  const extracted = content.match(/\[[\d\s,]*\]/);
-  if (extracted) {
-    try {
-      const parsed = JSON.parse(extracted[0]);
-      if (Array.isArray(parsed)) {
-        const indices = parsed.filter(
-          (i): i is number =>
-            typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-        );
-        return indices.length > 0 ? indices : null;
+  if (indices.length === 0) {
+    const extracted = content.match(/\[[\d\s,]*\]/);
+    if (extracted) {
+      try {
+        indices = sanitize(JSON.parse(extracted[0]), maxIndex);
+      } catch {
+        indices = [];
       }
-    } catch {
-      // fall through
     }
   }
 
-  return null;
+  if (indices.length === 0) return null;
+
+  return [...new Set(indices)];
 }
 
 async function aiVerify(
@@ -99,10 +100,10 @@ async function aiVerify(
       [{ role: "user", content: prompt }],
       { maxTokens: 1024 },
     );
-  } catch {
-    return afterRules;
+  } catch (err) {
+    logger.error(`AI verification failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
   }
-
   const indices = parseAiResponse(result.content, afterRules.length);
   if (indices === null) return afterRules;
 
