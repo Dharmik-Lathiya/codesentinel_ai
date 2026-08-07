@@ -28,8 +28,8 @@ const REPORT_STYLES = `  <style>
     .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
-    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: ${BOLD_FONT_WEIGHT}; color: #fff; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
@@ -40,6 +40,7 @@ const REPORT_STYLES = `  <style>
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
   </style>`;
+const m = (v: number) => (Number.isFinite(v) ? String(v) : "");
 
 /**
  * Generate a self-contained HTML dashboard report from an EngineReport.
@@ -59,7 +60,7 @@ export function renderHtmlReport(report: EngineReport): string {
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
-        <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
+        <td>${escapeHtml(f.file)}${f.line != null ? `:${m(f.line)}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
         <td>${f.suggestion ? escapeHtml(f.suggestion) : "—"}</td>
       </tr>`;
@@ -71,7 +72,7 @@ export function renderHtmlReport(report: EngineReport): string {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
       const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
       return `<tr>
-        <td>#${a.iteration}</td>
+        <td>#${m(a.iteration)}</td>
         <td>${escapeHtml(a.file)}</td>
         <td><span style="color:${statusColor};font-weight:${BOLD_FONT_WEIGHT}">${status}</span></td>
         <td>${escapeHtml(a.explanation)}</td>
@@ -103,7 +104,7 @@ export function renderHtmlReport(report: EngineReport): string {
 <body>
 <div class="container">
   <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
-  <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
+  <p class="meta">Generated in ${m(report.metrics.durationMs)}ms &middot; ${m(report.metrics.filesAnalyzed)} file(s) analyzed</p>
 
   ${renderSummaryCards(report, severityCounts)}
 
@@ -111,7 +112,6 @@ export function renderHtmlReport(report: EngineReport): string {
 
   ${categoryChart}
 
-  <h2>Findings</h2>
   ${renderFindingsTable(report.findings.length, findingsRows)}
 
   ${renderFixTable(report.fixAttempts.length, fixRows)}
@@ -176,30 +176,29 @@ function renderBarChart(title: string, items: { key: string; value: number; colo
   </div>`;
 }
 
-function renderFindingsTable(count: number, rows: string): string {
-  if (count === 0) return `<div class="empty">No findings detected.</div>`;
-  return `<table>
-    <thead><tr><th>Severity</th><th>Category</th><th>File</th><th>Comment</th><th>Suggestion</th></tr></thead>
+function renderTable(title: string, headers: string[], rows: string, emptyMessage = ""): string {
+  if (rows === "") {
+    if (emptyMessage) return `<div class="empty">${escapeHtml(emptyMessage)}</div>`;
+    return "";
+  }
+  const headerCells = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
+  return `<h2>${escapeHtml(title)}</h2>
+  <table>
+    <thead><tr>${headerCells}</tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
+}
+
+function renderFindingsTable(count: number, rows: string): string {
+  return renderTable("Findings", ["Severity", "Category", "File", "Comment", "Suggestion"], count === 0 ? "" : rows, "No findings detected.");
 }
 
 function renderFixTable(count: number, rows: string): string {
-  if (count === 0) return "";
-  return `<h2>Fix Attempts</h2>
-  <table>
-    <thead><tr><th>#</th><th>File</th><th>Status</th><th>Explanation</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+  return renderTable("Fix Attempts", ["#", "File", "Status", "Explanation"], count === 0 ? "" : rows);
 }
 
 function renderTestsTable(count: number, rows: string): string {
-  if (count === 0) return "";
-  return `<h2>Generated Tests</h2>
-  <table>
-    <thead><tr><th>Source</th><th>Test File</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>`;
+  return renderTable("Generated Tests", ["Source", "Test File"], count === 0 ? "" : rows);
 }
 
 function escapeHtml(s: string): string {
@@ -208,7 +207,7 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-.replace(/'/g, APOSTROPHE_ENTITY);
+    .replace(/'/g, APOSTROPHE_ENTITY);
 }
 
 function scoreColor(score: number): string {

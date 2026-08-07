@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -7,7 +7,8 @@ import { logger } from "./logger.js";
 const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const MAX_BUFFER =
+  Number(process.env.CODESENTINEL_GIT_MAX_BUFFER) || 64 * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
 
@@ -138,22 +139,29 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
+    const match = /^(?:a\/)?(.+?) b\/(.+)$/.exec(firstLine);
     if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const aSide = match[1];
+    const bSide = match[2];
+    if (bSide !== "dev/null" && aSide !== "dev/null" && aSide !== bSide) {
+      continue;
+    }
+    const path = bSide === "dev/null" ? aSide : bSide;
     byPath.set(path, part);
   }
   return byPath;
 }
 
 async function readContent(full: string): Promise<string> {
+  let handle;
   try {
-    const fileStat = await stat(full);
+    handle = await open(full);
+    const fileStat = await handle.stat();
     if (fileStat.size > MAX_CONTENT_BYTES) {
       logger.debug(`Skipping oversized file content: ${full}`);
       return "";
     }
-    const text = await readFile(full, { encoding: "utf8" });
+    const text = await handle.readFile({ encoding: "utf8" });
     if (text.includes("\0")) {
       logger.debug(`Skipping binary file content: ${full}`);
       return "";
@@ -162,6 +170,8 @@ async function readContent(full: string): Promise<string> {
   } catch {
     logger.debug(`Failed to read content for ${full}`);
     return "";
+  } finally {
+    await handle?.close();
   }
 }
 
@@ -215,7 +225,7 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code === "M") return "modified";
+  if (code === "M" || code === "T") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
