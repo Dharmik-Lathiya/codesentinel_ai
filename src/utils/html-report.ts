@@ -152,7 +152,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Tests ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -160,7 +160,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
 
 function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
   if (items.length === 0) return "";
-  const maxCount = Math.max(...items.map((item) => item.value));
+  const maxCount = items.reduce((max, item) => Math.max(max, item.value), 0);
   return `<h2>${escapeHtml(title)}</h2>
   <div class="bar-chart">
     ${items
