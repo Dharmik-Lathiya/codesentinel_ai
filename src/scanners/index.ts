@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import type { Finding } from "../analyzer/index.js";
+import type { Severity } from "../config/types.js";
 import { logger } from "../utils/logger.js";
 
 interface ScannerTool {
@@ -8,25 +9,24 @@ interface ScannerTool {
   run(root: string): Finding[];
 }
 
-const BYTES_PER_KILOBYTE = 1024;
-const ONE_KB = BYTES_PER_KILOBYTE;
-const ONE_MB = ONE_KB * ONE_KB;
-const MAX_BUFFER_SIZE_IN_MB = 10;
-const MAX_BUFFER_MB = MAX_BUFFER_SIZE_IN_MB;
-const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
-const SNIPPET_MAX_CHAR_LENGTH = 80;
-const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
+const KB = 1024;
+const MB = KB * KB;
+const MAX_BUFFER_MB = 10;
+const MAX_BUFFER = MAX_BUFFER_MB * MB;
+const SNIPPET_MAX_LENGTH = 80;
 
 function parseTrufflehogLine(line: string): Finding | null {
   try {
     const r = JSON.parse(line);
+    const severity: Severity = r.Verified === true ? "high" : "medium";
+    const raw = r.RawV2 ?? r.Raw ?? "";
     return {
       file: r.SourceMetadata?.Data?.Filesystem?.file ?? "unknown",
       line: r.SourceMetadata?.Data?.Filesystem?.line ?? null,
-      severity: "high" as const,
+      severity,
       category: "security" as const,
       comment: `[trufflehog] ${r.DetectorName ?? "secret"}: ${r.Description ?? ""}`,
-      suggestion: `Matched: ${(r.Raw || "").slice(0, SNIPPET_LENGTH)}`,
+      suggestion: `Matched: ${raw.slice(0, SNIPPET_MAX_LENGTH)}`,
       source: "scanner" as const,
     } as Finding;
   } catch {
@@ -47,32 +47,38 @@ const gitleaks: ScannerTool = {
     }
   },
   run(root: string): Finding[] {
+    let out: string;
     try {
-      const out = execSync(
-        "gitleaks detect --no-git --source . --report-format json --report-path /dev/stdout 2>/dev/null || true",
+      out = execSync(
+        "gitleaks detect --no-git --source . --report-format json --report-path /dev/stdout",
         { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
-      );
-      if (!out.trim()) return [];
-      let results: { File: string; StartLine: number; RuleID: string; Description: string; Match: string; Severity: string }[];
-      try {
-        results = JSON.parse(out);
-      } catch {
-        logger.warn("gitleaks JSON parse failed");
+      ).toString();
+    } catch (e) {
+      const err = e as { status?: number; stdout?: string; stderr?: string };
+      if (err.status === 1) {
+        out = err.stdout?.toString() ?? "";
+      } else {
+        logger.warn(`gitleaks run failed: ${err.stderr?.toString() || String(e)}`);
         return [];
       }
-      return results.map((r) => ({
-        file: r.File,
-        line: r.StartLine || null,
-        severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
-        category: "security" as const,
-        comment: `[gitleaks] ${r.Description}`,
-        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
-        source: "scanner" as const,
-      }));
-    } catch (e) {
-      logger.warn(`gitleaks run failed: ${e}`);
+    }
+    if (!out.trim()) return [];
+    let results: { File: string; StartLine: number; RuleID: string; Description: string; Match: string; Severity: string }[];
+    try {
+      results = JSON.parse(out);
+    } catch {
+      logger.warn("gitleaks JSON parse failed");
       return [];
     }
+    return results.map((r) => ({
+      file: r.File,
+      line: r.StartLine || null,
+      severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
+      category: "security" as const,
+      comment: `[gitleaks] ${r.Description}`,
+      suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_MAX_LENGTH)}`,
+      source: "scanner" as const,
+    }));
   },
 };
 
