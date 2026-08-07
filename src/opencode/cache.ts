@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile, rename, readdir, unlink, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { logger } from "../utils/logger.js";
+const CACHE_KEY_LEN = 16;
+const LOCK_TIMEOUT_MS = 30000;
 
 export interface Lesson {
   pattern: string;
@@ -29,7 +31,7 @@ export function buildCacheKey(filePath: string, pattern: string): string {
   return createHash("sha256")
     .update(filePath + "::" + pattern)
     .digest("hex")
-    .slice(0, 16);
+    .slice(0, CACHE_KEY_LEN);
 }
 
 function nowUTC(): string {
@@ -90,7 +92,7 @@ class FileSystemBackend implements CacheBackend {
 export class LearningCache {
   private backend: CacheBackend;
   private locks = new Map<string, Promise<unknown>>();
-  private static LOCK_TIMEOUT = 30000;
+  private static LOCK_TIMEOUT = LOCK_TIMEOUT_MS;
 
   constructor(backendOrDir?: CacheBackend | string) {
     if (!backendOrDir || typeof backendOrDir === "string") {
@@ -121,7 +123,11 @@ export class LearningCache {
     const entry = await this.backend.get(key);
     if (!entry) return [];
 for (const lesson of entry.lessons) lesson.hitCount++;
-    await this.backend.set(key, entry);
+    try {
+      await this.backend.set(key, entry);
+    } catch {
+      // ignore
+    }
     return entry.lessons.map((l) => ({ ...l }));
   }
 
