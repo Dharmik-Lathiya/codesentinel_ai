@@ -8,6 +8,8 @@ import { logger } from "../utils/logger.js";
 const MAX_PROCESSED_COMMENT_IDS = 10000;
 const KEEP_LAST_PROCESSED_IDS = 5000;
 const MAX_SCORE = 100;
+const MAX_ISSUE_BODY_PLAN = 8000;
+const MAX_ISSUE_BODY_FIX = 4000;
 
 const processedCommentIds = new Set<number>();
 
@@ -128,7 +130,7 @@ async function handleIssueOpened(ctx: any): Promise<void> {
   const issueNumber = issue.number;
 
   const title = issue.title;
-  const body = (issue.body || "").slice(0, 8000);
+  const body = (issue.body || "").slice(0, MAX_ISSUE_BODY_PLAN);
 
   // Generate plan using the engine
   const engine = Engine.fromInputs({
@@ -164,14 +166,14 @@ async function handleComment(ctx: any): Promise<void> {
   if (cmd.mode === "fix" && !isPR) {
     const issue = ctx.payload.issue;
     overrides.issue_title = issue.title;
-    overrides.issue_body = (issue.body || "").slice(0, 4000);
+    overrides.issue_body = (issue.body || "").slice(0, MAX_ISSUE_BODY_FIX);
   }
 
   // For plan mode, pass issue context
   if (cmd.mode === "plan") {
     const issue = ctx.payload.issue;
     overrides.issue_title = issue.title;
-    overrides.issue_body = (issue.body || "").slice(0, 8000);
+    overrides.issue_body = (issue.body || "").slice(0, MAX_ISSUE_BODY_PLAN);
   }
 
   const engine = Engine.fromInputs({
