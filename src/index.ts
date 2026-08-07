@@ -557,6 +557,15 @@ function showVersion(): void {
   process.stdout.write(`${pkg.version}\n`);
 }
 
+function rejectUnknownFlags(cmd: string, flags: string[], known: ReadonlySet<string>): boolean {
+  for (const flag of flags) {
+    if (flag.startsWith("-") && !known.has(flag)) {
+      process.stderr.write(`Unknown option for ${cmd}: ${flag}\n`);
+      return false;
+    }
+  }
+  return true;
+}
 /**
  * Command-line interface. Usage:
  *   codesentinel --mode review --config ./codesentinel.config.json
@@ -568,11 +577,17 @@ async function main(): Promise<void> {
 
   // Handle top-level commands
   if (args[0] === "setup") {
+    if (!rejectUnknownFlags("setup", args.slice(1), new Set(["--force"]))) {
+      return;
+    }
     runSetup(args.includes("--force"));
     return;
   }
 
   if (args[0] === "init-hook") {
+    if (!rejectUnknownFlags("init-hook", args.slice(1), new Set(["--type"]))) {
+      return;
+    }
     const root = process.cwd();
     const typeIdx = args.indexOf("--type");
     const hookType = typeIdx >= 0 && args[typeIdx + 1] === "post-commit" ? "post-commit" : "pre-commit";
@@ -585,6 +600,9 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dashboard") {
+    if (!rejectUnknownFlags("dashboard", args.slice(1), new Set())) {
+      return;
+    }
     const engine = Engine.fromInputs({ secrets: loadSecrets() });
     const dash = engine.getDashboard();
     if (!dash) {
