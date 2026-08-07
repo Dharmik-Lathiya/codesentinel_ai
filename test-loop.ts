@@ -63,8 +63,10 @@ describe("processData", () => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
-  test('inputs above 2^53 lose integer precision (documented limitation)', () => {
-    const input = 2 ** 53 + 1;
+    const result = calculate(input);
+    expect(Number.isSafeInteger(result)).toBe(false);
+    const exact = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
+    expect(Math.abs(result - Number(exact)) / Number(exact)).toBeLessThan(1e-6);
     expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
@@ -74,6 +76,7 @@ describe("processData", () => {
     ['{"value":"42"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
+    [""],
     ['{"value":null}'],
     ['{"value":1e999}'],
   test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
@@ -88,8 +91,3 @@ describe("processData", () => {
   test('whitespace-padded JSON is parsed', () => {
     expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
   });
-
-  test('empty string input is handled', () => {
-    expect(processData("")).toEqual({ value: 0 });
-  });
-});
