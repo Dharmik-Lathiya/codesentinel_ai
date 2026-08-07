@@ -6,6 +6,9 @@ const HTTP_STATUS_RATE_LIMIT = 429;
 const HTTP_STATUS_SERVICE_UNAVAILABLE = 503;
 const HTTP_STATUS_BAD_GATEWAY = 502;
 const RETRYABLE_STATUS_CODES = new Set([HTTP_STATUS_RATE_LIMIT, HTTP_STATUS_SERVICE_UNAVAILABLE, HTTP_STATUS_BAD_GATEWAY]);
+const RATE_LIMIT_MSG = String(HTTP_STATUS_RATE_LIMIT);
+const SERVICE_UNAVAILABLE_MSG = String(HTTP_STATUS_SERVICE_UNAVAILABLE);
+const BAD_GATEWAY_MSG = String(HTTP_STATUS_BAD_GATEWAY);
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -18,7 +21,6 @@ export interface RetryOptions {
   /** Max delay in ms for a single retry (cap on exponential backoff). Default: unbounded (grows with attempts). */
   maxDelayMs?: number;
   /**
-   * Optional predicate: return true to retry on this error.
    * Optional predicate: return true to retry on this error.
    * Note: the default predicate only matches `Error` instances; non-Error
    * throws (strings, plain objects) are never retried.
@@ -42,9 +44,9 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(String(HTTP_STATUS_RATE_LIMIT)) ||
-      msg.includes(String(HTTP_STATUS_SERVICE_UNAVAILABLE)) ||
-      msg.includes(String(HTTP_STATUS_BAD_GATEWAY)) ||
+      msg.includes(RATE_LIMIT_MSG) ||
+      msg.includes(SERVICE_UNAVAILABLE_MSG) ||
+      msg.includes(BAD_GATEWAY_MSG) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
@@ -66,6 +68,13 @@ export async function retry<T>(
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
   const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, maxAttempts - 1);
+
+  if (maxAttempts < 1) {
+    throw new Error("maxAttempts must be >= 1");
+  }
+  if (baseDelayMs < 0) {
+    throw new Error("baseDelayMs must be >= 0");
+  }
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {

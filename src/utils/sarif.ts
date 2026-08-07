@@ -28,6 +28,7 @@ interface ReportingDescriptor {
   shortDescription: { text: string };
 }
 
+// Note: assumes src/ and dist/ preserve depth so ../../package.json resolves; bundle/relocate changes require build-time version inlining.
 const PKG_VERSION = (() => {
   try {
     return (createRequire(import.meta.url)("../../package.json") as { version: string }).version ?? "0.0.0";
@@ -60,7 +61,7 @@ function createSarifLocation(file: string, line?: number): SarifResult["location
   return {
     physicalLocation: {
       artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      ...(typeof line === "number" && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }
@@ -92,7 +93,7 @@ export function renderSarif(report: EngineReport): string {
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
-    const ruleId = `${f.category}:${simpleHash(f.comment)}`;
+    const ruleId = `${f.category}:${simpleHash(`${f.file}:${f.comment}`)}`;
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
