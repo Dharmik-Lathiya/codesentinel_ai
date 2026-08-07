@@ -20,6 +20,7 @@ const MAX_ISSUE_BODY_LENGTH = 8000;
 const NODE_VERSION = 20;
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 const VALID_MODES = new Set<string>(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"]);
+const LOG_LEVELS = new Set<string>(["debug", "info", "warn", "error"]);
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
@@ -702,9 +703,19 @@ async function main(): Promise<void> {
       showHelp();
       return;
     }
+    if (name === "--min-score" && value !== undefined && Number(value) > MAX_SCORE) {
+      process.stderr.write(`Invalid value for --min-score: '${value}' (expected 0-${MAX_SCORE})\n`);
+      showHelp();
+      return;
+    }
   }
 
   if (values["log-level"]) {
+    if (!LOG_LEVELS.has(values["log-level"])) {
+      process.stderr.write(`Invalid log level: '${values["log-level"]}' (expected one of: debug, info, warn, error)\n`);
+      showHelp();
+      return;
+    }
     logger.level = values["log-level"] as LogLevel;
   }
   if (values.json) {

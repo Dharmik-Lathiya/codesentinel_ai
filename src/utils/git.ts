@@ -152,7 +152,13 @@ async function readContent(full: string): Promise<string> {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
+  let text: string;
+  try {
+    text = await readFile(full, { encoding: "utf8" });
+  } catch (err) {
+    logger.debug(`Could not read content: ${full}`, err);
+    return "";
+  }
   if (text.includes("\0")) {
     logger.debug(`Skipping binary file content: ${full}`);
     return "";
@@ -166,16 +172,49 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
+    try {
       if (await refExists(remoteBase, cwd)) return remoteBase;
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    } catch (err) {
+      logger.debug(`Failed to resolve PR base ref "${githubBaseRef}"`, err);
+    }
   }
 
-  const candidates = ["origin/main", "origin/master", "main", "master"];
-  for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+  // Prefer the remote's configured default branch, then known defaults.
+  const remoteHead = await defaultRemoteBranch(cwd);
+  const candidates = [
+    ...(remoteHead ? [remoteHead] : []),
+    "origin/main",
+    "origin/master",
+    "origin/develop",
+    "main",
+    "master",
+    "develop",
+  ];
+  for (const ref of new Set(candidates)) {
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch (err) {
+      logger.debug(`Failed to resolve ref "${ref}"`, err);
+    }
   }
   // No base ref found: fall back to a plain working-tree diff.
   return undefined;
+}
+
+async function defaultRemoteBranch(cwd: string): Promise<string | undefined> {
+  try {
+    const name = await git(
+      ["rev-parse", "--abbrev-ref", "refs/remotes/origin/HEAD"],
+      cwd,
+      { quiet: true },
+    );
+    const ref = name.trim();
+    return ref && ref !== "refs/remotes/origin/HEAD" ? ref : undefined;
+  } catch (err) {
+    logger.debug("Could not resolve default remote branch", err);
+    return undefined;
+  }
 }
 
 async function refExists(ref: string, cwd: string): Promise<boolean> {
