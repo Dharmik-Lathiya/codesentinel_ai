@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -35,7 +35,7 @@ export async function runAction(): Promise<void> {
     use_opencode_cli: get("use_opencode_cli"),
   };
 
-  const useOpencodeCliFlag = inputs.use_opencode_cli === "true";
+  const useOpencodeCliFlag = inputs.use_opencode_cli !== "false";
   const opencodeVersion = get("opencode_version") || "latest";
 
   // When the OpenCode CLI mode is requested, install the binary (or use cached)
@@ -62,7 +62,7 @@ export async function runAction(): Promise<void> {
   }
 
   // Build config overrides from all inputs (including use_opencode_cli)
-  const configOverrides = configFromInputs({ ...inputs, use_opencode_cli: useOpencodeCliFlag ? "true" : undefined });
+  const configOverrides = configFromInputs({ ...inputs, use_opencode_cli: inputs.use_opencode_cli });
 
   const secrets: RuntimeSecrets = {
     github_token: process.env.GITHUB_TOKEN,
@@ -112,7 +112,15 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, aut
   const pullNumber = process.env.GITHUB_PR_NUMBER
     ? Number(process.env.GITHUB_PR_NUMBER)
     : undefined;
-  const headSha = process.env.GITHUB_SHA;
+  let headSha = process.env.GITHUB_SHA;
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (eventPath && process.env.GITHUB_EVENT_NAME?.startsWith("pull_request")) {
+    try {
+      headSha = JSON.parse(readFileSync(eventPath, "utf8")).pull_request?.head?.sha ?? headSha;
+    } catch {
+      // fall back to GITHUB_SHA on parse failure
+    }
+  }
 
   if (secrets.github_token && owner && repo) {
     const reporter = new GitHubReporter({ token: secrets.github_token, owner, repo, pullNumber });
