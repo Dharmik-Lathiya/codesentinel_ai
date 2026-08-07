@@ -10,6 +10,7 @@ const VAGUE_PHRASES = [
 ];
 
 const MIN_MESSAGE_LENGTH = 15;
+const MAX_VERIFY_TOKENS = 1024;
 
 export interface VerifyOptions {
   aiHub?: AIHub;
@@ -39,7 +40,7 @@ function applyRuleBasedFilter(findings: Issue[]): Issue[] {
 function buildAiPrompt(findings: Issue[]): string {
   const lines = findings.map(
     (f, i) =>
-      `${i}: [${f.severity}] ${f.file}:${f.line} — ${f.message}`,
+      `${i}: [${f.severity}] file=${JSON.stringify(f.file)} line=${f.line} message=${JSON.stringify(f.message)}`,
   );
   return [
     "You are verifying code review findings. Return a JSON array of indices that represent genuine, actionable issues worth reporting.",
@@ -61,7 +62,7 @@ function parseAiResponse(
         (i): i is number =>
           typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
       );
-      return indices.length > 0 ? indices : null;
+      return indices;
     }
   } catch {
     // fall through
@@ -76,7 +77,7 @@ function parseAiResponse(
           (i): i is number =>
             typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
         );
-        return indices.length > 0 ? indices : null;
+        return indices;
       }
     } catch {
       // fall through
@@ -97,7 +98,7 @@ async function aiVerify(
     result = await aiHub.complete(
       "review",
       [{ role: "user", content: prompt }],
-      { maxTokens: 1024 },
+  { maxTokens: MAX_VERIFY_TOKENS },
     );
   } catch {
     return afterRules;
@@ -106,7 +107,7 @@ async function aiVerify(
   const indices = parseAiResponse(result.content, afterRules.length);
   if (indices === null) return afterRules;
 
-  return indices.map((i) => afterRules[i]);
+  return [...new Set(indices)].map((i) => afterRules[i]);
 }
 
 export async function verifyFindings(
