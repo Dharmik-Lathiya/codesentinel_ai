@@ -98,12 +98,19 @@ export class LearningCache {
 
   private withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(key) ?? Promise.resolve();
-    const timedFn = () => {
-      let timer: ReturnType<typeof setTimeout>;
+const timedFn = () => {
+      // Waiter-side timeout only: on expiry the waiter rejects, but the
+      // underlying fn() work keeps running (not cancelled).
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Lock timeout for key: ${key}`)), LearningCache.LOCK_TIMEOUT);
+        timer = setTimeout(
+          () => reject(new Error(`Lock timeout for key: ${key}`)),
+          LearningCache.LOCK_TIMEOUT
+        );
       });
-      return Promise.race([fn(), timeout]).finally(() => clearTimeout(timer));
+      return Promise.race([fn(), timeout]).finally(() => {
+        if (timer) clearTimeout(timer);
+      });
     };
     const next = prev.then(timedFn, timedFn);
     this.locks.set(key, next);
