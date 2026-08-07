@@ -150,7 +150,7 @@ export class Scorer {
       fileCount++;
       const lines = content.split("\n");
       const commentLines = lines.filter(
-        (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
+		(l) => /^\s*(\/\/|#|\/\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > 120).length;

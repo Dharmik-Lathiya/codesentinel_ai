@@ -34,7 +34,7 @@ export function buildSuggestionsComment(
         const context = ctxBefore ? ctxBefore + "\n" : "";
         const after = ctxAfter ? ctxAfter : "";
         const original = lines[f.line - 1];
-        const code = suggested || `${context}  // ${comment}\n${original}\n${after}`;
+const code = suggested ? `// ${original}\n${suggested}` : `${context}  // ${comment}\n${original}\n${after}`;
         parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()} — ${comment}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
         continue;
       }
