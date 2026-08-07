@@ -23,10 +23,24 @@ export interface MCPContextEntry {
 
 export class MCPManager {
   private clients = new Map<string, Client>();
+  private toolsCache = new Map<string, Array<{ name: string }>>();
+  private static shutdownRegistered = false;
   private configs: MCPServerConfig[];
 
   constructor(configs: MCPServerConfig[] = []) {
     this.configs = configs;
+    this.registerShutdown();
+  }
+
+  private registerShutdown(): void {
+    if (MCPManager.shutdownRegistered) return;
+    MCPManager.shutdownRegistered = true;
+    const dispose = async (): Promise<void> => {
+      try { await this.disconnectAll(); } catch { /* ignore */ }
+    };
+    process.on("beforeExit", () => { void dispose(); });
+    process.on("SIGINT", () => { void dispose(); });
+    process.on("SIGTERM", () => { void dispose(); });
   }
 
   async connectAll(): Promise<void> {
@@ -55,6 +69,10 @@ export class MCPManager {
   }
 
   async connect(cfg: MCPServerConfig): Promise<void> {
+    if (this.clients.has(cfg.name)) {
+      logger.warn(`MCP: duplicate config "${cfg.name}" ignored`);
+      return;
+    }
     try {
       const client = new Client(
         { name: "codesentinel", version: "1.0.0" },
@@ -87,18 +105,28 @@ export class MCPManager {
   private async queryClientTools(serverName: string, client: Client, prompt: string): Promise<MCPContextEntry[]> {
     const entries: MCPContextEntry[] = [];
     try {
-      const tools = await client.listTools();
-      for (const tool of tools.tools) {
-        if (tool.name.includes("search") || tool.name.includes("query") || tool.name.includes("docs")) {
+      const tools = await this.getToolList(serverName, client);
+      const keywords = ["search", "query", "docs"];
+      for (const tool of tools) {
+        if (keywords.some((k) => tool.name.includes(k))) {
           const result = await client.callTool({ name: tool.name, arguments: { query: prompt } });
           const content = JSON.stringify(result.content ?? "");
-          entries.push({ serverName, content, relevance: 1 });
+          const relevance = 1 + keywords.filter((k) => tool.name.includes(k)).length * 0.5;
+          entries.push({ serverName, content, relevance });
         }
       }
     } catch (err) {
       logger.warn(`MCP: query error on "${serverName}": ${err}`);
     }
     return entries;
+  }
+
+  private async getToolList(serverName: string, client: Client): Promise<Array<{ name: string }>> {
+    const cached = this.toolsCache.get(serverName);
+    if (cached) return cached;
+    const tools = await client.listTools();
+    this.toolsCache.set(serverName, tools.tools);
+    return tools.tools;
   }
 
   async queryContext(prompt: string, maxTokens = DEFAULT_QUERY_MAX_TOKENS): Promise<MCPContextEntry[]> {
@@ -113,12 +141,14 @@ export class MCPManager {
   private async getClientLibraryDocs(serverName: string, client: Client, library: string): Promise<MCPContextEntry[]> {
     const entries: MCPContextEntry[] = [];
     try {
-      const tools = await client.listTools();
-      for (const tool of tools.tools) {
-        if (tool.name.toLowerCase().includes("docs") || tool.name.toLowerCase().includes("context")) {
+      const tools = await this.getToolList(serverName, client);
+      for (const tool of tools) {
+        const name = tool.name.toLowerCase();
+        const matchesLibrary = name.includes(library.toLowerCase()) || name.includes("docs") || name.includes("context");
+        if (matchesLibrary) {
           const result = await client.callTool({ name: tool.name, arguments: { library } });
           const content = JSON.stringify(result.content ?? "");
-          entries.push({ serverName, content, relevance: 0.8 });
+          entries.push({ serverName, content, relevance: name.includes(library.toLowerCase()) ? 1 : 0.8 });
         }
       }
     } catch { /* skip */ }
@@ -141,7 +171,8 @@ export class MCPManager {
     let total = 0;
     const result: MCPContextEntry[] = [];
     for (const e of sorted) {
-      const tokens = e.content.length / 4;
+      // Heuristic: ~4 chars per token. Precise needs a tokenizer (whitespace/CJK-heavy content skews this).
+      const tokens = e.content.replace(/\s+/g, "").length / 4;
       if (total + tokens > maxTokens) break;
       total += tokens;
       result.push(e);
