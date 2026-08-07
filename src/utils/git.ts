@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -27,6 +27,9 @@ export async function git(
     return stdout;
   } catch (err) {
     const timedOut =
+      err instanceof Error &&
+      ((err as { killed?: boolean }).killed === true ||
+        (err as { signal?: string }).signal === "SIGTERM");
       err instanceof Error && (err as { killed?: boolean }).killed === true;
     const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
@@ -119,6 +122,14 @@ export async function collectDiff(
         continue;
       }
       try {
+        const [realRoot, realFull] = await Promise.all([
+          realpath(workspaceRoot),
+          realpath(full),
+        ]);
+        if (realFull !== realRoot && !realFull.startsWith(realRoot + "-")) {
+          logger.warn(`Skipping symlink path outside workspace: ${path}`);
+          continue;
+        }
         content = await readContent(full);
       } catch {
         logger.debug(`Could not read content for ${path}`);
@@ -141,7 +152,7 @@ function splitDiffByPath(diffText: string): Map<string, string> {
     const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
     if (!match) continue;
     const path = match[2] === "dev/null" ? match[1] : match[2];
-    byPath.set(path, part);
+    byPath.set(path, (byPath.get(path) ?? "") + part);
   }
   return byPath;
 }
@@ -166,8 +177,11 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    logger.warn(
+      `GITHUB_BASE_REF "${githubBaseRef}" could not be resolved: neither ${remoteBase} nor ${githubBaseRef} exists. Falling back to default base.`,
+    );
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
