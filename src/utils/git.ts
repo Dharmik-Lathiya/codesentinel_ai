@@ -147,35 +147,59 @@ function splitDiffByPath(diffText: string): Map<string, string> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
-  if (fileStat.size > MAX_CONTENT_BYTES) {
-    logger.debug(`Skipping oversized file content: ${full}`);
+  try {
+    const fileStat = await stat(full);
+    if (fileStat.size > MAX_CONTENT_BYTES) {
+      logger.debug(`Skipping oversized file content: ${full}`);
+      return "";
+    }
+    const text = await readFile(full, { encoding: "utf8" });
+    if (text.includes("\0")) {
+      logger.debug(`Skipping binary file content: ${full}`);
+      return "";
+    }
+    return text;
+  } catch {
+    logger.debug(`Failed to read content for ${full}`);
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
-  if (text.includes("\0")) {
-    logger.debug(`Skipping binary file content: ${full}`);
-    return "";
-  }
-  return text;
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
+  const currentBranch = await currentBranchRef(cwd);
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    if (remoteBase !== currentBranch && (await refExists(remoteBase, cwd))) {
+      return remoteBase;
+    }
+    if (githubBaseRef !== currentBranch && (await refExists(githubBaseRef, cwd))) {
+      return githubBaseRef;
+    }
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    if (ref !== currentBranch && (await refExists(ref, cwd))) {
+      return ref;
+    }
   }
   // No base ref found: fall back to a plain working-tree diff.
   return undefined;
+}
+
+async function currentBranchRef(cwd: string): Promise<string | undefined> {
+  try {
+    const out = await git(["rev-parse", "--abbrev-ref", "HEAD"], cwd, {
+      quiet: true,
+    });
+    const ref = out.trim();
+    return ref && ref !== "HEAD" ? ref : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function refExists(ref: string, cwd: string): Promise<boolean> {

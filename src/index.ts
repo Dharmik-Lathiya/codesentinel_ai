@@ -537,7 +537,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -576,7 +576,13 @@ async function main(): Promise<void> {
   if (args[0] === "init-hook") {
     const root = process.cwd();
     const typeIdx = args.indexOf("--type");
-    const hookType = typeIdx >= 0 && args[typeIdx + 1] === "post-commit" ? "post-commit" : "pre-commit";
+    const rawType = typeIdx >= 0 ? args[typeIdx + 1] : undefined;
+    if (rawType !== undefined && rawType !== "pre-commit" && rawType !== "post-commit") {
+      process.stderr.write(`Unknown hook type '${rawType}'. Valid types: pre-commit, post-commit.\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const hookType = rawType ?? "pre-commit";
     const hookPath = installHook(root, hookType);
     process.stdout.write(`✅ ${hookType} hook installed at ${hookPath}\n`);
     if (hookType === "post-commit") {
@@ -753,6 +759,11 @@ async function main(): Promise<void> {
     };
   }
   if (values["dry-run"]) overrides.enable_auto_fix = false;
+  if (values.json && values.jsonl) {
+    process.stderr.write("ERROR: --json and --jsonl are mutually exclusive. Please choose one output format.\n");
+    process.exitCode = 1;
+    return;
+  }
   if (values.jsonl) overrides.jsonl_output = true;
   if (values.mcp) overrides.mcp = mergeOverride(overrides.mcp, { enabled: true });
   if (values["learning-db"]) {
