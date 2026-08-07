@@ -25,7 +25,7 @@ export const WEIGHTS = {
   test_coverage: TEST_COVERAGE_WEIGHT,
 } as const;
 
-const MAX_SCORE = 100;
+export const MAX_SCORE = 100;
 
 const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
 
@@ -56,11 +56,11 @@ export class Scorer {
   ): ScoreBreakdown {
     const securityPenalty = findings
       .filter((f) => f.category === "security")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity], 0);
+.reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0), 0);
 
     const smellPenalty = findings
       .filter((f) => f.category === "smell" || f.category === "style")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity] / 2, 0);
+.reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0) / 2, 0);
 
     const security = clamp(MAX_SCORE - securityPenalty);
     const maintainability = clamp(MAX_SCORE - smellPenalty);
@@ -150,31 +150,35 @@ export class Scorer {
       fileCount++;
       const lines = content.split("\n");
       const commentLines = lines.filter(
-        (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
+(l) => /^\s*(\/\/|\/\*|\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > 120).length;
       const score = 100 - longLines * 2 + commentRatio * 20;
       total += Math.max(20, score);
     }
-    return fileCount ? total / fileCount : 100;
+return fileCount ? total / fileCount : 0;
   }
 
-  /** Coverage heuristic: fraction of source files that have a related test. */
+/** Coverage heuristic: fraction of source files that have a related test. */
   private coverageMetric(
     files: { path: string; content: string }[],
   ): number {
-    const testPaths = new Set(
-      files
-        .map((f) => f.path)
-        .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
+    const isTest = (p: string) =>
+      /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p);
+    const coverageKey = (p: string): string =>
+      p
+        .replace(/\.(test|spec)\.[jt]sx?$/, "")
+        .replace(/__tests__\//, "")
+        .replace(/\.[jt]sx?$/, "");
+    const testKeys = new Set(
+      files.filter((f) => isTest(f.path)).map((f) => coverageKey(f.path)),
     );
-    const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
-    if (sourceFiles.length === 0) return 100;
+    const sourceFiles = files.filter((f) => !isTest(f.path));
+    if (sourceFiles.length === 0) return 0;
     let covered = 0;
     for (const f of sourceFiles) {
-      const base = f.path.replace(/\.[^.]+$/, "");
-      if ([...testPaths].some((t) => t.startsWith(base))) covered++;
+      if (testKeys.has(coverageKey(f.path))) covered++;
     }
     return (covered / sourceFiles.length) * 100;
   }
