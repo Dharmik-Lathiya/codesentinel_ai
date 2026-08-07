@@ -22,7 +22,7 @@ fi
 
 # Run CodeSentinel gate on staged files
 if command -v codesentinel &> /dev/null; then
-  codesentinel gate --min-score 0 --max-critical 0 --max-high ${DEFAULT_HIGH_SCORE_LIMIT}
+  codesentinel gate --files "$STAGED" --min-score 0 --max-critical 0 --max-high ${DEFAULT_HIGH_SCORE_LIMIT}
   GATE_EXIT=$?
   if [ $GATE_EXIT -ne 0 ]; then
     echo "❌ CodeSentinel: Gate check failed. Fix issues before committing."
@@ -43,8 +43,10 @@ const POST_COMMIT_SCRIPT = `#!/bin/sh
 
 set -e
 
-MAX_ITER=${DEFAULT_MAX_ITERATIONS}
-echo "🔧 CodeSentinel: Running post-commit build check..."
+if [ -n "$CODESENTINEL_SKIP_HOOK" ]; then
+  exit 0
+fi
+
 
 for i in $(seq 1 $MAX_ITER); do
   echo "=== Build-Fix Iteration $i/$MAX_ITER ==="
@@ -71,12 +73,14 @@ for i in $(seq 1 $MAX_ITER); do
   if git diff --cached --quiet; then
     echo "⚠️  No changes produced by fix — continuing"
     continue
+git add -u
+  if git diff --cached --quiet; then
+    echo "❌ No changes produced by fix."
+    exit 1
   fi
 
+  export CODESENTINEL_SKIP_HOOK=1
   git commit -m "CodeSentinel: auto-fix build errors [skip ci]"
-  echo "✅ Fix committed."
-done
-
 echo "❌ Build failed after $MAX_ITER iterations."
 exit 1
 `;
