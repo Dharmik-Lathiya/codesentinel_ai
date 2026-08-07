@@ -199,13 +199,29 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
-    const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const headerEnd = part.indexOf("\n");
+    const header = part.slice(
+      "diff --git ".length,
+      headerEnd === -1 ? undefined : headerEnd,
+    );
+    const path = headerPath(header);
+    if (!path) continue;
     byPath.set(path, part);
   }
   return byPath;
+}
+
+function headerPath(header: string): string | null {
+  const bIdx = header.lastIndexOf(" b/");
+  if (bIdx < 0) return null;
+  const unquote = (s: string) =>
+    s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s;
+  const bPath = unquote(header.slice(bIdx + 3).trim()).replace(/^b\//, "");
+  if (bPath === "dev/null") {
+    const aPath = unquote(header.slice(0, bIdx).trim()).replace(/^a\//, "");
+    return aPath || null;
+  }
+  return bPath || null;
 }
 
 async function readContent(full: string): Promise<string> {
@@ -232,7 +248,7 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
     if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
-  const candidates = ["origin/main", "origin/master", "main", "master"];
+  const candidates = ["origin/main", "origin/master", "origin/develop", "main", "master", "develop"];
   for (const ref of candidates) {
     if (await refExists(ref, cwd)) return ref;
   }
