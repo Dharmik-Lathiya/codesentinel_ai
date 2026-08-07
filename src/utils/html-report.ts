@@ -7,6 +7,7 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: "#2563eb",
   info: "#6b7280",
 };
+const DEFAULT_SEVERITY_COLOR = SEVERITY_COLORS.info;
 
 const BOLD_FONT_WEIGHT = "700";
 const H2_COLOR = "#334155";
@@ -55,7 +56,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const findingsRows = report.findings
     .map((f) => {
-      const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
+      const color = SEVERITY_COLORS[f.severity] ?? DEFAULT_SEVERITY_COLOR;
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
@@ -85,7 +86,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? DEFAULT_SEVERITY_COLOR })),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -149,11 +150,10 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
   if (!score) return "";
   return `
     <div class="card" style="display:flex;align-items:center;gap:1rem">
-      <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
+      <div class="score-ring" style="background:${scoreColor(score.overall)}" role="img" aria-label="Score ${score.overall} (${scoreTier(score.overall)})">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
         <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
-
       </div>
     </div>`;
 }
@@ -168,7 +168,7 @@ function renderBarChart(title: string, items: { key: string; value: number; colo
         const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
         return `<div class="bar">
         <div class="bar-value">${item.value}</div>
-        <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
+        <div class="bar-fill" style="height:${height}%;background:${item.color}" aria-label="${escapeHtml(item.key)}: ${item.value}" title="${escapeHtml(item.key)}: ${item.value}"></div>
         <div class="bar-label">${escapeHtml(item.key)}</div>
       </div>`;
       })
@@ -208,7 +208,7 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-.replace(/'/g, APOSTROPHE_ENTITY);
+    .replace(/'/g, APOSTROPHE_ENTITY);
 }
 
 function scoreColor(score: number): string {
@@ -216,4 +216,11 @@ function scoreColor(score: number): string {
   if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
   if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
   return "#dc2626";
+}
+
+function scoreTier(score: number): string {
+  if (score >= SCORE_GREEN_THRESHOLD) return "high";
+  if (score >= SCORE_ORANGE_THRESHOLD) return "medium";
+  if (score >= SCORE_RED_THRESHOLD) return "low";
+  return "critical";
 }
