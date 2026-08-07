@@ -46,9 +46,6 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(String(HTTP_STATUS_RATE_LIMIT)) ||
-      msg.includes(String(HTTP_STATUS_SERVICE_UNAVAILABLE)) ||
-      msg.includes(String(HTTP_STATUS_BAD_GATEWAY)) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
