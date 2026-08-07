@@ -1,6 +1,7 @@
 import { logger } from "./logger.js";
 
 const MILLISECONDS_PER_SECOND = 1000;
+const DEFAULT_MAX_DELAY_MS = 10 * MILLISECONDS_PER_SECOND;
 const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
 const HTTP_STATUS_RATE_LIMIT = 429;
 const HTTP_STATUS_SERVICE_UNAVAILABLE = 503;
@@ -19,7 +20,7 @@ export interface RetryOptions {
    * Default: 1000ms (`DEFAULT_BASE_DELAY_MS`).
    */
   baseDelayMs?: number;
-  /** Max delay in ms for a single retry (cap on exponential backoff). Default: unbounded (grows with attempts). */
+/** Max delay in ms for a single retry (cap on exponential backoff). Default: 10s (`DEFAULT_MAX_DELAY_MS`). */
   maxDelayMs?: number;
   /**
    * Optional predicate: return true to retry on this error.
@@ -69,7 +70,7 @@ export async function retry<T>(
   const maxAttempts = opts.maxAttempts ?? 3;
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
-  const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, maxAttempts - 1);
+const maxDelayMs = opts.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
