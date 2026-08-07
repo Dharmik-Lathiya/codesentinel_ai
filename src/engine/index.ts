@@ -36,6 +36,16 @@ import { LearningStore } from "../learning/store.js";
 import { EventBus } from "../event-bus/bus.js";
 import { parseJsonlString, validateAndNormalize, buildInlineComments } from "../jsonl-parser.js";
 import { groupIntoBatches } from "./batcher.js";
+/** Max file characters included in a fix prompt to the AI provider. */
+const MAX_FIX_FILE_CHARS = 30000;
+/** Max AI response characters shown in log previews. */
+const MAX_RESPONSE_PREVIEW_CHARS = 500;
+/** Timeout (ms) for git / build / verification subprocesses. */
+const SUBPROCESS_TIMEOUT_MS = 30000;
+/** Timeout (ms) for git push subprocess. */
+const PUSH_TIMEOUT_MS = 60000;
+/** Max characters of repository snapshot/code context sent to the AI. */
+const MAX_CONTEXT_CHARS = 60000;
 
 /** A comment to post back to a PR (inline or summary). */
 export interface ReviewComment {
@@ -861,14 +871,14 @@ export class Engine {
       execFileSync("git", ["config", "user.name", "CodeSentinel Bot"], { cwd: this.root, stdio: "pipe" });
       execFileSync("git", ["commit", "-m", msg], { cwd: this.root, stdio: "pipe" });
       try {
-        execFileSync("git", ["fetch", "origin", target], { cwd: this.root, stdio: "pipe", timeout: 30000 });
-        execFileSync("git", ["rebase", `origin/${target}`], { cwd: this.root, stdio: "pipe", timeout: 30000 });
+        execFileSync("git", ["fetch", "origin", target], { cwd: this.root, stdio: "pipe", timeout: SUBPROCESS_TIMEOUT_MS });
+        execFileSync("git", ["rebase", `origin/${target}`], { cwd: this.root, stdio: "pipe", timeout: SUBPROCESS_TIMEOUT_MS });
       } catch {
         logger.warn(`pushFixes: rebase failed for ${target}, will push to fix branch instead`);
         target = `codesentinel/fix-${Date.now()}`;
         execFileSync("git", ["checkout", "-b", target], { cwd: this.root, stdio: "pipe" });
       }
-      execFileSync("git", ["push", "origin", `HEAD:${target}`, "--set-upstream"], { cwd: this.root, stdio: "pipe", timeout: 60000 });
+      execFileSync("git", ["push", "origin", `HEAD:${target}`, "--set-upstream"], { cwd: this.root, stdio: "pipe", timeout: PUSH_TIMEOUT_MS });
       logger.info(`pushFixes: pushed ${fileArray.length} file(s) to ${target}`);
       return target;
     } catch (err) {
@@ -926,9 +936,8 @@ export class Engine {
 
     const numberedContent = content.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
     const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
-    const MAX_FILE_CHARS = 30000;
-    const truncatedContent = redactedContent.length > MAX_FILE_CHARS
-      ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FILE_CHARS} chars]`
+    const truncatedContent = redactedContent.length > MAX_FIX_FILE_CHARS
+      ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FIX_FILE_CHARS)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FIX_FILE_CHARS} chars]`
       : redactedContent;
 
     const prompt = `You are an expert engineer fixing an issue in ${finding.file}.
@@ -964,7 +973,7 @@ Suggestion: ${finding.suggestion ?? ""}
         { role: "user", content: prompt + (attempt > 0 ? "\n\nIMPORTANT: You MUST output ONLY valid JSON. No explanations, no markdown, no extra text. The JSON must parse correctly." : "") },
       ], { responseFormat: "json_object" });
 
-      const snippet = res.content.length > 500 ? res.content.slice(0, 500) + "..." : res.content;
+      const snippet = res.content.length > MAX_RESPONSE_PREVIEW_CHARS ? res.content.slice(0, MAX_RESPONSE_PREVIEW_CHARS) + "..." : res.content;
       logger.info(`applyFix[${iteration}]: AI response len=${res.content.length} preview=${JSON.stringify(snippet)}`);
 
       parsed = extractJson<{ fixed: boolean; explanation: string; hunks: Hunk[] }>(res.content);
@@ -1034,9 +1043,8 @@ Suggestion: ${finding.suggestion ?? ""}
     const numberedContent = content.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
     const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
 
-    const MAX_FILE_CHARS = 30000;
-    const truncatedContent = redactedContent.length > MAX_FILE_CHARS
-      ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FILE_CHARS} chars]`
+    const truncatedContent = redactedContent.length > MAX_FIX_FILE_CHARS
+      ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FIX_FILE_CHARS)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FIX_FILE_CHARS} chars]`
       : redactedContent;
 
     const prompt = `You are an expert engineer fixing ${findings.length} issue(s) in ${filePath}.
@@ -1068,7 +1076,7 @@ ${issuesMd}
         { role: "user", content: prompt + (attempt > 0 ? "\n\nIMPORTANT: You MUST output ONLY valid JSON. No explanations, no markdown, no extra text. The JSON must parse correctly." : "") },
       ], { responseFormat: "json_object" });
 
-      const snippet = res.content.length > 500 ? res.content.slice(0, 500) + "..." : res.content;
+      const snippet = res.content.length > MAX_RESPONSE_PREVIEW_CHARS ? res.content.slice(0, MAX_RESPONSE_PREVIEW_CHARS) + "..." : res.content;
       logger.info(`batchApplyFix[${iteration}]: AI response len=${res.content.length} preview=${JSON.stringify(snippet)}`);
 
       parsed = extractJson<{ fixed: boolean; explanation: string; hunks: Hunk[] }>(res.content);
@@ -1117,8 +1125,8 @@ ${issuesMd}
       if (!rawContent.trim()) continue;
       const numberedContent = rawContent.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
       const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
-      const truncatedContent = redactedContent.length > 30000
-        ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", 30000)) + `\n\n// ... [file truncated]`
+      const truncatedContent = redactedContent.length > MAX_FIX_FILE_CHARS
+        ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FIX_FILE_CHARS)) + `\n\n// ... [file truncated]`
         : redactedContent;
       fileEntries.push({ path: filePath, content: truncatedContent, findings });
     }
@@ -1243,7 +1251,7 @@ ${promptBody}
 
     // Run typecheck
     try {
-      execSync("npx tsc --noEmit", { cwd: this.root, stdio: "ignore", timeout: 30000 });
+      execSync("npx tsc --noEmit", { cwd: this.root, stdio: "ignore", timeout: SUBPROCESS_TIMEOUT_MS });
     } catch {
       logger.warn("runVerification: typecheck failed — fix introduced syntax/type errors");
       allPassed = false;
@@ -1292,7 +1300,7 @@ ${promptBody}
     const snapshot = files
       .map((f) => `### ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
       .join("\n\n")
-      .slice(0, 60000); // keep within model limits
+      .slice(0, MAX_CONTEXT_CHARS); // keep within model limits
 
     const prompt = this.prompts.render("audit", {
       project_context: this.config.project_context || "(none)",
@@ -1466,7 +1474,7 @@ ${promptBody}
     const diff = files
       .map((f) => `### ${f.path}${f.diff ? `\n\`\`\`diff\n${f.diff}\n\`\`\`` : ""}`)
       .join("\n\n")
-      .slice(0, 60000);
+      .slice(0, MAX_CONTEXT_CHARS);
 
     const prompt = this.prompts.render("describe", {
       project_context: this.config.project_context || "(none)",
@@ -1619,7 +1627,7 @@ ${promptBody}
   /** AI-powered utility function generation. */
   private async runGenerateUtilities(): Promise<EngineReport> {
     const files = await this.collectedFiles();
-    const code = files.map((f) => `### ${f.path}\n${f.content}`).join("\n\n").slice(0, 60000);
+    const code = files.map((f) => `### ${f.path}\n${f.content}`).join("\n\n").slice(0, MAX_CONTEXT_CHARS);
 
     const prompt = this.prompts.render("generate-utils", {
       project_context: this.config.project_context || "(none)",
@@ -1668,7 +1676,7 @@ ${promptBody}
   /** AI-powered documentation generation. */
   private async runGenerateDocs(): Promise<EngineReport> {
     const files = await this.collectedFiles();
-    const code = files.map((f) => `### ${f.path}\n${f.content}`).join("\n\n").slice(0, 60000);
+    const code = files.map((f) => `### ${f.path}\n${f.content}`).join("\n\n").slice(0, MAX_CONTEXT_CHARS);
 
     const prompt = this.prompts.render("generate-docs", {
       project_context: this.config.project_context || "(none)",
