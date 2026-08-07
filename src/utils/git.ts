@@ -62,7 +62,15 @@ export async function collectDiff(
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
   const baseRef = base ?? (await defaultBaseRef(cwd));
-  const rangeArgs = baseRef ? [baseRef + "..."] : [];
+  const rangeArgs: string[] = [];
+  if (baseRef) {
+    rangeArgs.push(`${baseRef}...`);
+  } else if (!base && (await refExists("HEAD~1", cwd))) {
+    logger.warn(`No base ref found; diffing against the most recent commit (HEAD~1)`);
+    rangeArgs.push("HEAD~1");
+  } else if (!base) {
+    logger.warn(`No base ref or prior commit found; falling back to a working-tree-only diff`);
+  }
   let nameStatus: string;
   try {
     nameStatus = await git(
@@ -166,8 +174,8 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
