@@ -116,46 +116,48 @@ export class LearningCache {
   async get(key: string): Promise<Lesson[]> {
     const entry = await this.backend.get(key);
     if (!entry) return [];
-    entry.lessons.forEach((l) => l.hitCount++);
+    for (const l of entry.lessons) l.hitCount++;
     await this.backend.set(key, entry);
     return entry.lessons.map((l) => ({ ...l }));
+  }
+
+  private async mergeLesson(entry: CacheEntry, lesson: Lesson): Promise<void> {
+    const idx = entry.lessons.findIndex((l) => l.pattern === lesson.pattern);
+    if (idx >= 0) entry.lessons[idx] = lesson;
+    else entry.lessons.push(lesson);
+    entry.updatedAt = new Date().toISOString();
+    try { await this.backend.set(entry.key, entry); } catch { /* ignore */ }
   }
 
   async set(key: string, lesson: Lesson): Promise<void> {
     return this.withLock(key, async () => {
       const existing = await this.backend.get(key);
       if (existing) {
-        const idx = existing.lessons.findIndex((l) => l.pattern === lesson.pattern);
-        if (idx >= 0) {
-          existing.lessons[idx] = lesson;
-        } else {
-          existing.lessons.push(lesson);
-        }
-        existing.updatedAt = new Date().toISOString();
-        try { await this.backend.set(key, existing); } catch { /* ignore */ }
-      } else {
-        const entry: CacheEntry = {
+        await this.mergeLesson(existing, lesson);
+        return;
+      }
+      try {
+        await this.backend.set(key, {
           key,
           lessons: [lesson],
           updatedAt: new Date().toISOString(),
-        };
-        try { await this.backend.set(key, entry); } catch { /* ignore */ }
-      }
+        });
+      } catch { /* ignore */ }
     });
+  }
+
+  private async loadEntry(file: string): Promise<CacheEntry | null> {
+    const key = file.replace(/\.json$/, "");
+    try {
+      return await this.backend.get(key);
+    } catch {
+      return null;
+    }
   }
 
   async getAll(): Promise<Lesson[]> {
     const files: string[] = await this.backend.list().catch(() => []);
-    const entries = await Promise.all(
-      files.map(async (file) => {
-        const key = file.replace(/\.json$/, "");
-        try {
-          return await this.backend.get(key);
-        } catch {
-          return null;
-        }
-      })
-    );
+    const entries = await Promise.all(files.map((file) => this.loadEntry(file)));
     const lessons: Lesson[] = [];
     for (const entry of entries) {
       if (entry) lessons.push(...entry.lessons.map((l) => ({ ...l })));
@@ -173,16 +175,7 @@ export class LearningCache {
 
   async getStats(): Promise<{ totalEntries: number; totalLessons: number }> {
     const files = await this.backend.list();
-    const entries = await Promise.all(
-      files.map(async (file) => {
-        const key = file.replace(/\.json$/, "");
-        try {
-          return await this.backend.get(key);
-        } catch {
-          return null;
-        }
-      })
-    );
+    const entries = await Promise.all(files.map((file) => this.loadEntry(file)));
     let totalLessons = 0;
     for (const entry of entries) {
       if (entry) totalLessons += entry.lessons.length;
