@@ -8,7 +8,7 @@ interface SarifResult {
   locations: Array<{
     physicalLocation: {
       artifactLocation: { uri: string };
-      region?: { startLine: number };
+    region?: { startLine: number; endLine: number };
     };
   }>;
 }
@@ -60,7 +60,7 @@ function createSarifLocation(file: string, line?: number): SarifResult["location
   return {
     physicalLocation: {
       artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      ...(line != null && line > 0 ? { region: { startLine: line, endLine: line } } : {}),
     },
   };
 }
