@@ -103,6 +103,7 @@ export async function collectDiff(
   const diffByPath = splitDiffByPath(diffText);
 
   const files: DiffFile[] = [];
+  const contentReads = new Map<string, Promise<string>>();
   const nameStatusEntries = nameStatus.split("\0");
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
@@ -110,7 +111,6 @@ export async function collectDiff(
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
-    let content = "";
     if (status !== "deleted") {
       const full = resolve(workspaceRoot, path);
       const rel = relative(workspaceRoot, full);
@@ -118,18 +118,26 @@ export async function collectDiff(
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
+      contentReads.set(
+        path,
+        readContent(full).catch(() => {
+          logger.debug(`Could not read content for ${path}`);
+          return "";
+        }),
+      );
     }
     const diff = diffByPath.get(path) ?? "";
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
-    files.push({ path, status, content, diff });
+    files.push({ path, status, content: "", diff });
   }
+  const contents = await Promise.all(
+    files.map((file) => contentReads.get(file.path) ?? Promise.resolve("")),
+  );
+  contents.forEach((content, index) => {
+    files[index].content = content;
+  });
   return files;
 }
 
@@ -140,7 +148,7 @@ function splitDiffByPath(diffText: string): Map<string, string> {
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
     const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
     if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const path = match[2];
     byPath.set(path, part);
   }
   return byPath;
@@ -170,7 +178,7 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
-  const candidates = ["origin/main", "origin/master", "main", "master"];
+  const candidates = ["origin/main", "origin/master", "origin/develop", "main", "master", "develop"];
   for (const ref of candidates) {
     if (await refExists(ref, cwd)) return ref;
   }
