@@ -8,6 +8,7 @@ const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
+const DECIMAL_SAMPLE_VALUE = -7.25;
 
 /**
  * Scales the input by a fixed multiplier.
@@ -84,7 +85,7 @@ describe("processData", () => {
   test('negative and decimal values are preserved', () => {
     expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
   });
-
+    expect(processData('{\"value\":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
   test('whitespace-padded JSON is parsed', () => {
     expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
   });
