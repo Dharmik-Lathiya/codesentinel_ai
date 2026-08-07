@@ -747,19 +747,19 @@ export class Engine {
       if (singlePassAttempts.length > 0) {
         for (const attempt of singlePassAttempts) {
           allFixAttempts.push(attempt);
-          if (attempt.fixed === true && this.config.enable_auto_fix && !this.config.dry_run) {
-            modifiedFiles.add(attempt.file);
-            anyFixed = true;
-          }
+          if (!(attempt.fixed === true && this.config.enable_auto_fix && !this.config.dry_run)) continue;
+          modifiedFiles.add(attempt.file);
+          anyFixed = true;
         }
       } else {
         // Fall back to per-file batching
         const MAX_FINDINGS_PER_FILE = 5;
         const groups: [string, Finding[]][] = [];
         for (const [filePath, findings] of fileGroups) {
-          for (let pos = 0; pos < findings.length; pos += MAX_FINDINGS_PER_FILE) {
-            groups.push([filePath, findings.slice(pos, pos + MAX_FINDINGS_PER_FILE)]);
-          }
+          const steps = Math.ceil(findings.length / MAX_FINDINGS_PER_FILE);
+          Array.from({ length: steps }, (_, i) =>
+            [filePath, findings.slice(i * MAX_FINDINGS_PER_FILE, (i + 1) * MAX_FINDINGS_PER_FILE)] as [string, Finding[]],
+          ).forEach((group) => groups.push(group));
         }
         const PHASE_SIZE = 5;
         for (let phase = 0; phase < groups.length; phase += PHASE_SIZE) {
@@ -785,10 +785,9 @@ export class Engine {
           }, 3);
           for (const attempt of batchResults as FixAttempt[]) {
             allFixAttempts.push(attempt);
-            if (attempt.fixed === true && this.config.enable_auto_fix && !this.config.dry_run) {
-              modifiedFiles.add(attempt.file);
-              anyFixed = true;
-            }
+            if (!(attempt.fixed === true && this.config.enable_auto_fix && !this.config.dry_run)) continue;
+            modifiedFiles.add(attempt.file);
+            anyFixed = true;
           }
           if (modifiedFiles.size > 0 && phase + PHASE_SIZE < groups.length) {
             const branch = await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)}`);
@@ -1185,8 +1184,9 @@ ${promptBody}
         writeFileSync(absPath, originalContent, "utf8");
         allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "Fix failed verification, rolled back", verified: false, newIssuesIntroduced: [] });
       } else {
-        const newIssues = this.analyzer.analyzeMany([{ path: ff.file, content: fixedContent }])
-          .filter((f) => !fileGroups.get(ff.file)?.some((of) => `${of.category}:${of.line}:${of.comment}` === `${f.category}:${f.line}:${f.comment}`));
+          const originalKeys = new Set((fileGroups.get(ff.file) ?? []).map((of) => `${of.category}:${of.line}:${of.comment}`));
+          const newIssues = this.analyzer.analyzeMany([{ path: ff.file, content: fixedContent }])
+            .filter((f) => !originalKeys.has(`${f.category}:${f.line}:${f.comment}`));
         allFixes.push({ iteration: 0, file: ff.file, fixed: true, explanation: ff.explanation, verified, newIssuesIntroduced: newIssues });
       }
     }
@@ -1203,15 +1203,12 @@ ${promptBody}
       let success = false;
       for (let attempt = 1; attempt <= maxFixesPerFinding; attempt++) {
         try {
-          const result = await this.applyFix(finding, attempt);
-          allFixAttempts.push(result);
-          if (result.fixed && result.verified) {
-            modifiedFiles.add(finding.file);
+          const blindResult = await this.applyFix(finding, attempt);
+          allFixAttempts.push(blindResult);
+          if (blindResult.fixed) modifiedFiles.add(finding.file);
+          if (blindResult.fixed && blindResult.verified) {
             success = true;
             break;
-          }
-          if (result.fixed) {
-            modifiedFiles.add(finding.file);
           }
         } catch (err) {
           allFixAttempts.push({
