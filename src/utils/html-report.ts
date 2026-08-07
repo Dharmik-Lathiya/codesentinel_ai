@@ -11,11 +11,13 @@ const SEVERITY_COLORS: Record<string, string> = {
 const BOLD_FONT_WEIGHT = "700";
 const H2_COLOR = "#334155";
 const SHADOW_ALPHA = "0.08";
+// Percentage scale of the tallest bar; matches the 120px .bar-chart height.
 const BAR_HEIGHT_PERCENT = 100;
 const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
 const SCORE_RED_THRESHOLD = 40;
 const APOSTROPHE_ENTITY = "&#39;";
+const DEFAULT_SEVERITY_COLOR = "#6b7280";
 const REPORT_STYLES = `  <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
@@ -55,7 +57,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const findingsRows = report.findings
     .map((f) => {
-      const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
+      const color = SEVERITY_COLORS[f.severity] ?? DEFAULT_SEVERITY_COLOR;
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
@@ -85,7 +87,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? DEFAULT_SEVERITY_COLOR })),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -214,6 +216,6 @@ function escapeHtml(s: string): string {
 function scoreColor(score: number): string {
   if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
   if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
-  if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
+  if (score >= SCORE_RED_THRESHOLD) return "#ca8a04";
   return "#dc2626";
 }
