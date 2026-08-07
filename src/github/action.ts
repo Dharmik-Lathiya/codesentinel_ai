@@ -11,6 +11,56 @@ import { setupOpenCode } from "../opencode/installer.js";
 const MAX_SCORE = 100;
 const MAX_CHECKRUN_ANNOTATIONS = 50;
 
+function prependToPath(dir: string): void {
+  const existingPath = process.env.PATH ?? "";
+  if (!existingPath.split(":").includes(dir)) {
+    process.env.PATH = `${dir}:${existingPath}`;
+  }
+}
+
+async function setupCliEnvironment(useOpencodeCliFlag: boolean, opencodeVersion: string): Promise<void> {
+  if (useOpencodeCliFlag) {
+    try {
+      const { binaryPath } = await setupOpenCode(opencodeVersion);
+      prependToPath(dirname(binaryPath));
+      logger.info(`action: OpenCode CLI installed at ${binaryPath}`);
+    } catch (err) {
+      logger.warn(`action: OpenCode CLI install failed (${err}), continuing without it`);
+    }
+  } else {
+    prependToPath(`${process.env.HOME ?? homedir()}/.codesentinel/bin`);
+  }
+}
+
+async function postToGitHub(report: EngineReport, secrets: RuntimeSecrets, autoMerge: boolean): Promise<void> {
+  const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
+  const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
+  const pullNumber = process.env.GITHUB_PR_NUMBER ? Number(process.env.GITHUB_PR_NUMBER) : undefined;
+  const headSha = process.env.GITHUB_SHA;
+
+  if (secrets.github_token && owner && repo) {
+    const reporter = new GitHubReporter({ token: secrets.github_token, owner, repo, pullNumber });
+    await postIssueComments(reporter, report);
+    if (report.mode === "audit") {
+      await postAuditIssues(reporter, report);
+    }
+    if (report.mode === "gate" && headSha && pullNumber) {
+      await postGateResult(reporter, report, headSha, autoMerge, pullNumber);
+    }
+  }
+}
+
+async function writeJobMetrics(report: EngineReport): Promise<void> {
+  const outputPath = process.env.GITHUB_OUTPUT;
+  if (outputPath) {
+    const { appendFileSync } = await import("node:fs");
+    const score = report.score?.overall ?? "n/a";
+    const findings = String(report.findings.length);
+    appendFileSync(outputPath, `score=${score}`);
+    appendFileSync(outputPath, `findings=${findings}`);
+  }
+}
+
 /**
  * GitHub Action entrypoint. Reads inputs from the environment (set by action.yml
  * as INPUT_<NAME>), runs the engine, posts PR comments and writes the job
@@ -40,26 +90,7 @@ export async function runAction(): Promise<void> {
 
   // When the OpenCode CLI mode is requested, install the binary (or use cached)
   // and prepend its directory to PATH so runner.ts can locate it.
-  if (useOpencodeCliFlag) {
-    try {
-      const { binaryPath } = await setupOpenCode(opencodeVersion);
-      const binDir = dirname(binaryPath);
-      const existingPath = process.env.PATH ?? "";
-      if (!existingPath.split(":").includes(binDir)) {
-        process.env.PATH = `${binDir}:${existingPath}`;
-      }
-      logger.info(`action: OpenCode CLI installed at ${binaryPath}`);
-    } catch (err) {
-      logger.warn(`action: OpenCode CLI install failed (${err}), continuing without it`);
-    }
-  } else {
-    // Also prepend the default install dir so system-installed opencode is found
-    const defaultBinDir = `${process.env.HOME ?? homedir()}/.codesentinel/bin`;
-    const existingPath = process.env.PATH ?? "";
-    if (!existingPath.split(":").includes(defaultBinDir)) {
-      process.env.PATH = `${defaultBinDir}:${existingPath}`;
-    }
-  }
+  await setupCliEnvironment(useOpencodeCliFlag, opencodeVersion);
 
   // Build config overrides from all inputs (including use_opencode_cli)
   const configOverrides = configFromInputs({ ...inputs, use_opencode_cli: useOpencodeCliFlag ? "true" : undefined });
@@ -154,21 +185,7 @@ async function postGateResult(reporter: GitHubReporter, report: EngineReport, he
 
 /** Write the step summary + metrics outputs. */
 async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, autoMerge = false): Promise<void> {
-  const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
-  const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
-  const pullNumber = process.env.GITHUB_PR_NUMBER ? Number(process.env.GITHUB_PR_NUMBER) : undefined;
-  const headSha = process.env.GITHUB_SHA;
-
-  if (secrets.github_token && owner && repo) {
-    const reporter = new GitHubReporter({ token: secrets.github_token, owner, repo, pullNumber });
-    await postIssueComments(reporter, report);
-    if (report.mode === "audit") {
-      await postAuditIssues(reporter, report);
-    }
-    if (report.mode === "gate" && headSha && pullNumber) {
-      await postGateResult(reporter, report, headSha, autoMerge, pullNumber);
-    }
-  }
+  await postToGitHub(report, secrets, autoMerge);
 
   // Step summary (rendered in the Actions UI).
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
@@ -176,15 +193,8 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, aut
     writeFileSync(summaryPath, renderSummary(report), "utf8");
   }
 
-  // Metrics as workflow outputs via GITHUB_OUTPUT (legacy ::set-output is deprecated).
-  const outputPath = process.env.GITHUB_OUTPUT;
-  if (outputPath) {
-    const { appendFileSync } = await import("node:fs");
-    const score = report.score?.overall ?? "n/a";
-    const findings = String(report.findings.length);
-    appendFileSync(outputPath, `score=${score}\n`);
-    appendFileSync(outputPath, `findings=${findings}\n`);
-  }
+  // Metrics as workflow outputs via GITHUB_OUTPUT.
+  await writeJobMetrics(report);
 }
 
 function renderSummary(report: EngineReport): string {

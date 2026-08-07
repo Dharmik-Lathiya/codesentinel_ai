@@ -8,6 +8,7 @@ import { logger } from "../utils/logger.js";
 const MAX_PROCESSED_COMMENT_IDS = 10000;
 const KEEP_LAST_PROCESSED_IDS = 5000;
 const MAX_SCORE = 100;
+const ISSUE_BODY_LIMIT = 8000;
 
 const processedCommentIds = new Set<number>();
 
@@ -128,7 +129,7 @@ async function handleIssueOpened(ctx: any): Promise<void> {
   const issueNumber = issue.number;
 
   const title = issue.title;
-  const body = (issue.body || "").slice(0, 8000);
+  const body = (issue.body || "").slice(0, ISSUE_BODY_LIMIT);
 
   // Generate plan using the engine
   const engine = Engine.fromInputs({
@@ -141,8 +142,19 @@ async function handleIssueOpened(ctx: any): Promise<void> {
     root: process.cwd(),
   });
 
-  const reply = await runEngine(engine, { mode: "plan", arg: "" });
-  await postComment(ctx, owner, repo, issueNumber, reply);
+  let reply;
+  try {
+    reply = await runEngine(engine, { mode: "plan", arg: "" });
+  } catch (error) {
+    logger.error(error, "Failed to generate plan on issue opened");
+    reply = "❌ An error occurred while generating the plan.";
+  }
+
+  try {
+    await postComment(ctx, owner, repo, issueNumber, reply);
+  } catch (error) {
+    logger.error(error, "Failed to post plan comment");
+  }
 }
 
 async function handleComment(ctx: any): Promise<void> {
@@ -171,7 +183,7 @@ async function handleComment(ctx: any): Promise<void> {
   if (cmd.mode === "plan") {
     const issue = ctx.payload.issue;
     overrides.issue_title = issue.title;
-    overrides.issue_body = (issue.body || "").slice(0, 8000);
+    overrides.issue_body = (issue.body || "").slice(0, ISSUE_BODY_LIMIT);
   }
 
   const engine = Engine.fromInputs({
@@ -180,8 +192,19 @@ async function handleComment(ctx: any): Promise<void> {
     root: process.cwd(),
   });
 
-  const reply = await runEngine(engine, cmd);
-  await postComment(ctx, owner, repo, issueNumber, reply);
+  let reply;
+  try {
+    reply = await runEngine(engine, cmd);
+  } catch (error) {
+    logger.error(error, "Failed to run engine for command");
+    return;
+  }
+
+  try {
+    await postComment(ctx, owner, repo, issueNumber, reply);
+  } catch (error) {
+    logger.error(error, "Failed to post comment");
+  }
 }
 
 
