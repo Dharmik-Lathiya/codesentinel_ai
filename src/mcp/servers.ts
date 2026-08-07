@@ -6,6 +6,19 @@ const GITHUB_TIMEOUT_SECONDS = 15;
 const CONTEXT7_SERVER_TIMEOUT_MS = CONTEXT7_TIMEOUT_SECONDS * MILLISECONDS_PER_SECOND;
 const GITHUB_TIMEOUT_MS = GITHUB_TIMEOUT_SECONDS * MILLISECONDS_PER_SECOND;
 
+const REDACTED_ENV_KEYS = new Set(["CONTEXT7_API_KEY", "GITHUB_TOKEN"]);
+
+export function redactServerConfig(cfg: MCPServerConfig): MCPServerConfig {
+  if (!cfg.environment) return cfg;
+  const environment = Object.fromEntries(
+    Object.entries(cfg.environment).map(([key, value]) => [
+      key,
+      REDACTED_ENV_KEYS.has(key) ? "<redacted>" : value,
+    ]),
+  );
+  return { ...cfg, environment };
+}
+
 export function context7Server(apiKey?: string): MCPServerConfig {
   return {
     name: "context7",
