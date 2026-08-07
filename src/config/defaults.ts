@@ -3,6 +3,11 @@ const AWS_SECRET_ACCESS_KEY_LENGTH = 40;
 const GITHUB_TOKEN_SUFFIX_LENGTH = 36;
 const SLACK_TOKEN_SUFFIX_LENGTH = 10;
 const JWT_SEGMENT_MIN_LENGTH = 10;
+const NPM_TOKEN_LENGTH = 36;
+const SENDGRID_SEGMENT_1_LENGTH = 22;
+const SENDGRID_SEGMENT_2_LENGTH = 43;
+const TWILIO_ACCOUNT_SID_LENGTH = 32;
+const SQUARE_ACCESS_TOKEN_MIN_LENGTH = 50;
 
 /**
  * Default severity adjustment configuration.
@@ -77,7 +82,7 @@ export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
   { id: "pg-conn-str", name: "PostgreSQL Connection String", regex: "postgres(ql)?://\\w+:\\w+@", severity: "high", message: "Hardcoded PostgreSQL connection string detected.", suggestion: "Use environment variables for database URLs." },
   { id: "redis-conn-str", name: "Redis Connection String", regex: "redis://\\w+:\\w+@", severity: "high", message: "Hardcoded Redis connection string detected.", suggestion: "Use environment variables for Redis URLs." },
   { id: "private-key-header", name: "Private Key Header", regex: "(?i)-----BEGIN\\s+(?:(?:RSA|DSA|EC|OPENSSH)\\s+)?PRIVATE\\s+KEY-----", severity: "critical", message: "Hardcoded private key detected.", suggestion: "Use a secrets manager or environment variables." },
-  { id: "npm-token", name: "npm Token", regex: "(?i)npm[-_]?token\\s*[=:]\\s*['\"][a-f0-9]{36}['\"]", severity: "high", message: "Hardcoded npm token detected.", suggestion: "Use environment variables for npm tokens." },
+  { id: "npm-token", name: "npm Token", regex: "(?i)npm[-_]?token\s*[=:]\s*['\"][a-f0-9]{NPM_TOKEN_LENGTH}['\"]", severity: "high", message: "Hardcoded npm token detected.", suggestion: "Use environment variables for npm tokens." },
   { id: "generic-api-key", name: "Generic API Key", regex: "(?i)(api[-_]?(key|token|secret)|secret[-_]?key)\\s*[=:]\\s*['\"][A-Za-z0-9_\\-]{20,}['\"]", severity: "high", message: "Possible hardcoded API key or secret detected.", suggestion: "Use environment variables or a secrets manager." },
   { id: "google-api-key", name: "Google API Key", regex: "(?i)AIza[0-9A-Za-z\\-_]{35}", severity: "high", message: "Hardcoded Google API key detected.", suggestion: "Use environment variables or Google Cloud IAM." },
   { id: "google-oauth-id", name: "Google OAuth Client ID", regex: "[0-9]+-[0-9A-Za-z_]{32}\\.apps\\.googleusercontent\\.com", severity: "high", message: "Hardcoded Google OAuth client ID detected.", suggestion: "Store client IDs in environment variables." },
@@ -86,12 +91,12 @@ export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
   { id: "mongodb-conn-str", name: "MongoDB Connection String", regex: "mongodb(?:\\+srv)?://[^\\s@]+:[^\\s@]+@", severity: "critical", message: "Hardcoded MongoDB connection string with credentials detected.", suggestion: "Use environment variables for MongoDB URIs." },
   { id: "discord-token", name: "Discord Bot Token", regex: "[MN][A-Za-z0-9_-]{23}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27}", severity: "critical", message: "Hardcoded Discord bot token detected.", suggestion: "Use environment variables for Discord tokens." },
   { id: "telegram-token", name: "Telegram Bot Token", regex: "[0-9]{8,10}:[A-Za-z0-9_-]{35}", severity: "critical", message: "Hardcoded Telegram bot token detected.", suggestion: "Use environment variables for Telegram tokens." },
-  { id: "twilio-account-sid", name: "Twilio Account SID", regex: "(?i)AC[0-9a-f]{32}", severity: "high", message: "Hardcoded Twilio Account SID detected.", suggestion: "Use environment variables for Twilio credentials." },
+  { id: "twilio-account-sid", name: "Twilio Account SID", regex: "(?i)AC[0-9a-f]{TWILIO_ACCOUNT_SID_LENGTH}", severity: "high", message: "Hardcoded Twilio Account SID detected.", suggestion: "Use environment variables for Twilio credentials." },
   { id: "twilio-auth-token", name: "Twilio Auth Token", regex: "(?i)twilio(.{0,20})?(auth|secret|token)\\s*[=:]\\s*['\"][0-9a-f]{32}['\"]", severity: "critical", message: "Hardcoded Twilio auth token detected.", suggestion: "Use environment variables for Twilio credentials." },
   { id: "heroku-api-key", name: "Heroku API Key", regex: "(?i)heroku(.{0,20})?(api[-_]?key|token)\\s*[=:]\\s*['\"][A-Za-z0-9_-]{36,}['\"]", severity: "high", message: "Hardcoded Heroku API key detected.", suggestion: "Use environment variables for Heroku API access." },
   { id: "sendgrid-api-key", name: "SendGrid API Key", regex: "(?i)SG\\.[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}", severity: "critical", message: "Hardcoded SendGrid API key detected.", suggestion: "Use environment variables for SendGrid credentials." },
-  { id: "mailchimp-api-key", name: "Mailchimp API Key", regex: "[0-9a-f]{32}-us[0-9]{1,2}", severity: "high", message: "Hardcoded Mailchimp API key detected.", suggestion: "Use environment variables for Mailchimp API access." },
-  { id: "square-access-token", name: "Square Access Token", regex: "(?i)EAAA[A-Za-z0-9_\\-]{50,}", severity: "critical", message: "Hardcoded Square access token detected.", suggestion: "Use environment variables for Square credentials." },
+  { id: "sendgrid-api-key", name: "SendGrid API Key", regex: "(?i)SG\.[A-Za-z0-9_-]{SENDGRID_SEGMENT_1_LENGTH}\.[A-Za-z0-9_-]{SENDGRID_SEGMENT_2_LENGTH}", severity: "critical", message: "Hardcoded SendGrid API key detected.", suggestion: "Use environment variables for SendGrid credentials." },
+  { id: "square-access-token", name: "Square Access Token", regex: "(?i)EAAA[A-Za-z0-9_\-]{SQUARE_ACCESS_TOKEN_MIN_LENGTH,}", severity: "critical", message: "Hardcoded Square access token detected.", suggestion: "Use environment variables for Square credentials." },
   { id: "pypi-api-token", name: "PyPI API Token", regex: "(?i)pypi[-_]?token\\s*[=:]\\s*['\"]pypi-[A-Za-z0-9_]{36,}['\"]", severity: "high", message: "Hardcoded PyPI API token detected.", suggestion: "Use environment variables for package registry tokens." },
   { id: "docker-hub-token", name: "Docker Hub Token", regex: "(?i)docker[-_]?(hub|token|pat)\\s*[=:]\\s*['\"][A-Za-z0-9_\\-]{36,}['\"]", severity: "high", message: "Hardcoded Docker Hub token detected.", suggestion: "Use Docker Hub credentials via environment variables." },
   { id: "sentry-dsn", name: "Sentry DSN", regex: "https://[0-9a-f]{32}@[a-z0-9]+\\.ingest\\.sentry\\.io", severity: "medium", message: "Sentry DSN exposed.", suggestion: "Sentry DSNs are public but should use environment variables." },
