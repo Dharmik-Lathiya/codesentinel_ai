@@ -16,6 +16,8 @@ const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
 const SCORE_RED_THRESHOLD = 40;
 const APOSTROPHE_ENTITY = "&#39;";
+const FULL_WIDTH_PERCENT = 100;
+const BAR_VALUE_FONT_WEIGHT = "600";
 const REPORT_STYLES = `  <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
@@ -29,31 +31,24 @@ const REPORT_STYLES = `  <style>
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
     .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    table { width: ${FULL_WIDTH_PERCENT}%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
     .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
-    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
+    .bar-fill { width: ${FULL_WIDTH_PERCENT}%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
-    .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .bar-value { font-size: 0.75rem; font-weight: ${BAR_VALUE_FONT_WEIGHT}; margin-bottom: 0.25rem; }
   </style>`;
 
 /**
  * Generate a self-contained HTML dashboard report from an EngineReport.
  * The HTML includes inline CSS and is fully portable (no external deps).
  */
-export function renderHtmlReport(report: EngineReport): string {
-  const categoryCounts: Record<string, number> = {};
-  const severityCounts: Record<string, number> = {};
-  for (const f of report.findings) {
-    categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
-    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
-  }
-
-  const findingsRows = report.findings
+function renderFindingsRows(report: EngineReport): string {
+  return report.findings
     .map((f) => {
       const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
       return `<tr>
@@ -65,8 +60,10 @@ export function renderHtmlReport(report: EngineReport): string {
       </tr>`;
     })
     .join("\n");
+}
 
-  const fixRows = report.fixAttempts
+function renderFixRows(report: EngineReport): string {
+  return report.fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
       const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
@@ -78,10 +75,25 @@ export function renderHtmlReport(report: EngineReport): string {
       </tr>`;
     })
     .join("\n");
+}
 
-  const testRows = report.generatedTests
+function renderTestsRows(report: EngineReport): string {
+  return report.generatedTests
     .map((t) => `<tr><td>${escapeHtml(t.file)}</td><td>${escapeHtml(t.testFilePath)}</td></tr>`)
     .join("\n");
+}
+
+export function renderHtmlReport(report: EngineReport): string {
+  const categoryCounts: Record<string, number> = {};
+  const severityCounts: Record<string, number> = {};
+  for (const f of report.findings) {
+    categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
+    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
+  }
+
+  const findingsRows = renderFindingsRows(report);
+  const fixRows = renderFixRows(report);
+  const testRows = renderTestsRows(report);
 
   const severityChart = renderBarChart(
     "Severity Distribution",
