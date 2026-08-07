@@ -44,8 +44,6 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
-const COMMENT_TRUNCATION_LENGTH = 40;
-
 function simpleHash(s: string): string {
   let hash = 0;
   for (let i = 0; i < s.length; i++) {
@@ -60,7 +58,7 @@ function createSarifLocation(file: string, line?: number): SarifResult["location
   return {
     physicalLocation: {
       artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      ...(line != null && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }
@@ -99,9 +97,13 @@ export function renderSarif(report: EngineReport): string {
         shortDescription: { text: f.comment },
       });
     }
+    const level = SEVERITY_MAP[f.severity];
+    if (level === undefined) {
+      throw new Error(`Unknown severity "${f.severity}" in renderSarif`);
+    }
     results.push({
       ruleId,
-      level: SEVERITY_MAP[f.severity] ?? "note",
+      level,
       message: { text: f.comment },
       locations: [createSarifLocation(f.file, f.line ?? undefined)],
     });
