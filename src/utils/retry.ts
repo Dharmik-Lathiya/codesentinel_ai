@@ -2,12 +2,10 @@ import { logger } from "./logger.js";
 
 const MILLISECONDS_PER_SECOND = 1000;
 const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
-const HTTP_STATUS_429 = "429";
-const HTTP_STATUS_RATE_LIMIT = HTTP_STATUS_429;
-const HTTP_STATUS_503 = "503";
-const HTTP_STATUS_SERVICE_UNAVAILABLE = HTTP_STATUS_503;
-const HTTP_STATUS_502 = "502";
-const HTTP_STATUS_BAD_GATEWAY = HTTP_STATUS_502;
+const HTTP_STATUS_RATE_LIMIT = "429";
+const HTTP_STATUS_SERVICE_UNAVAILABLE = "503";
+const HTTP_STATUS_BAD_GATEWAY = "502";
+const RETRYABLE_STATUS_CODES = new Set([429, 502, 503]);
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -17,7 +15,10 @@ export interface RetryOptions {
    * Default: 1000ms (`DEFAULT_BASE_DELAY_MS`).
    */
   baseDelayMs?: number;
+  /** Max delay in ms for a single retry (cap on exponential backoff). Default: unbounded (grows with attempts). */
+  maxDelayMs?: number;
   /**
+   * Optional predicate: return true to retry on this error.
    * Optional predicate: return true to retry on this error.
    * Note: the default predicate only matches `Error` instances; non-Error
    * throws (strings, plain objects) are never retried.
@@ -25,7 +26,17 @@ export interface RetryOptions {
   shouldRetry?: (err: unknown) => boolean;
 }
 
+const getErrorStatus = (err: unknown): number | undefined => {
+  if (typeof err !== "object" || err === null) return undefined;
+  const status = (err as Record<string, unknown>).status ?? (err as Record<string, unknown>).statusCode;
+  return typeof status === "number" ? status : undefined;
+};
+
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
+  const status = getErrorStatus(err);
+  if (status !== undefined) {
+    return RETRYABLE_STATUS_CODES.has(status);
+  }
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
     return (
@@ -54,6 +65,7 @@ export async function retry<T>(
   const maxAttempts = opts.maxAttempts ?? 3;
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
+  const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, maxAttempts - 1);
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -64,7 +76,9 @@ export async function retry<T>(
       if (attempt === maxAttempts || !shouldRetry(err)) {
         throw err;
       }
-      const delay = baseDelayMs * Math.pow(2, attempt - 1) * Math.random();
+      const backoff = baseDelayMs * Math.pow(2, attempt - 1);
+      const capped = Math.min(maxDelayMs, backoff);
+      const delay = capped * (0.5 + Math.random() * 0.5);
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
