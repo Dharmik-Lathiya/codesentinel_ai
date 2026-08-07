@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -48,6 +48,8 @@ export interface DiffFile {
   diff: string;
   /** Full (post-change) content of the file, if it still exists. */
   content: string;
+  /** How `content` was produced: 'ok' | 'oversize' | 'binary' | 'unreadable'. */
+  contentStatus: "ok" | "oversize" | "binary" | "unreadable";
   /** Status: added | modified | deleted. */
   status: "added" | "modified" | "deleted";
 }
@@ -62,6 +64,11 @@ export async function collectDiff(
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
   const baseRef = base ?? (await defaultBaseRef(cwd));
+  if (!baseRef && process.env.GITHUB_ACTIONS === "true") {
+    throw new Error(
+      'No git base ref found. In CI you must diff against a ref: pass an explicit base (e.g. collectDiff("origin/main")) or run "git fetch --unshallow" / "git fetch origin <base>" before collecting the diff, otherwise already-committed head changes are silently missed.',
+    );
+  }
   const rangeArgs = baseRef ? [baseRef + "..."] : [];
   let nameStatus: string;
   try {
@@ -85,7 +92,10 @@ export async function collectDiff(
     throw err;
   }
 
-  const workspaceRoot = resolve(cwd);
+  if (!baseRef) {
+    await warnUntrackedFiles(cwd);
+  }
+  const workspaceRoot = await realpath(resolve(cwd));
 
   let diffText: string;
   try {
@@ -115,30 +125,36 @@ export async function collectDiff(
 
   const files: DiffFile[] = [];
   for (const { status, path } of changes) {
-    let content = "";
-    if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
-        continue;
-      }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
+    if (status === "deleted") {
+      const diff = diffByPath.get(path) ?? "";
+      files.push({ path, status, content: "", contentStatus: "ok", diff });
+      continue;
     }
+    let full: string;
+    try {
+      full = await realpath(resolve(workspaceRoot, path));
+    } catch {
+      logger.debug(`Could not resolve real path for ${path}`);
+      continue;
+    }
+    const rel = relative(workspaceRoot, full);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      logger.warn(
+        `Skipping path outside workspace (symlink escape): ${path}`,
+      );
+      continue;
+    }
+    const { content, contentStatus } = await readContent(full);
     const diff = diffByPath.get(path) ?? "";
-    if (!diff && status !== "deleted") {
+    if (!diff) {
       logger.warn(`Could not collect diff for ${path}`);
     }
-    files.push({ path, status, content, diff });
+    files.push({ path, status, content, contentStatus, diff });
   }
   return files;
 }
 
-function splitDiffByPath(
+export function splitDiffByPath(
   diffText: string,
   knownPaths: Set<string>,
 ): Map<string, string> {
@@ -167,24 +183,26 @@ function matchDiffHeader(
   return undefined;
 }
 
-async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
-  if (fileStat.size > MAX_CONTENT_BYTES) {
-    logger.debug(`Skipping oversized file content: ${full}`);
-    return "";
-  }
+async function readContent(
+  full: string,
+): Promise<{ content: string; contentStatus: DiffFile["contentStatus"] }> {
   let text: string;
   try {
+    const fileStat = await stat(full);
+    if (fileStat.size > MAX_CONTENT_BYTES) {
+      logger.debug(`Skipping oversized file content: ${full}`);
+      return { content: "", contentStatus: "oversize" };
+    }
     text = await readFile(full, { encoding: "utf8" });
   } catch (err) {
     logger.debug(`Could not read file: ${full}`, err);
-    return "";
+    return { content: "", contentStatus: "unreadable" };
   }
   if (text.includes("\0")) {
     logger.debug(`Skipping binary file content: ${full}`);
-    return "";
+    return { content: "", contentStatus: "binary" };
   }
-  return text;
+  return { content: text, contentStatus: "ok" };
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
@@ -227,10 +245,28 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
   }
 }
 
-function mapStatus(code: string): DiffFile["status"] | null {
+export function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
   if (code === "M") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
+}
+
+async function warnUntrackedFiles(cwd: string): Promise<void> {
+  try {
+    const untracked = await git(
+      ["ls-files", "--others", "--exclude-standard"],
+      cwd,
+      { quiet: true },
+    );
+    const paths = untracked.split("\n").filter(Boolean);
+    if (paths.length > 0) {
+      logger.warn(
+        `Working-tree diff: ${paths.length} untracked file(s) will be missing because they are not yet added to git: ${paths.slice(0, 5).join(", ")}${paths.length > 5 ? ", ..." : ""}`,
+      );
+    }
+  } catch {
+    logger.debug("Could not list untracked files");
+  }
 }
