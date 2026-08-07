@@ -230,21 +230,41 @@ export class Engine {
     await this.init();
     const start = Date.now();
     logger.info(`Running mode: ${this.config.mode}`);
-    await this.checkAIProvider();
+    try {
+      await this.checkAIProvider();
+    } catch (err) {
+      logger.warn(`checkAIProvider failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     let report: EngineReport;
     switch (this.config.mode) {
       case "review":
-        report = await this.runReview();
+        try {
+          report = await this.runReview();
+        } catch (err) {
+          throw new Error(`runReview failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
         break;
       case "fix":
-        report = await this.runFix();
+        try {
+          report = await this.runFix();
+        } catch (err) {
+          throw new Error(`runFix failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
         break;
       case "audit":
-        report = await this.runAudit();
+        try {
+          report = await this.runAudit();
+        } catch (err) {
+          throw new Error(`runAudit failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
         break;
       case "score":
-        report = await this.runScoreMode();
+        try {
+          report = await this.runScoreMode();
+        } catch (err) {
+          throw new Error(`runScoreMode failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
         break;
       case "testgen":
         report = await this.runTestgen();
@@ -748,14 +768,7 @@ export class Engine {
       const actionable = findings.filter((f) => f.category !== "praise");
       logger.info(`runFix: cycle ${cycle} — ${actionable.length} actionable findings`);
 
-      // Capture linter baseline before first fix in this cycle for delta comparison
-      if (this.config.linters.enabled) {
-        const baselineFindings = runLinters(this.root, {
-          tools: this.config.linters.tools,
-          args: this.config.linters.args,
-        });
-        this._linterBaseline = new Set(baselineFindings.map(f => `${f.file}:${f.line}:${f.comment}`));
-      }
+      this.captureLinterBaseline();
 
       if (actionable.length === 0) {
         logger.info("runFix: all issues resolved, fix successful");
@@ -767,15 +780,7 @@ export class Engine {
         break;
       }
 
-      const fileGroups = new Map<string, Finding[]>();
-      for (const f of actionable) {
-        const list = fileGroups.get(f.file);
-        if (list) {
-          list.push(f);
-        } else {
-          fileGroups.set(f.file, [f]);
-        }
-      }
+      const fileGroups = this.groupFindingsByFile(actionable);
 
       let anyFixed = false;
       // Try single-pass fix first (all files in one AI call)
@@ -790,13 +795,7 @@ export class Engine {
         }
       } else {
         // Fall back to per-file batching
-        const MAX_FINDINGS_PER_FILE = 5;
-        const groups: [string, Finding[]][] = [];
-        for (const [filePath, findings] of fileGroups) {
-          for (let pos = 0; pos < findings.length; pos += MAX_FINDINGS_PER_FILE) {
-            groups.push([filePath, findings.slice(pos, pos + MAX_FINDINGS_PER_FILE)]);
-          }
-        }
+        const groups = this.groupFindingsIntoBatches(fileGroups);
         const PHASE_SIZE = 5;
         for (let phase = 0; phase < groups.length; phase += PHASE_SIZE) {
           const phaseGroups = groups.slice(phase, phase + PHASE_SIZE);
@@ -862,6 +861,42 @@ export class Engine {
       fixAttempts: allFixAttempts,
       metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
     };
+  }
+
+  /** Capture a linter baseline for delta comparison during fix cycles. */
+  private captureLinterBaseline(): void {
+    if (!this.config.linters.enabled) return;
+    const baselineFindings = runLinters(this.root, {
+      tools: this.config.linters.tools,
+      args: this.config.linters.args,
+    });
+    this._linterBaseline = new Set(baselineFindings.map(f => `${f.file}:${f.line}:${f.comment}`));
+  }
+
+  /** Group findings by file path. */
+  private groupFindingsByFile(actionable: Finding[]): Map<string, Finding[]> {
+    const fileGroups = new Map<string, Finding[]>();
+    for (const f of actionable) {
+      const list = fileGroups.get(f.file);
+      if (list) {
+        list.push(f);
+      } else {
+        fileGroups.set(f.file, [f]);
+      }
+    }
+    return fileGroups;
+  }
+
+  /** Partition per-file findings into batches of at most 5 findings each. */
+  private groupFindingsIntoBatches(fileGroups: Map<string, Finding[]>): [string, Finding[]][] {
+    const MAX_FINDINGS_PER_FILE = 5;
+    const groups: [string, Finding[]][] = [];
+    for (const [filePath, findings] of fileGroups) {
+      for (let pos = 0; pos < findings.length; pos += MAX_FINDINGS_PER_FILE) {
+        groups.push([filePath, findings.slice(pos, pos + MAX_FINDINGS_PER_FILE)]);
+      }
+    }
+    return groups;
   }
 
   /** Commit and push fixed files, returning the target branch name. */
@@ -1200,33 +1235,40 @@ ${promptBody}
 
     const allFixes: FixAttempt[] = [];
     for (const ff of parsed.fileFixes) {
-      if (!ff.hunks?.length) {
-        allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: ff.explanation || "No hunks returned", verified: false, newIssuesIntroduced: [] });
-        continue;
-      }
       const absPath = resolve(this.root, ff.file);
-      const originalContent = readText(absPath);
-      if (!originalContent.trim()) {
-        allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "File not found", verified: false, newIssuesIntroduced: [] });
-        continue;
-      }
-      const fixedContent = applyHunks(originalContent, ff.hunks ?? []);
-      if (fixedContent === originalContent) {
-        allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "Hunks produced no changes", verified: false, newIssuesIntroduced: [] });
-        continue;
-      }
-      writeFileSync(absPath, fixedContent, "utf8");
-      const verified = await this.runVerification();
-      if (!verified) {
-        writeFileSync(absPath, originalContent, "utf8");
-        allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "Fix failed verification, rolled back", verified: false, newIssuesIntroduced: [] });
-      } else {
-        const newIssues = this.analyzer.analyzeMany([{ path: ff.file, content: fixedContent }])
-          .filter((f) => !fileGroups.get(ff.file)?.some((of) => `${of.category}:${of.line}:${of.comment}` === `${f.category}:${f.line}:${f.comment}`));
-        allFixes.push({ iteration: 0, file: ff.file, fixed: true, explanation: ff.explanation, verified, newIssuesIntroduced: newIssues });
-      }
+      allFixes.push(await this.applySingleFileFix(absPath, ff.file, ff.hunks ?? [], ff.explanation, fileGroups));
     }
     return allFixes;
+  }
+
+  /** Apply a single file's hunks and verify the result, rolling back on failure. */
+  private async applySingleFileFix(
+    absPath: string,
+    file: string,
+    hunks: Hunk[],
+    explanation: string,
+    existing: Map<string, Finding[]>,
+  ): Promise<FixAttempt> {
+    const originalContent = readText(absPath);
+    if (!hunks.length) {
+      return { iteration: 0, file, fixed: false, explanation: explanation || "No hunks returned", verified: false, newIssuesIntroduced: [] };
+    }
+    if (!originalContent.trim()) {
+      return { iteration: 0, file, fixed: false, explanation: "File not found", verified: false, newIssuesIntroduced: [] };
+    }
+    const fixedContent = applyHunks(originalContent, hunks);
+    if (fixedContent === originalContent) {
+      return { iteration: 0, file, fixed: false, explanation: "Hunks produced no changes", verified: false, newIssuesIntroduced: [] };
+    }
+    writeFileSync(absPath, fixedContent, "utf8");
+    const verified = await this.runVerification();
+    if (verified) {
+      const newIssues = this.analyzer.analyzeMany([{ path: file, content: fixedContent }])
+        .filter((f) => !existing.get(file)?.some((of) => `${of.category}:${of.line}:${of.comment}` === `${f.category}:${f.line}:${f.comment}`));
+      return { iteration: 0, file, fixed: true, explanation, verified, newIssuesIntroduced: newIssues };
+    }
+    writeFileSync(absPath, originalContent, "utf8");
+    return { iteration: 0, file, fixed: false, explanation: "Fix failed verification, rolled back", verified: false, newIssuesIntroduced: [] };
   }
 
   /** Apply fixes for a batch of findings without the full re-analysis loop. */
