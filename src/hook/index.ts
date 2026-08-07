@@ -21,7 +21,7 @@ if [ -z "$STAGED" ]; then
 fi
 
 # Run CodeSentinel gate on staged files
-if command -v codesentinel &> /dev/null; then
+  if command -v codesentinel >/dev/null 2>&1; then
   codesentinel gate --min-score 0 --max-critical 0 --max-high ${DEFAULT_HIGH_SCORE_LIMIT}
   GATE_EXIT=$?
   if [ $GATE_EXIT -ne 0 ]; then
@@ -43,6 +43,11 @@ const POST_COMMIT_SCRIPT = `#!/bin/sh
 
 set -e
 
+if [ -n "$CS_AUTOFIX" ]; then
+  echo "⏭️  CodeSentinel: Already in auto-fix — skipping recursive post-commit hook."
+  exit 0
+fi
+
 MAX_ITER=${DEFAULT_MAX_ITERATIONS}
 echo "🔧 CodeSentinel: Running post-commit build check..."
 
@@ -58,7 +63,7 @@ for i in $(seq 1 $MAX_ITER); do
     exit 0
   fi
 
-  if ! command -v codesentinel &> /dev/null; then
+  if ! command -v codesentinel >/dev/null 2>&1; then
     echo "❌ Build failed and codesentinel not found in PATH."
     echo "   Install: npm install -g @dharmiklathiya/codesentinel_ai"
     exit 1
@@ -67,13 +72,13 @@ for i in $(seq 1 $MAX_ITER); do
   echo "❌ Build failed. Running auto-fix..."
   codesentinel fix --auto-fix 2>&1 || true
 
-  git add -A
+  git add -u
   if git diff --cached --quiet; then
     echo "⚠️  No changes produced by fix — continuing"
     continue
   fi
 
-  git commit -m "CodeSentinel: auto-fix build errors [skip ci]"
+  CS_AUTOFIX=1 git commit -m "CodeSentinel: auto-fix build errors [skip ci]"
   echo "✅ Fix committed."
 done
 

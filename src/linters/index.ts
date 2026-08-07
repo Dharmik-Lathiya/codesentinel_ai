@@ -20,7 +20,7 @@ const eslint: LinterTool = {
   run(root: string, extraArgs: string[]): Finding[] {
     try {
       const out = execSync(
-        `npx eslint --format json --no-color ${extraArgs.join(" ")} . 2>/dev/null || true`,
+        `npx eslint --format json --no-color ${extraArgs.join(" ")} . --ignore-pattern '**/node_modules/**' --ignore-pattern '**/dist/**' --ignore-pattern '**/test/**' --ignore-pattern '**/tests/**' --ignore-pattern '**/__tests__/**' 2>/dev/null || true`,
         { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER_BYTES },
       );
       if (!out.trim()) return [];
