@@ -614,11 +614,13 @@ async function main(): Promise<void> {
     }
     const parsed = parseDismissArgs(args.slice(1));
     if (parsed.error) {
-      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+      process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+      process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
       if (parsed.error.startsWith("Options")) {
-        process.stdout.write("Options --rule and --file are mutually exclusive.\n");
+        process.stderr.write("Options --rule and --file are mutually exclusive.\n");
       }
+      process.exitCode = 1;
+      return;
       return;
     }
 
@@ -697,7 +699,7 @@ async function main(): Promise<void> {
     [values["max-high"], "--max-high"],
   ];
   for (const [value, name] of numericFlags) {
-    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0 || !Number.isInteger(Number(value)))) {
       process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
       showHelp();
       return;
@@ -794,15 +796,20 @@ async function main(): Promise<void> {
   if (modeArg === "deadcode") {
     const root = process.cwd();
     const rels = collectFiles(root, engine.config.include, engine.config.exclude);
-    const files = rels.map((path) => ({
-      path,
-      content: readText(resolve(root, path)),
-    }));
+    const files: Array<{ path: string; content: string }> = [];
+    for (const rel of rels) {
+      const abs = resolve(root, rel);
+      try {
+        files.push({ path: rel, content: readText(abs) });
+      } catch (err) {
+        process.stderr.write(`Skipping unreadable file ${rel}: ${err instanceof Error ? err.message : String(err)}\n`);
+      }
+    }
     let findings: Awaited<ReturnType<typeof engine.runDeadCode>>;
     try {
       findings = await engine.runDeadCode(files);
     } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exitCode = 1;
       return;
     }
