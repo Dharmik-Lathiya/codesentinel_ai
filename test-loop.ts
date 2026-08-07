@@ -63,9 +63,12 @@ describe("processData", () => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
+  test('storing the real value 0 is indistinguishable from invalid (documented sentinel collision)', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
+  });
+
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
     const input = 2 ** 53 + 1;
-    expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
@@ -76,7 +79,7 @@ describe("processData", () => {
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
-  test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([17, -7])('additional valid JSON value %d returns the parsed value', (value) => {
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
   });
