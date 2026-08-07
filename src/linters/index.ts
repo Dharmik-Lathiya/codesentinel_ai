@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Finding } from "../analyzer/index.js";
@@ -10,34 +10,67 @@ export interface LinterTool {
   run(root: string, extraArgs: string[]): Finding[];
 }
 
+type Severity = "high" | "medium" | "low";
+
+const MAX_BUFFER = 10 * 1024 * 1024;
+const TIMEOUT_MS = 120_000;
+
+function levelToSeverity(level: number): Severity {
+  return level >= 2 ? "high" : level === 1 ? "medium" : "low";
+}
+
+function runTool(
+  label: string,
+  root: string,
+  cmd: string,
+  cliArgs: string[],
+  parse: (stdout: string) => Finding[],
+): Finding[] {
+  const res = spawnSync(cmd, cliArgs, {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: MAX_BUFFER,
+    timeout: TIMEOUT_MS,
+    shell: process.platform === "win32",
+  });
+  const stderr = (typeof res.stderr === "string" ? res.stderr : "").trim();
+  if (res.error) {
+    logger.warn(`${label} run failed: ${res.error.message}`);
+    return [];
+  }
+  if (res.signal) {
+    logger.warn(`${label} run failed (timed out, signal ${res.signal})`);
+    return [];
+  }
+  const out = (res.stdout ?? "").trim();
+  if (!out) {
+    if (stderr) logger.warn(`${label} exited with ${res.status}: ${stderr}`);
+    return [];
+  }
+  try {
+    return parse(out);
+  } catch {
+    if (stderr) logger.warn(`${label} exited with ${res.status}: ${stderr}`);
+    else logger.warn(`${label} produced invalid JSON output`);
+    return [];
+  }
+}
+
 const eslint: LinterTool = {
   name: "eslint",
   detect(root: string): boolean {
     return existsSync(resolve(root, "node_modules", ".bin", "eslint"));
   },
   run(root: string, extraArgs: string[]): Finding[] {
-    try {
-      const out = execSync(
-        `npx eslint --format json --no-color ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
-      );
-      if (!out.trim()) return [];
-      const results: { filePath: string; messages: { line: number; severity: number; message: string; ruleId: string | null }[] }[] = JSON.parse(out);
-      return results.flatMap((f) =>
-        f.messages.map((m) => ({
-          file: f.filePath,
-          line: m.line || null,
-          severity: m.severity >= 2 ? "high" as const : "low" as const,
-          category: "smell" as const,
-          comment: m.message,
-          suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
-          source: "linter" as const,
-        })),
-      );
-    } catch (e) {
-      logger.warn(`eslint run failed: ${e}`);
-      return [];
-    }
+    return runTool("eslint", root, "npx", ["eslint", "--format", "json", "--no-color", ...extraArgs, "."], (out) => {
+      const results = JSON.parse(out) as {
+        filePath: string;
+        messages: { line: number; severity: number; message: string; ruleId: string | null }[];
+      }[];
+      return results
+        .flatMap((f) => f.messages.map((m) => toEslintFinding(f.filePath, m)))
+        .slice(0, 200);
+    });
   },
 };
 
@@ -47,26 +80,25 @@ const biome: LinterTool = {
     return existsSync(resolve(root, "node_modules", ".bin", "biome"));
   },
   run(root: string, extraArgs: string[]): Finding[] {
-    try {
-      const out = execSync(
-        `npx biome lint --diagnostic-level=warn --max-diagnostics=200 ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
-      );
-      if (!out.trim()) return [];
-      const parsed: { diagnostics: { location: { path: { file: string }; span: { start: { line: number } } | null }; severity: string; message: { text: string }; category: string }[] } = JSON.parse(out);
+    return runTool("biome", root, "npx", ["biome", "lint", "--diagnostic-level=warn", "--max-diagnostics=200", ...extraArgs, "."], (out) => {
+      const parsed = JSON.parse(out) as {
+        diagnostics?: {
+          location: { path: { file: string }; span: { start: { line: number } } | null };
+          severity: string;
+          message: { text: string };
+          category: string;
+        }[];
+      };
       return (parsed.diagnostics ?? []).map((d) => ({
         file: d.location.path.file,
         line: d.location.span?.start.line ?? null,
-        severity: d.severity === "error" ? "high" as const : "medium" as const,
+        severity: levelToSeverity(d.severity === "error" ? 2 : 1),
         category: "smell" as const,
         comment: d.message.text,
         suggestion: `Category: ${d.category}`,
         source: "linter" as const,
       }));
-    } catch (e) {
-      logger.warn(`biome run failed: ${e}`);
-      return [];
-    }
+    });
   },
 };
 
@@ -81,28 +113,32 @@ const pylint: LinterTool = {
     }
   },
   run(root: string, extraArgs: string[]): Finding[] {
-    try {
-      const out = execSync(
-        `pylint --output-format=json ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
-      );
-      if (!out.trim()) return [];
-      const results: { path: string; line: number; message: string; symbol: string; type: string }[] = JSON.parse(out);
+    return runTool("pylint", root, "pylint", ["--output-format=json", ...extraArgs, "."], (out) => {
+      const results = JSON.parse(out) as { path: string; line: number; message: string; symbol: string; type: string }[];
       return results.map((m) => ({
         file: m.path,
         line: m.line || null,
-        severity: (m.type === "error" || m.type === "fatal" ? "high" : m.type === "warning" ? "medium" : "low") as "high" | "medium" | "low",
+        severity: levelToSeverity(m.type === "error" || m.type === "fatal" ? 2 : m.type === "warning" ? 1 : 0),
         category: "smell" as const,
         comment: m.message,
         suggestion: `Symbol: ${m.symbol}`,
         source: "linter" as const,
       }));
-    } catch (e) {
-      logger.warn(`pylint run failed: ${e}`);
-      return [];
-    }
+    });
   },
 };
+
+function toEslintFinding(filePath: string, m: { line: number; severity: number; message: string; ruleId: string | null }): Finding {
+  return {
+    file: filePath,
+    line: m.line || null,
+    severity: levelToSeverity(m.severity),
+    category: "smell" as const,
+    comment: m.message,
+    suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
+    source: "linter" as const,
+  };
+}
 
 const tools: Record<string, LinterTool> = { eslint, biome, pylint };
 
