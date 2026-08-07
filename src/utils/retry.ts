@@ -5,7 +5,17 @@ const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
 const HTTP_STATUS_RATE_LIMIT = "429";
 const HTTP_STATUS_SERVICE_UNAVAILABLE = "503";
 const HTTP_STATUS_BAD_GATEWAY = "502";
-const RETRYABLE_STATUS_CODES = new Set([429, 502, 503]);
+const HTTP_STATUS_TOO_MANY_REQUESTS_CODE = 429;
+const HTTP_STATUS_SERVICE_UNAVAILABLE_CODE = 503;
+const HTTP_STATUS_BAD_GATEWAY_CODE = 502;
+const RETRYABLE_STATUS_CODES = new Set([
+  HTTP_STATUS_TOO_MANY_REQUESTS_CODE,
+  HTTP_STATUS_BAD_GATEWAY_CODE,
+  HTTP_STATUS_SERVICE_UNAVAILABLE_CODE,
+  String(HTTP_STATUS_TOO_MANY_REQUESTS_CODE),
+  String(HTTP_STATUS_BAD_GATEWAY_CODE),
+  String(HTTP_STATUS_SERVICE_UNAVAILABLE_CODE),
+]);
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -26,10 +36,10 @@ export interface RetryOptions {
   shouldRetry?: (err: unknown) => boolean;
 }
 
-const getErrorStatus = (err: unknown): number | undefined => {
+const getErrorStatus = (err: unknown): number | string | undefined => {
   if (typeof err !== "object" || err === null) return undefined;
   const status = (err as Record<string, unknown>).status ?? (err as Record<string, unknown>).statusCode;
-  return typeof status === "number" ? status : undefined;
+  return typeof status === "number" || typeof status === "string" ? status : undefined;
 };
 
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
@@ -62,17 +72,15 @@ export async function retry<T>(
   fn: () => Promise<T>,
   opts: RetryOptions = {},
 ): Promise<T> {
-  const maxAttempts = opts.maxAttempts ?? 3;
-  const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+  const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
+  const baseDelayMs = Math.max(1, opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS);
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
   const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, maxAttempts - 1);
 
-  let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      lastError = err;
       if (attempt === maxAttempts || !shouldRetry(err)) {
         throw err;
       }
@@ -85,5 +93,5 @@ export async function retry<T>(
       await new Promise((r) => setTimeout(r, delay));
     }
   }
-  throw lastError;
+  throw new Error("retry loop exhausted unexpectedly (unreachable)");
 }
