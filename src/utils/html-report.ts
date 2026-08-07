@@ -13,8 +13,8 @@ const H2_COLOR = "#334155";
 const SHADOW_ALPHA = "0.08";
 const BAR_HEIGHT_PERCENT = 100;
 const SCORE_GREEN_THRESHOLD = 80;
-const SCORE_ORANGE_THRESHOLD = 60;
-const SCORE_RED_THRESHOLD = 40;
+const SCORE_AMBER_THRESHOLD = 60;
+const SCORE_ORANGE_THRESHOLD = 40;
 const APOSTROPHE_ENTITY = "&#39;";
 const REPORT_STYLES = `  <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -35,7 +35,7 @@ const REPORT_STYLES = `  <style>
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
-    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .bar { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1; }
     .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
@@ -152,15 +152,14 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
-
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
       </div>
     </div>`;
 }
 
 function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
   if (items.length === 0) return "";
-  const maxCount = Math.max(...items.map((item) => item.value));
+  const maxCount = items.reduce((max, item) => Math.max(max, item.value), 0);
   return `<h2>${escapeHtml(title)}</h2>
   <div class="bar-chart">
     ${items
@@ -213,7 +212,7 @@ function escapeHtml(s: string): string {
 
 function scoreColor(score: number): string {
   if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
-  if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
-  if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
+  if (score >= SCORE_AMBER_THRESHOLD) return "#d97706";
+  if (score >= SCORE_ORANGE_THRESHOLD) return "#ea580c";
   return "#dc2626";
 }

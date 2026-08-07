@@ -138,7 +138,7 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
+    const match = /^(?:a\/)?(.*?) b\/(.*)$/.exec(firstLine);
     if (!match) continue;
     const path = match[2] === "dev/null" ? match[1] : match[2];
     byPath.set(path, part);
@@ -162,20 +162,18 @@ async function readContent(full: string): Promise<string> {
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
-  // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
-  if (githubBaseRef) {
-    const remoteBase = `origin/${githubBaseRef}`;
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
-  }
-
-  const candidates = ["origin/main", "origin/master", "main", "master"];
-  for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
-  }
-  // No base ref found: fall back to a plain working-tree diff.
-  return undefined;
+  const candidates = [
+    ...(githubBaseRef ? [`origin/${githubBaseRef}`, githubBaseRef] : []),
+    "origin/main",
+    "origin/master",
+    "main",
+    "master",
+  ];
+  const found = await Promise.all(
+    candidates.map(async (ref) => (await refExists(ref, cwd) ? ref : undefined)),
+  );
+  return found.find((ref): ref is string => ref !== undefined);
 }
 
 async function refExists(ref: string, cwd: string): Promise<boolean> {
@@ -189,7 +187,7 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 }
 
 function mapStatus(code: string): DiffFile["status"] | null {
-  if (code.startsWith("A")) return "added";
+  if (code.startsWith("A") || code.startsWith("C")) return "added";
   if (code.startsWith("D")) return "deleted";
   if (code === "M") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
