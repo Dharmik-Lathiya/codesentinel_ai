@@ -50,41 +50,42 @@ function buildAiPrompt(findings: Issue[]): string {
   ].join("\n");
 }
 
+function collectIndices(
+  parsed: unknown,
+  maxIndex: number,
+): number[] | null {
+  if (!Array.isArray(parsed)) return null;
+  return parsed.filter(
+    (i) =>
+      typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
+  );
+}
+
+function parseIntArray(content: string, maxIndex: number): number[] | null {
+  try {
+    return collectIndices(JSON.parse(content), maxIndex);
+  } catch {
+    return null;
+  }
+}
+
 function parseAiResponse(
   content: string,
   maxIndex: number,
 ): number[] | null {
-  try {
-    const parsed = JSON.parse(content);
-    if (Array.isArray(parsed)) {
-      const indices = parsed.filter(
-        (i): i is number =>
-          typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-      );
-      return indices.length > 0 ? indices : null;
-    }
-  } catch {
-    // fall through
-  }
+  const viaJson = parseIntArray(content, maxIndex);
+  if (viaJson !== null) return viaJson;
 
   const extracted = content.match(/\[[\d\s,]*\]/);
   if (extracted) {
-    try {
-      const parsed = JSON.parse(extracted[0]);
-      if (Array.isArray(parsed)) {
-        const indices = parsed.filter(
-          (i): i is number =>
-            typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-        );
-        return indices.length > 0 ? indices : null;
-      }
-    } catch {
-      // fall through
-    }
+    const viaExtract = parseIntArray(extracted[0], maxIndex);
+    if (viaExtract !== null) return viaExtract;
   }
 
   return null;
 }
+
+const AI_MAX_TOKENS = 1024;
 
 async function aiVerify(
   afterRules: Issue[],
@@ -97,7 +98,7 @@ async function aiVerify(
     result = await aiHub.complete(
       "review",
       [{ role: "user", content: prompt }],
-      { maxTokens: 1024 },
+      { maxTokens: AI_MAX_TOKENS },
     );
   } catch {
     return afterRules;
