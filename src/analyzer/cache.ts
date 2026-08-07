@@ -202,15 +202,17 @@ export class AnalysisCache {
       const previous = previousMap.get(key);
       if (!previous) {
         newFindings.push(current);
-      } else {
-        // Check for modifications
-        const changes = this.detectChanges(previous, current);
-        if (changes.length > 0) {
-          modifiedFindings.push({ previous, current, changes });
-        } else {
-          unchangedFindings.push(current);
-        }
+        continue;
       }
+
+      // Check for modifications
+      const changes = this.detectChanges(previous, current);
+      if (changes.length > 0) {
+        modifiedFindings.push({ previous, current, changes });
+        continue;
+      }
+
+      unchangedFindings.push(current);
     }
 
     // Find fixed findings
@@ -285,8 +287,13 @@ export class AnalysisCache {
       const filePath = join(this.cacheDir, `${key}.json`);
       if (!existsSync(filePath)) return null;
 
-      const content = readFileSync(filePath, "utf8");
-      return JSON.parse(content) as AnalysisCacheEntry;
+const content = readFileSync(filePath, "utf8");
+      try {
+        return JSON.parse(content) as AnalysisCacheEntry;
+      } catch {
+        logger.debug("Cache JSON parse failed");
+        return null;
+      }
     } catch {
       logger.debug("Cache load failed");
       return null;
@@ -313,14 +320,18 @@ export class AnalysisCache {
       const files = require("node:fs").readdirSync(this.cacheDir);
       for (const file of files) {
         if (!file.endsWith(".json")) continue;
-        
-        const filePath = join(this.cacheDir, file);
+const filePath = join(this.cacheDir, file);
         const content = readFileSync(filePath, "utf8");
-        const entry = JSON.parse(content) as AnalysisCacheEntry;
-        
-        if (this.isValid(entry)) {
-          this.memoryCache.set(entry.key, entry);
+
+        let entry: AnalysisCacheEntry | null = null;
+        try {
+          entry = JSON.parse(content) as AnalysisCacheEntry;
+        } catch {
+          logger.debug("Cache JSON parse failed");
         }
+
+        if (!entry || !this.isValid(entry)) continue;
+        this.memoryCache.set(entry.key, entry);
       }
     } catch {
       logger.debug("Memory cache load failed");
