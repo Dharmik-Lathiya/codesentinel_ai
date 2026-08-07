@@ -63,7 +63,11 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     if (!ruleId || ruleId.startsWith("--")) {
       return { reason: "dismissed by user", error: "Missing rule id for --rule." };
     }
-    const reason = dismissArgs.slice(ruleIdx + 2).join(" ").trim() || "dismissed by user";
+    const trailing = dismissArgs.slice(ruleIdx + 2);
+    if (trailing.some((t) => t.startsWith("--"))) {
+      return { reason: "dismissed by user", error: "Unexpected option after --rule." };
+    }
+    const reason = trailing.join(" ").trim() || "dismissed by user";
     return { reason, ruleId };
   }
 
@@ -79,7 +83,11 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
     const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
     const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
-    const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
+    const rest = dismissArgs.slice(consumed);
+    if (rest.some((t) => t.startsWith("--"))) {
+      return { reason: "dismissed by user", error: "Unexpected option after --file." };
+    }
+    const reason = rest.join(" ").trim() || "dismissed by user";
     return { reason, filePath, lineNum, ruleIdArg };
   }
 
@@ -118,6 +126,15 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          fetch-depth: 1",
   "",
+"      - name: Prepare issue data (JSON-escaped)",
+"        id: prep_issue",
+"        uses: actions/github-script@v7",
+"        with:",
+"          script: |",
+"            const outFile = process.env['GITHUB_OUTPUT'];",
+"            require('fs').appendFileSync(outFile, 'title=' + JSON.stringify(context.payload.issue.title) + '\\n');",
+"            require('fs').appendFileSync(outFile, 'body=' + JSON.stringify(context.payload.issue.body || '') + '\\n');",
+"",
 "      - name: Generate implementation plan",
 "        id: loading",
 "        uses: actions/github-script@v7",
@@ -142,8 +159,8 @@ const WORKFLOW_CONTENT = [
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
   "        with:",
   "          mode: plan",
-  "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+"          issue_title: ${{ fromJSON(steps.prep_issue.outputs.title) }}",
+"          issue_body: ${{ fromJSON(steps.prep_issue.outputs.body) }}",
   "          use_opencode_cli: \"false\"",
   "",
 "      - name: Update comment with plan",
@@ -154,12 +171,19 @@ const WORKFLOW_CONTENT = [
 "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
   "            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }",
 "            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
+"            const loadingId = Number('${{ steps.loading.outputs.comment_id }}') || null;",
 "            try {",
-"              await github.rest.issues.updateComment({",
-"                owner: context.repo.owner, repo: context.repo.repo,",
-"                comment_id: ${{ steps.loading.outputs.comment_id }},",
-"                body: body",
-"              });",
+"              if (loadingId) {",
+"                await github.rest.issues.updateComment({",
+"                  owner: context.repo.owner, repo: context.repo.repo,",
+"                  comment_id: loadingId, body: body",
+"                });",
+"              } else {",
+"                await github.rest.issues.createComment({",
+"                  owner: context.repo.owner, repo: context.repo.repo,",
+"                  body: body",
+"                });",
+"              }",
 "            } catch (err) {",
 "              core.setFailed(err.message);",
 "            }",
@@ -240,8 +264,9 @@ const WORKFLOW_CONTENT = [
   "                owner: context.repo.owner, repo: context.repo.repo,",
   "                issue_number: context.issue.number",
   "              });",
-  "              core.setOutput('title', issue.title);",
-  "              core.setOutput('body', (issue.body || '').slice(0, " + `${MAX_ISSUE_BODY_LENGTH}` + "));",
+"              const outFile = process.env['GITHUB_OUTPUT'];",
+"              require('fs').appendFileSync(outFile, 'title=' + JSON.stringify(issue.title) + '\\n');",
+"              require('fs').appendFileSync(outFile, 'body=' + JSON.stringify((issue.body || '').slice(0, " + `${MAX_ISSUE_BODY_LENGTH}` + ")) + '\\n');",
   "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
@@ -253,8 +278,8 @@ const WORKFLOW_CONTENT = [
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
   "        with:",
   "          mode: ${{ steps.cmd.outputs.mode }}",
-  "          issue_title: ${{ steps.issue_info.outputs.title }}",
-  "          issue_body: ${{ steps.issue_info.outputs.body }}",
+"          issue_title: ${{ fromJSON(steps.issue_info.outputs.title) }}",
+"          issue_body: ${{ fromJSON(steps.issue_info.outputs.body) }}",
   "          ask: ${{ steps.cmd.outputs.question }}",
   "          use_opencode_cli: \"false\"",
   "",
@@ -268,13 +293,20 @@ const WORKFLOW_CONTENT = [
   "            const mode = '${{ steps.cmd.outputs.mode }}';",
   "            const planSuffix = mode === 'plan' ? '\\n\\nReply with `/fix` to start implementation.' : '';",
   "            const body = '### CodeSentinel \\u2014 ' + mode + '\\n\\n```\\n' + out + '\\n```' + planSuffix;",
-  "            try {",
-  "              await github.rest.issues.updateComment({",
-  "                owner: context.repo.owner, repo: context.repo.repo,",
-  "                comment_id: ${{ steps.loading.outputs.comment_id }},",
-  "                body: body",
-  "              });",
-  "            } catch (err) { core.setFailed(err.message); }",
+"            try {",
+"              const loadingId = Number('${{ steps.loading.outputs.comment_id }}') || null;",
+"              if (loadingId) {",
+"                await github.rest.issues.updateComment({",
+"                  owner: context.repo.owner, repo: context.repo.repo,",
+"                  comment_id: loadingId, body: body",
+"                });",
+"              } else {",
+"                await github.rest.issues.createComment({",
+"                  owner: context.repo.owner, repo: context.repo.repo,",
+"                  body: body",
+"                });",
+"              }",
+"            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
 const BUILD_WORKFLOW_CONTENT = [
@@ -371,9 +403,6 @@ const BUILD_WORKFLOW_CONTENT = [
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
