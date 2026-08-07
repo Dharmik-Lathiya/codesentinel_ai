@@ -15,7 +15,9 @@ export class EventBus {
   static readonly MAX_HISTORY_COUNT = DEFAULT_MAX_HISTORY_COUNT;
   private subscribers = new Map<string, Subscriber>();
   private health = new Map<string, SubscriberHealth>();
-  private history: GitHubEvent[] = [];
+  private history: (GitHubEvent | undefined)[] = new Array(EventBus.MAX_HISTORY_COUNT);
+  private historyWriteIndex = 0;
+  private historyCount = 0;
   private readonly maxConcurrency: number;
   private readonly subscriberTimeoutMs: number;
   private readonly maxFailures: number;
@@ -43,21 +45,15 @@ export class EventBus {
   }
 
   async emit(event: GitHubEvent): Promise<void> {
-    this.history.push(event);
-    if (this.history.length > EventBus.MAX_HISTORY_COUNT) this.history.shift();
+    this.recordHistory(event);
 
     const matching = Array.from(this.subscribers.values()).filter((s) =>
       s.eventTypes.includes(event.type),
     );
-    try {
-      const results = await Promise.allSettled(
-        matching.map((s) => this.dispatch(s, event)),
-      );
-      this.handleEmitResults(matching, results);
-    } catch (error) {
-      logger.error(`EventBus: emit failed unexpectedly: ${error}`);
-      throw error;
-    }
+    const results = await Promise.allSettled(
+      matching.map((s) => this.dispatch(s, event)),
+    );
+    this.handleEmitResults(matching, results);
   }
 
   private handleEmitResults(matching: Subscriber[], results: PromiseSettledResult<void>[]): void {
@@ -69,6 +65,24 @@ export class EventBus {
     }
   }
 
+  private recordHistory(event: GitHubEvent): void {
+    this.history[this.historyWriteIndex] = event;
+    this.historyWriteIndex = (this.historyWriteIndex + 1) % EventBus.MAX_HISTORY_COUNT;
+    if (this.historyCount < EventBus.MAX_HISTORY_COUNT) this.historyCount++;
+  }
+
+  getHistory(): GitHubEvent[] {
+    const out: GitHubEvent[] = [];
+    for (let i = 0; i < this.historyCount; i++) {
+      const idx =
+        (this.historyWriteIndex - this.historyCount + i + EventBus.MAX_HISTORY_COUNT) %
+        EventBus.MAX_HISTORY_COUNT;
+      const e = this.history[idx];
+      if (e) out.push(e);
+    }
+    return out;
+  }
+
   private async dispatch(subscriber: Subscriber, event: GitHubEvent): Promise<void> {
     const health = this.health.get(subscriber.name);
     if (health && health.cooldownUntil > Date.now()) {
@@ -76,11 +90,16 @@ export class EventBus {
       return;
     }
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const message = `subscriber "${subscriber.name}" timed out on ${event.type} after ${this.subscriberTimeoutMs}ms`;
     try {
-      const timer = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), this.subscriberTimeoutMs),
-      );
-      await Promise.race([subscriber.handler(event), timer]);
+      const timerPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), this.subscriberTimeoutMs);
+      });
+      const result = await Promise.race([subscriber.handler(event), timerPromise]);
+      if (result.success === false) {
+        throw result.error;
+      }
       this.health.set(subscriber.name, { failures: 0, lastFailure: 0, cooldownUntil: 0 });
     } catch (err) {
       const h = this.health.get(subscriber.name) ?? { failures: 0, lastFailure: 0, cooldownUntil: 0 };
@@ -92,6 +111,8 @@ export class EventBus {
       }
       this.health.set(subscriber.name, h);
       throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

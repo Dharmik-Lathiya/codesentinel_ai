@@ -15,20 +15,23 @@ export interface GitHubCoordinates {
 }
 
 export class GitHubReporter {
-  private readonly api = "https://api.github.com";
+  private readonly api: string;
   private readonly apiVersion = "2022-11-28";
   private readonly maxRateLimitBudget = 10;
   private readonly baseRetryDelayMs = 5000;
 
-  constructor(private coords: GitHubCoordinates) {}
+  constructor(private coords: GitHubCoordinates, baseUrl?: string) {
+    this.api = baseUrl ?? process.env.GITHUB_API_URL ?? "https://api.github.com";
+  }
 
-  private headers(): Record<string, string> {
-    return {
+  private headers(hasBody = false): Record<string, string> {
+    const headers: Record<string, string> = {
       Authorization: `Bearer ${this.coords.token}`,
       Accept: "application/vnd.github+json",
-      "Content-Type": "application/json",
       "X-GitHub-Api-Version": this.apiVersion,
     };
+    if (hasBody) headers["Content-Type"] = "application/json";
+    return headers;
   }
 
   private computeRetryDelay(res: Response): number {
@@ -55,7 +58,7 @@ export class GitHubReporter {
     return retry(async () => {
       const res = await fetch(url, {
         method,
-        headers: this.headers(),
+        headers: this.headers(Boolean(body)),
         body: body ? JSON.stringify(body) : undefined,
       });
 
