@@ -9,6 +9,12 @@ const MAX_PROCESSED_COMMENT_IDS = 10000;
 const KEEP_LAST_PROCESSED_IDS = 5000;
 const MAX_SCORE = 100;
 
+/**
+ * Single-instance dedup set for processed comment IDs. This is process-local
+ * and NOT shared across restarts or horizontally scaled instances. If you run
+ * more than one instance (or restart often), move dedup to a shared store
+ * (e.g. Redis) to avoid re-processing the same comment.
+ */
 const processedCommentIds = new Set<number>();
 
 /**
@@ -19,10 +25,6 @@ const processedCommentIds = new Set<number>();
  * Also auto-analyzes newly opened issues and posts an implementation plan.
  */
 export function codesentinelApp(app: Probot): void {
-  app.on("pull_request.opened", async (ctx) => {
-    logger.info(`PR opened: ${ctx.payload.pull_request.number}`);
-  });
-
   app.on("issues.opened", async (ctx) => {
     logger.info(`Issue opened: ${ctx.payload.issue.number}`);
     try {
@@ -189,7 +191,7 @@ async function handleComment(ctx: any): Promise<void> {
 function parseCommand(
   body: string,
 ): { mode: Mode; arg: string } | null {
-  const m = body.match(/^\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\b\s*([\s\S]*)$/i);
+  const m = body.match(/^[\s\uFEFF]*\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\b\s*([\s\S]*)$/i);
   if (!m) return null;
   const name = m[1].toLowerCase();
   const arg = (m[2] ?? "").trim();

@@ -13,6 +13,7 @@ export interface GitHubCoordinates {
   /** Pull request number, when commenting on a PR. */
   pullNumber?: number;
 }
+const GITHUB_API_VERSION = "2022-11-28";
 
 export class GitHubReporter {
   private readonly api = "https://api.github.com";
@@ -24,10 +25,23 @@ export class GitHubReporter {
       Authorization: `Bearer ${this.coords.token}`,
       Accept: "application/vnd.github+json",
       "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
+      "X-GitHub-Api-Version": GITHUB_API_VERSION,
     };
   }
 
+  private computeRetryDelay(retryAfter: string | undefined, resetTime: string | undefined): number {
+    if (retryAfter) return Number(retryAfter) * 1000;
+    if (resetTime) return Math.max(0, Number(resetTime) * 1000 - Date.now()) + 1000;
+    return 5000;
+  }
+
+  private retriesOnError(err: unknown): boolean {
+    if (err instanceof Error) {
+      const msg = err.message.toLowerCase();
+      return msg.includes("rate limit") || msg.includes("429") || msg.includes("403") || msg.includes("503");
+    }
+    return false;
+  }
   private async request(method: string, url: string, body?: Record<string, unknown>): Promise<unknown> {
     return retry(async () => {
       const res = await fetch(url, {
@@ -43,14 +57,10 @@ export class GitHubReporter {
       }
 
       if (res.status === 403 || res.status === 429) {
-        const retryAfter = res.headers.get("retry-after");
-        const resetTime = res.headers.get("x-ratelimit-reset");
-        let delayMs = 5000;
-        if (retryAfter) {
-          delayMs = Number(retryAfter) * 1000;
-        } else if (resetTime) {
-          delayMs = Math.max(0, Number(resetTime) * 1000 - Date.now()) + 1000;
-        }
+        const delayMs = this.computeRetryDelay(
+          res.headers.get("retry-after") ?? undefined,
+          res.headers.get("x-ratelimit-reset") ?? undefined,
+        );
         logger.warn(`GitHub API rate limited, retrying after ${delayMs}ms`);
         throw new Error(`Rate limited (${res.status}), retrying after ${delayMs}ms`);
       }
@@ -63,13 +73,7 @@ export class GitHubReporter {
     }, {
       maxAttempts: 3,
       baseDelayMs: 2000,
-      shouldRetry: (err) => {
-        if (err instanceof Error) {
-          const msg = err.message.toLowerCase();
-          return msg.includes("rate limit") || msg.includes("429") || msg.includes("403") || msg.includes("503");
-        }
-        return false;
-      },
+      shouldRetry: (err) => this.retriesOnError(err),
     });
   }
 
