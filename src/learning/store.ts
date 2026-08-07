@@ -271,6 +271,9 @@ export class LearningStore {
       await this.db.close();
     } catch (err) {
       logger.warn(`close failed: ${err}`);
+    } finally {
+      this.db = null;
+      this.ready = false;
     }
   }
 }
