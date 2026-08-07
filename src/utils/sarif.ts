@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import type { EngineReport } from "../engine/index.js";
+import type { Severity } from "../config/types.js";
 
 interface SarifResult {
   ruleId: string;
@@ -36,7 +37,7 @@ const PKG_VERSION = (() => {
   }
 })();
 
-const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
+const SEVERITY_MAP: Partial<Record<Severity, "error" | "warning" | "note">> = {
   critical: "error",
   high: "error",
   medium: "warning",
