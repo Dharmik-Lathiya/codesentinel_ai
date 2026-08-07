@@ -107,9 +107,11 @@ export class LearningCache {
     };
     const next = prev.then(timedFn, timedFn);
     this.locks.set(key, next);
-    next.finally(() => {
-      if (this.locks.get(key) === next) this.locks.delete(key);
-    });
+    next
+      .finally(() => {
+        if (this.locks.get(key) === next) this.locks.delete(key);
+      })
+      .catch(() => {});
     return next;
   }
 
