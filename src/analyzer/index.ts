@@ -488,48 +488,51 @@ export class StaticAnalyzer {
 
   /** Detect missing error handling (bare await without try/catch). */
   private detectMissingErrorHandling(path: string, content: string): Finding[] {
-    const findings: Finding[] = [];
     const lines = content.split("\n");
-    const inTryBlock = new Set<number>();
+    const inTryBlock = this.computeTryBlockLines(lines);
+    const findings: Finding[] = [];
 
+    for (const [idx, line] of lines.entries()) {
+      if (inTryBlock.has(idx)) continue;
+      const trimmed = line.trim();
+      if (trimmed.startsWith("//") || trimmed.startsWith("/*")) continue;
+      if (!/\bawait\b/.test(line)) continue;
+      if (/\b(try|catch)\b/.test(line)) continue;
+      findings.push({
+        severity: "low",
+        category: "smell",
+        file: path,
+        line: idx + 1,
+        comment: "Await call without error handling.",
+        suggestion: "Wrap in try/catch for proper error handling.",
+        source: "static",
+      });
+    }
+
+    return findings;
+  }
+
+  private computeTryBlockLines(lines: string[]): Set<number> {
+    const inTryBlock = new Set<number>();
     let tryStart = -1;
     let braceCount = 0;
 
-    lines.forEach((line, idx) => {
+    for (let idx = 0; idx < lines.length; idx++) {
+      const line = lines[idx];
       if (tryStart >= 0) {
-        braceCount += (line.match(/{/g) || []).length;
-        braceCount -= (line.match(/}/g) || []).length;
-        if (braceCount <= 0) {
-          for (let i = tryStart; i <= idx; i++) {
-            inTryBlock.add(i);
-          }
-          tryStart = -1;
-        }
-      } else if (/\btry\s*\{/.test(line)) {
+        braceCount += (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+        if (braceCount > 0) continue;
+        for (let i = tryStart; i <= idx; i++) inTryBlock.add(i);
+        tryStart = -1;
+        continue;
+      }
+      if (/\btry\s*\{/.test(line)) {
         tryStart = idx;
         braceCount = 1;
       }
-    });
+    }
 
-    lines.forEach((line, idx) => {
-      if (inTryBlock.has(idx)) return;
-      const trimmed = line.trim();
-      if (trimmed.startsWith("//") || trimmed.startsWith("/*")) return;
-
-      if (/\bawait\b/.test(line) && !/\b(try|catch)\b/.test(line)) {
-        findings.push({
-          severity: "low",
-          category: "smell",
-          file: path,
-          line: idx + 1,
-          comment: "Await call without error handling.",
-          suggestion: "Wrap in try/catch for proper error handling.",
-          source: "static",
-        });
-      }
-    });
-
-    return findings;
+    return inTryBlock;
   }
 
   /** Detect long functions (more than 50 lines). */
@@ -539,6 +542,24 @@ export class StaticAnalyzer {
     let functionName = "";
     let braceCount = 0;
 
+    const completeFunction = (idx: number): void => {
+      const functionLength = idx - functionStart;
+      if (functionLength <= 50) {
+        functionStart = -1;
+        return;
+      }
+      findings.push({
+        severity: "medium",
+        category: "smell",
+        file: path,
+        line: functionStart + 1,
+        comment: `Long function "${functionName}" (${functionLength} lines).`,
+        suggestion: "Consider breaking into smaller functions.",
+        source: "static",
+      });
+      functionStart = -1;
+    };
+
     lines.forEach((line, idx) => {
       const functionMatch = line.match(/(?:function|const\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)\s*=>|function))\s+(\w+)?/);
       if (functionMatch && functionStart === -1) {
@@ -546,27 +567,10 @@ export class StaticAnalyzer {
         functionName = functionMatch[1] || "anonymous";
         braceCount = 0;
       }
-
-      if (functionStart >= 0) {
-        braceCount += (line.match(/{/g) || []).length;
-        braceCount -= (line.match(/}/g) || []).length;
-
-        if (braceCount <= 0 && idx > functionStart) {
-          const functionLength = idx - functionStart;
-          if (functionLength > 50) {
-            findings.push({
-              severity: "medium",
-              category: "smell",
-              file: path,
-              line: functionStart + 1,
-              comment: `Long function "${functionName}" (${functionLength} lines).`,
-              suggestion: "Consider breaking into smaller functions.",
-              source: "static",
-            });
-          }
-          functionStart = -1;
-        }
-      }
+      if (functionStart < 0) return;
+      braceCount += (line.match(/{/g) || []).length - (line.match(/}/g) || []).length;
+      if (braceCount > 0 || idx <= functionStart) return;
+      completeFunction(idx);
     });
 
     return findings;
