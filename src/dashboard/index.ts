@@ -15,6 +15,9 @@ interface DashboardData {
   }[];
 }
 
+const FONT_WEIGHT_BOLD = "600";
+const MAX_RUNS = 100;
+const MAX_SCORE = 100;
 const HTML_PAGE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -29,13 +32,13 @@ const HTML_PAGE = `<!DOCTYPE html>
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px; }
   .stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; }
   .stat-card h3 { font-size: 14px; color: #8b949e; margin-bottom: 8px; }
-  .stat-card .value { font-size: 28px; font-weight: 600; }
+.stat-card .value { font-size: 28px; font-weight: ${FONT_WEIGHT_BOLD}; }
   .chart-container { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
   .chart-container h2 { font-size: 16px; margin-bottom: 12px; }
   canvas { max-height: 300px; }
   .runs-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
   .runs-table th, .runs-table td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #30363d; font-size: 14px; }
-  .runs-table th { color: #8b949e; font-weight: 600; }
+.runs-table th { color: #8b949e; font-weight: ${FONT_WEIGHT_BOLD}; }
   .severity-critical { color: #f85149; }
   .severity-high { color: #d29922; }
   .severity-medium { color: #58a6ff; }
@@ -77,7 +80,7 @@ async function loadData() {
   \`;
   new Chart(document.getElementById('severityChart'), { type: 'bar', data: { labels: Object.keys(latest.findingsBySeverity), datasets: [{ label: 'Findings', data: Object.values(latest.findingsBySeverity), backgroundColor: ['#3fb950','#58a6ff','#d29922','#f85149'] }] }, options: { responsive: true, plugins: { legend: { display: false } } } });
   new Chart(document.getElementById('categoryChart'), { type: 'doughnut', data: { labels: Object.keys(latest.findingsByCategory), datasets: [{ data: Object.values(latest.findingsByCategory), backgroundColor: ['#f85149','#d29922','#58a6ff','#3fb950','#8b949e'] }] }, options: { responsive: true } });
-  new Chart(document.getElementById('scoreChart'), { type: 'line', data: { labels: runs.map(r => new Date(r.timestamp).toLocaleTimeString()), datasets: [{ label: 'Score', data: runs.map(r => r.score), borderColor: '#58a6ff', tension: 0.3 }] }, options: { responsive: true, scales: { y: { min: 0, max: 100 } } } });
+  new Chart(document.getElementById('scoreChart'), { type: 'line', data: { labels: runs.map(r => new Date(r.timestamp).toLocaleTimeString()), datasets: [{ label: 'Score', data: runs.map(r => r.score), borderColor: '#58a6ff', tension: 0.3 }] }, options: { responsive: true, scales: { y: { min: 0, max: ${MAX_SCORE} } } } });
   document.getElementById('runs-body').innerHTML = runs.slice().reverse().map(r => \`<tr><td>\${new Date(r.timestamp).toLocaleString()}</td><td>\${r.mode}</td><td class="severity-\${Object.keys(r.findingsBySeverity)[0] || ''}">\${r.totalFindings}</td><td>\${r.score ?? 'N/A'}</td><td>\${r.durationMs}ms</td></tr>\`).join('');
 }
 loadData();
@@ -120,7 +123,7 @@ export class DashboardServer {
 
   recordRun(run: DashboardData["runs"][0]): void {
     this.data.runs.push(run);
-    if (this.data.runs.length > 100) this.data.runs = this.data.runs.slice(-100);
+    if (this.data.runs.length > MAX_RUNS) this.data.runs = this.data.runs.slice(-MAX_RUNS);
     this.saveData();
   }
 
@@ -141,9 +144,7 @@ export class DashboardServer {
     const shutdown = () => {
       logger.info("Shutting down dashboard server...");
       this.stop();
-      process.exit(0);
     };
-    process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
   }
 

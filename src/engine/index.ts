@@ -117,6 +117,13 @@ export function sliceDiffForRange(diff: string, startLine: number, endLine: numb
   }
   return out.join("\n");
 }
+/** Truncate content to a max char count, preferring a clean newline boundary. */
+function truncateContent(content: string, maxChars: number, note: string): string {
+  if (content.length <= maxChars) return content;
+  const cut = content.lastIndexOf("\n", maxChars);
+  const body = cut > 0 ? content.slice(0, cut) : content.slice(0, maxChars);
+  return `${body}\n\n${note}`;
+}
 
 /** The full machine-readable report produced by a run. */
 export interface EngineReport {
@@ -1043,9 +1050,7 @@ export class Engine {
     const numberedContent = content.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
     const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
     const maxFileChars = this.config.settings.maxFileChars;
-    const truncatedContent = redactedContent.length > maxFileChars
-      ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", maxFileChars)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${maxFileChars} chars]`
-      : redactedContent;
+    const truncatedContent = truncateContent(redactedContent, maxFileChars, `// ... [file truncated from ${redactedContent.length} to ${maxFileChars} chars]`);
 
     const prompt = `You are an expert engineer fixing an issue in ${finding.file}.
 
@@ -1156,9 +1161,7 @@ const snippet = res.content.length > MAX_LOG_PREVIEW_CHARS ? res.content.slice(0
     const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
     const maxFileChars = this.config.settings.maxFileChars;
 
-    const truncatedContent = redactedContent.length > maxFileChars
-      ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", maxFileChars)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${maxFileChars} chars]`
-      : redactedContent;
+    const truncatedContent = truncateContent(redactedContent, maxFileChars, `// ... [file truncated from ${redactedContent.length} to ${maxFileChars} chars]`);
 
     const prompt = `You are an expert engineer fixing ${findings.length} issue(s) in ${filePath}.
 
@@ -1239,9 +1242,7 @@ const snippet = res.content.length > MAX_LOG_PREVIEW_CHARS ? res.content.slice(0
       const numberedContent = rawContent.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
       const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
       const maxFileChars = this.config.settings.maxFileChars;
-const truncatedContent = redactedContent.length > maxFileChars
-        ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", maxFileChars)) + `\n\n// ... [file truncated]`
-        : redactedContent;
+      const truncatedContent = truncateContent(redactedContent, maxFileChars, `// ... [file truncated]`);
       fileEntries.push({ path: filePath, content: truncatedContent, findings });
     }
 
@@ -1431,9 +1432,9 @@ ${promptBody}
     // Run tests
     try {
       if (this.config.test_runner === "jest") {
-        execSync("npx jest --passWithNoTests", { cwd: this.root, stdio: "ignore" });
+        execSync("npx jest --passWithNoTests", { cwd: this.root, stdio: "ignore", timeout: 30000 });
       } else {
-        execSync("npx vitest run --passWithNoTests", { cwd: this.root, stdio: "ignore" });
+        execSync("npx vitest run --passWithNoTests", { cwd: this.root, stdio: "ignore", timeout: 30000 });
       }
     } catch {
       allPassed = false;
@@ -1487,7 +1488,7 @@ ${promptBody}
       severity: f.severity,
       category: f.category,
       file: f.file ?? "repo-wide",
-      line: null,
+      line: f.line ?? null,
       comment: `${f.title}: ${f.description}\n\nRecommendation: ${f.recommendation}`,
       source: "ai" as const,
     }));
@@ -2213,7 +2214,7 @@ ${promptBody}
 
   // ---------------------------------------------------------------------------
   // Enhanced analysis features.
-  // ---------------------------------------------------------------------------
+
   
   /**
    * Perform progressive analysis (quick scan → deep analysis).
