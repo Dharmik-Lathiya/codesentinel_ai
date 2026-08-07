@@ -9,7 +9,31 @@ export interface LinterTool {
   detect(root: string): boolean;
   run(root: string, extraArgs: string[]): Finding[];
 }
+const MAX_BUFFER = 10 * 1024 * 1024;
 
+function safeParse<T>(text: string): T | null {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    logger.warn("linter output was not valid JSON");
+    return null;
+  }
+}
+
+function toFinding(
+  file: string,
+  m: { line: number; severity: number; message: string; ruleId: string | null },
+): Finding {
+  return {
+    file,
+    line: m.line || null,
+    severity: m.severity >= 2 ? "high" as const : "low" as const,
+    category: "smell" as const,
+    comment: m.message,
+    suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
+    source: "linter" as const,
+  };
+}
 const eslint: LinterTool = {
   name: "eslint",
   detect(root: string): boolean {
@@ -19,21 +43,12 @@ const eslint: LinterTool = {
     try {
       const out = execSync(
         `npx eslint --format json --no-color ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
-      const results: { filePath: string; messages: { line: number; severity: number; message: string; ruleId: string | null }[] }[] = JSON.parse(out);
-      return results.flatMap((f) =>
-        f.messages.map((m) => ({
-          file: f.filePath,
-          line: m.line || null,
-          severity: m.severity >= 2 ? "high" as const : "low" as const,
-          category: "smell" as const,
-          comment: m.message,
-          suggestion: `See rule: ${m.ruleId ?? "unknown"}`,
-          source: "linter" as const,
-        })),
-      );
+      const results = safeParse<{ filePath: string; messages: { line: number; severity: number; message: string; ruleId: string | null }[] }[]>(out);
+      if (!results) return [];
+      return results.flatMap((f) => f.messages.map((m) => toFinding(f.filePath, m)));
     } catch (e) {
       logger.warn(`eslint run failed: ${e}`);
       return [];
@@ -50,10 +65,11 @@ const biome: LinterTool = {
     try {
       const out = execSync(
         `npx biome lint --diagnostic-level=warn --max-diagnostics=200 ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
-      const parsed: { diagnostics: { location: { path: { file: string }; span: { start: { line: number } } | null }; severity: string; message: { text: string }; category: string }[] } = JSON.parse(out);
+      const parsed = safeParse<{ diagnostics: { location: { path: { file: string }; span: { start: { line: number } } | null }; severity: string; message: { text: string }; category: string }[] }>(out);
+      if (!parsed) return [];
       return (parsed.diagnostics ?? []).map((d) => ({
         file: d.location.path.file,
         line: d.location.span?.start.line ?? null,
@@ -84,10 +100,11 @@ const pylint: LinterTool = {
     try {
       const out = execSync(
         `pylint --output-format=json ${extraArgs.join(" ")} . 2>/dev/null || true`,
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
-      const results: { path: string; line: number; message: string; symbol: string; type: string }[] = JSON.parse(out);
+      const results = safeParse<{ path: string; line: number; message: string; symbol: string; type: string }[]>(out);
+      if (!results) return [];
       return results.map((m) => ({
         file: m.path,
         line: m.line || null,
