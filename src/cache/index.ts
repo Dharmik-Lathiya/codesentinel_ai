@@ -90,7 +90,7 @@ export class FileCache {
       if (files.length <= this.maxEntries) return;
 
       // Sort by mtime ascending (oldest first)
-      files.sort((a, b) => a.mtime - b.mtime);
+      files.sort((a, b) => a.mtime - b.mtime || a.path.localeCompare(b.path));
 
       // Remove oldest entries to get back to maxEntries
       const toRemove = files.slice(0, files.length - this.maxEntries);
