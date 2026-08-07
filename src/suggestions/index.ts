@@ -14,17 +14,20 @@ export function buildSuggestionsComment(
   for (const f of findings.slice(0, MAX_FINDINGS)) {
     const content = fileContents.get(f.file) ?? "";
     const lines = content.split("\n");
-    if (f.line && f.line > 0 && f.line <= lines.length) {
-      const ctxBefore = lines.slice(Math.max(0, f.line - 1 - CONTEXT_BEFORE), f.line - 1).join("\n");
-      const ctxAfter = lines.slice(f.line, Math.min(lines.length, f.line + CONTEXT_AFTER)).join("\n");
-      const context = ctxBefore ? ctxBefore + "\n" : "";
-      const after = ctxAfter ? ctxAfter : "";
-      const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
-      const original = lines[f.line - 1];
-      const code = suggested || `${context}  // ${f.comment}\n${original}\n${after}`;
-      parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
+    const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
+    if (typeof f.line === "number" && f.line > 0 && f.line <= lines.length) {
+      if (suggested) {
+        parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${suggested}\n\`\`\`\n`);
+      } else {
+        const ctxBefore = lines.slice(Math.max(0, f.line - 1 - CONTEXT_BEFORE), f.line - 1).join("\n");
+        const ctxAfter = lines.slice(f.line, Math.min(lines.length, f.line + CONTEXT_AFTER)).join("\n");
+        const context = ctxBefore ? ctxBefore + "\n" : "";
+        const after = ctxAfter ? ctxAfter : "";
+        const original = lines[f.line - 1];
+        const code = `${context}  // ${f.comment}\n${original}\n${after}`;
+        parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
+      }
     } else {
-      const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
       parts.push(`**${f.file}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${suggested || "// " + f.comment}\n\`\`\`\n`);
     }
   }
