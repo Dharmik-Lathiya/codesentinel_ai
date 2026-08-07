@@ -16,7 +16,7 @@ export interface CodeSentinelPlugin {
   name: string;
   /** Called once at engine startup. */
   init?(ctx: PluginContext): void | Promise<void>;
-  /** Add findings based on the analyzed files. */
+  /** Add findings based on the analyzed files. May be invoked per-file with a single-element array (the runAnalyze dispatcher passes subsets); treat the argument as the file-subset under analysis, not necessarily the full change set. */
   analyze?(
     files: { path: string; content: string }[],
   ): Finding[] | Promise<Finding[]>;
@@ -42,6 +42,10 @@ export class PluginManager {
       try {
         const plugin = await this.loadPlugin(p);
         if (plugin) {
+          if (this.plugins.some((existing) => existing.name === plugin.name)) {
+            this.ctx.logger.warn(`Skipping duplicate plugin: ${plugin.name}`);
+            continue;
+          }
           this.plugins.push(plugin);
           await plugin.init?.(this.ctx);
           this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
