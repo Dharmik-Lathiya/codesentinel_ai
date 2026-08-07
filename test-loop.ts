@@ -19,10 +19,8 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-function isValueObject(v: unknown): v is { value?: number } {
-function isValueObject(v: unknown): v is { value?: number } {
-  return typeof v === "object" && v !== null && "value" in v;
-}
+function isValueObject(v: unknown): v is { value: number } {
+  return typeof v === "object" && v !== null && typeof (v as { value?: unknown }).value === "number";
 export type ProcessDataResult =
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
@@ -65,7 +63,7 @@ describe("processData", () => {
 
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
     const input = 2 ** 53 + 1;
-    expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
+    expect(calculate(input)).toBe(2 ** 53 * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
