@@ -87,6 +87,9 @@ export class LearningCache {
   private backend: CacheBackend;
   private locks = new Map<string, Promise<unknown>>();
   private static LOCK_TIMEOUT = 30000;
+  private static FLUSH_DELAY = 1000;
+  private hitBuffer = new Map<string, number>();
+  private flushTimer?: ReturnType<typeof setTimeout>;
 
   constructor(backendOrDir?: CacheBackend | string) {
     if (!backendOrDir || typeof backendOrDir === "string") {
@@ -116,9 +119,55 @@ export class LearningCache {
   async get(key: string): Promise<Lesson[]> {
     const entry = await this.backend.get(key);
     if (!entry) return [];
-    entry.lessons.forEach((l) => l.hitCount++);
-    await this.backend.set(key, entry);
-    return entry.lessons.map((l) => ({ ...l }));
+    const lessons = entry.lessons.map((l) => ({ ...l }));
+    for (const l of lessons) {
+      const composite = key + "::" + l.pattern;
+      const prior = this.hitBuffer.get(composite) ?? 0;
+      this.hitBuffer.set(composite, prior + 1);
+      l.hitCount += prior + 1;
+      this.scheduleFlush();
+    }
+    return lessons;
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushTimer) return;
+    this.flushTimer = setTimeout(() => {
+      void this.flushPendingHits();
+    }, LearningCache.FLUSH_DELAY);
+  }
+
+  private async flushPendingHits(): Promise<void> {
+    this.flushTimer = undefined;
+    const pending = new Map(this.hitBuffer);
+    this.hitBuffer.clear();
+    const byKey = new Map<string, Map<string, number>>();
+    for (const [composite, count] of pending) {
+      const sep = composite.indexOf("::");
+      const key = composite.slice(0, sep);
+      const pattern = composite.slice(sep + 2);
+      let patterns = byKey.get(key);
+      if (!patterns) {
+        patterns = new Map<string, number>();
+        byKey.set(key, patterns);
+      }
+      patterns.set(pattern, (patterns.get(pattern) ?? 0) + count);
+    }
+    for (const [key, patterns] of byKey) {
+      await this.withLock(key, async () => {
+        const entry = await this.backend.get(key);
+        if (!entry) return;
+        for (const [pattern, count] of patterns) {
+          const lesson = entry.lessons.find((l) => l.pattern === pattern);
+          if (lesson) lesson.hitCount += count;
+        }
+        try {
+          await this.backend.set(key, entry);
+        } catch (err) {
+          logger.warn(`Failed to flush hit counts for ${key}:`, err);
+        }
+      });
+    }
   }
 
   async set(key: string, lesson: Lesson): Promise<void> {
@@ -132,14 +181,14 @@ export class LearningCache {
           existing.lessons.push(lesson);
         }
         existing.updatedAt = new Date().toISOString();
-        try { await this.backend.set(key, existing); } catch { /* ignore */ }
+        try { await this.backend.set(key, existing); } catch (err) { logger.warn(`Failed to update lessons for ${key}:`, err); }
       } else {
         const entry: CacheEntry = {
           key,
           lessons: [lesson],
           updatedAt: new Date().toISOString(),
         };
-        try { await this.backend.set(key, entry); } catch { /* ignore */ }
+        try { await this.backend.set(key, entry); } catch (err) { logger.warn(`Failed to write lessons for ${key}:`, err); }
       }
     });
   }
@@ -172,7 +221,7 @@ export class LearningCache {
   }
 
   async getStats(): Promise<{ totalEntries: number; totalLessons: number }> {
-    const files = await this.backend.list();
+    const files = await this.backend.list().catch(() => []);
     const entries = await Promise.all(
       files.map(async (file) => {
         const key = file.replace(/\.json$/, "");
