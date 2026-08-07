@@ -2,8 +2,16 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
+/** Hours in a day, used in TTL computation. */
+const HOURS_PER_DAY = 24;
+/** Minutes in an hour. */
+const MINUTES_PER_HOUR = 60;
+/** Seconds in a minute. */
+const SECONDS_PER_MINUTE = 60;
+
 /** Default TTL for cache entries (24 hours). */
-const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_TTL_MS =
+  HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * 1000;
 
 /** Maximum number of cache entries before LRU eviction kicks in. */
 const DEFAULT_MAX_ENTRIES = 500;
@@ -65,15 +73,19 @@ export class FileCache {
   }
 
   /** Remove oldest entries when cache exceeds maxEntries. */
+  private listEntries(): Array<{ path: string; mtime: number }> {
+    return readdirSync(this.dir)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => {
+        const fp = join(this.dir, f);
+        const stat = statSync(fp);
+        return { path: fp, mtime: stat.mtimeMs };
+      });
+  }
+
   private evictIfNeeded(): void {
     try {
-      const files = readdirSync(this.dir)
-        .filter((f) => f.endsWith(".json"))
-        .map((f) => {
-          const fp = join(this.dir, f);
-          const stat = statSync(fp);
-          return { path: fp, mtime: stat.mtimeMs };
-        });
+      const files = this.listEntries();
 
       if (files.length <= this.maxEntries) return;
 
