@@ -62,7 +62,7 @@ export async function collectDiff(
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
   const baseRef = base ?? (await defaultBaseRef(cwd));
-  const rangeArgs = baseRef ? [baseRef + "..."] : [];
+  const rangeArgs = baseRef ? [baseRef + "..."] : ["HEAD"];
   let nameStatus: string;
   try {
     nameStatus = await git(
@@ -128,6 +128,25 @@ export async function collectDiff(
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
+
+  if (baseRef === undefined) {
+    const untracked = await listUntrackedFiles(cwd);
+    for (const path of untracked) {
+      const full = resolve(workspaceRoot, path);
+      const rel = relative(workspaceRoot, full);
+      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+        logger.warn(`Skipping path outside workspace: ${path}`);
+        continue;
+      }
+      let content = "";
+      try {
+        content = await readContent(full);
+      } catch {
+        logger.debug(`Could not read content for ${path}`);
+      }
+      files.push({ path, status: "added", content, diff: "" });
+    }
+  }
     files.push({ path, status, content, diff });
   }
   return files;
@@ -146,13 +165,40 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   return byPath;
 }
 
+async function listUntrackedFiles(cwd: string): Promise<string[]> {
+  try {
+    const output = await git(
+      [
+        "-c",
+        "core.quotepath=false",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+      ],
+      cwd,
+      { quiet: true },
+    );
+    return output.split("\0").filter((p) => p.length > 0);
+  } catch {
+    logger.debug("Failed to list untracked files");
+    return [];
+  }
+}
+
 async function readContent(full: string): Promise<string> {
   const fileStat = await stat(full);
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
+  let text: string;
+  try {
+    text = await readFile(full, { encoding: "utf8" });
+  } catch {
+    logger.debug(`Failed to read content of: ${full}`);
+    return "";
+  }
   if (text.includes("\0")) {
     logger.debug(`Skipping binary file content: ${full}`);
     return "";
@@ -166,13 +212,25 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
+    try {
       if (await refExists(remoteBase, cwd)) return remoteBase;
+    } catch {
+      logger.debug(`Failed to resolve base ref: ${remoteBase}`);
+    }
+    try {
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    } catch {
+      logger.debug(`Failed to resolve base ref: ${githubBaseRef}`);
+    }
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch {
+      logger.debug(`Failed to resolve base ref: ${ref}`);
+    }
   }
   // No base ref found: fall back to a plain working-tree diff.
   return undefined;

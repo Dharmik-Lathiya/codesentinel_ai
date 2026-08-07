@@ -63,7 +63,16 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     if (!ruleId || ruleId.startsWith("--")) {
       return { reason: "dismissed by user", error: "Missing rule id for --rule." };
     }
-    const reason = dismissArgs.slice(ruleIdx + 2).join(" ").trim() || "dismissed by user";
+    const reasonIdx = dismissArgs.indexOf("--reason");
+    if (reasonIdx >= 0) {
+      const reasonValue = dismissArgs[reasonIdx + 1];
+      if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
+        return { reason: reasonValue, ruleId };
+      }
+      return { reason: "dismissed by user", error: "Missing value for --reason." };
+    }
+    const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
+    const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
     return { reason, ruleId };
   }
 
@@ -73,8 +82,14 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
       return { reason: "dismissed by user", error: "Missing file path for --file." };
     }
     const lineIdx = dismissArgs.indexOf("--line");
-    const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-    const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+    let lineNum: number | null = null;
+    if (lineIdx >= 0) {
+      const rawLine = dismissArgs[lineIdx + 1];
+      if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
+        return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
+      }
+      lineNum = parseInt(rawLine, PARSE_INT_RADIX);
+    }
     const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
     const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
     const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
@@ -86,7 +101,7 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
   return { reason: "dismissed by user", error: "Missing --rule or --file." };
 }
 
-const WORKFLOW_CONTENT = [
+export const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
   "# Uses pre-built composite action (no TypeScript compilation needed)",
   "# Setup time: ~30s vs ~5min for npm install + tsc build",
@@ -181,12 +196,13 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          script: |",
   "            const body = context.payload.comment.body.trim();",
-  "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
-  "            if (!match) { core.setFailed('No valid command'); return; }",
-  "            const mode = match[1].toLowerCase();",
-  "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
-  "            core.setOutput('mode', mode);",
-  "            core.setOutput('question', question);",
+"            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|improve|ask)\\b/i);",
+"            if (!match) { core.setFailed('No valid command'); return; }",
+"            const cmd = match[1].toLowerCase();",
+"            const mode = cmd === 'ask' ? 'chat' : cmd;",
+"            const question = cmd === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
+"            core.setOutput('mode', mode);",
+"            core.setOutput('question', question);",
   "",
   "      - name: Get PR info (PR comments only)",
   "        id: pr",
@@ -277,7 +293,7 @@ const WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
-const BUILD_WORKFLOW_CONTENT = [
+export const BUILD_WORKFLOW_CONTENT = [
   "name: CodeSentinel Build Fix",
   "",
   "on:",
@@ -360,7 +376,7 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
+  "            git pull --rebase --autostash origin ${{ github.ref_name }} 2>&1 || true",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
   "            if [ $? -ne 0 ]; then",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
@@ -409,7 +425,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
-function runSetup(force: boolean): void {
+export function runSetup(force: boolean): void {
   const cwd = process.cwd();
   const workflowDir = join(cwd, ".github", "workflows");
   const workflowPath = join(workflowDir, "codesentinel.yml");
@@ -449,6 +465,7 @@ function runSetup(force: boolean): void {
   process.stdout.write("  /deadcode  — detect unused exports\n");
   process.stdout.write("  /describe  — generate PR description\n");
   process.stdout.write("  /plan      — generate implementation plan from issue\n");
+  process.stdout.write("  /improve   — auto-improve code quality\n");
   process.stdout.write("  /ask       — ask a question\n\n");
   process.stdout.write("Auto-analyze: When a new issue is opened, CodeSentinel automatically\n");
   process.stdout.write("  generates an implementation plan and asks clarifying questions.\n");
@@ -495,6 +512,9 @@ Modes:
   chat        Ask questions about the codebase (--ask required)
   gate        Run quality gate (exit non-zero on threshold breach)
   deadcode    Detect unused exports across files
+  describe    Generate a PR description
+  improve     Auto-improve code (generate tests, utilities, docs)
+  plan        Generate an implementation plan from an issue
 
 Options:
   -m, --mode <mode>           Operational mode
@@ -614,11 +634,12 @@ async function main(): Promise<void> {
     }
     const parsed = parseDismissArgs(args.slice(1));
     if (parsed.error) {
-      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+      process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+      process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
       if (parsed.error.startsWith("Options")) {
-        process.stdout.write("Options --rule and --file are mutually exclusive.\n");
+        process.stderr.write("Options --rule and --file are mutually exclusive.\n");
       }
+      process.exitCode = 1;
       return;
     }
 
@@ -876,7 +897,9 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  logger.error("Fatal:", err);
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    logger.error("Fatal:", err);
+    process.exitCode = 1;
+  });
+}
