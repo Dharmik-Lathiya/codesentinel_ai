@@ -496,6 +496,8 @@ Modes:
   chat        Ask questions about the codebase (--ask required)
   gate        Run quality gate (exit non-zero on threshold breach)
   deadcode    Detect unused exports across files
+  improve     Improve code quality (test | util | doc)
+  plan        Generate implementation plan from issue
 
 Options:
   -m, --mode <mode>           Operational mode
@@ -537,7 +539,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -648,7 +650,7 @@ async function main(): Promise<void> {
       config: { type: "string", short: "c" },
       "max-iterations": { type: "string" },
       "auto-fix": { type: "boolean", default: false },
-      scoring: { type: "boolean", default: true },
+      scoring: { type: "boolean" },
       "test-gen": { type: "boolean", default: false },
       provider: { type: "string" },
       ask: { type: "string" },
@@ -779,6 +781,12 @@ async function main(): Promise<void> {
 
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+
+  if (values["ask"] && modeArg && modeArg !== "chat") {
+    process.stderr.write(`--ask cannot be combined with mode '${modeArg}'. Use chat mode or drop --ask.`);
+    process.exitCode = 1;
+    return;
+  }
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     try {
