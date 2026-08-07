@@ -54,9 +54,19 @@ export class Scorer {
     files: { path: string; content: string }[],
     findings: Finding[],
   ): ScoreBreakdown {
+    if (files.length === 0) {
+      return {
+        readability: 50,
+        maintainability: 50,
+        security: 50,
+        test_coverage: 50,
+        overall: 50,
+        rationale: "No source files provided; returning neutral score.",
+      };
+    }
     const securityPenalty = findings
       .filter((f) => f.category === "security")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity], 0);
+      .reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0), 0);
 
     const smellPenalty = findings
       .filter((f) => f.category === "smell" || f.category === "style")
@@ -148,7 +158,7 @@ export class Scorer {
     let fileCount = 0;
     for (const { content } of files) {
       fileCount++;
-      const lines = content.split("\n");
+    const lines = content.split(/\r?\n/);
       const commentLines = lines.filter(
         (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
       ).length;
