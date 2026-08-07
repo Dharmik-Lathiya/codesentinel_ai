@@ -74,14 +74,28 @@ export class MCPManager {
     }
   }
 
-  async disconnectAll(): Promise<void> {
+async disconnectAll(): Promise<void> {
+    const timeoutMs = DEFAULT_TIMEOUT_MS;
     for (const [name, client] of this.clients) {
       try {
-        await client.close();
+        await Promise.race([
+          client.close(),
+          new Promise<void>((_, reject) =>
+            setTimeout(() => reject(new Error("close timed out")), timeoutMs),
+          ),
+        ]);
         logger.info(`MCP: disconnected "${name}"`);
-      } catch { /* ignore */ }
+      } catch (err) {
+        logger.warn(`MCP: failed to disconnect "${name}": ${err}`);
+      }
     }
     this.clients.clear();
+  }
+
+  private async querySingleTool(serverName: string, client: Client, toolName: string, prompt: string): Promise<MCPContextEntry> {
+    const result = await client.callTool({ name: toolName, arguments: { query: prompt } });
+    const content = JSON.stringify(result.content ?? "");
+    return { serverName, content, relevance: 1 };
   }
 
   private async queryClientTools(serverName: string, client: Client, prompt: string): Promise<MCPContextEntry[]> {
@@ -90,9 +104,7 @@ export class MCPManager {
       const tools = await client.listTools();
       for (const tool of tools.tools) {
         if (tool.name.includes("search") || tool.name.includes("query") || tool.name.includes("docs")) {
-          const result = await client.callTool({ name: tool.name, arguments: { query: prompt } });
-          const content = JSON.stringify(result.content ?? "");
-          entries.push({ serverName, content, relevance: 1 });
+          entries.push(await this.querySingleTool(serverName, client, tool.name, prompt));
         }
       }
     } catch (err) {
@@ -110,15 +122,19 @@ export class MCPManager {
     return this.trimByBudget(entries, maxTokens);
   }
 
+  private async libraryDocsSingleTool(serverName: string, client: Client, toolName: string, library: string): Promise<MCPContextEntry> {
+    const result = await client.callTool({ name: toolName, arguments: { library } });
+    const content = JSON.stringify(result.content ?? "");
+    return { serverName, content, relevance: 0.8 };
+  }
+
   private async getClientLibraryDocs(serverName: string, client: Client, library: string): Promise<MCPContextEntry[]> {
     const entries: MCPContextEntry[] = [];
     try {
       const tools = await client.listTools();
       for (const tool of tools.tools) {
         if (tool.name.toLowerCase().includes("docs") || tool.name.toLowerCase().includes("context")) {
-          const result = await client.callTool({ name: tool.name, arguments: { library } });
-          const content = JSON.stringify(result.content ?? "");
-          entries.push({ serverName, content, relevance: 0.8 });
+          entries.push(await this.libraryDocsSingleTool(serverName, client, tool.name, library));
         }
       }
     } catch { /* skip */ }
