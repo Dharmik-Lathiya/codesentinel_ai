@@ -26,7 +26,7 @@ function parseTrufflehogLine(line: string): Finding | null {
       severity: "high" as const,
       category: "security" as const,
       comment: `[trufflehog] ${r.DetectorName ?? "secret"}: ${r.Description ?? ""}`,
-      suggestion: `Matched: ${(r.Raw || "").slice(0, SNIPPET_LENGTH)}`,
+suggestion: `Matched: ${String(r.Raw ?? "").trim().slice(0, SNIPPET_LENGTH)}`,
       source: "scanner" as const,
     } as Finding;
   } catch {
@@ -63,7 +63,7 @@ const gitleaks: ScannerTool = {
       return results.map((r) => ({
         file: r.File,
         line: r.StartLine || null,
-        severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
+severity: (r.Severity?.toLowerCase() ?? "medium") as Finding["severity"],
         category: "security" as const,
         comment: `[gitleaks] ${r.Description}`,
         suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,

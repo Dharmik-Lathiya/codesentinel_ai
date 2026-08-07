@@ -32,6 +32,12 @@ const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(
 
 const HIGH_SEVERITY_PENALTY = 16;
 const CRITICAL_SEVERITY_PENALTY = 30;
+/** Smell findings incur half the severity penalty applied to security ones. */
+const HALF_SMELL_PENALTY = 0.5;
+/** Readability tuning: long-line ratio penalty, comment ratio bonus, and per-file floor. */
+const LONG_LINE_RATIO_PENALTY = 50;
+const COMMENT_RATIO_BONUS = 20;
+const READABILITY_FLOOR = 10;
 /** Severity penalty weights applied to the security dimension. */
 const SEVERITY_PENALTY: Record<Severity, number> = {
   info: 2,
@@ -60,7 +66,7 @@ export class Scorer {
 
     const smellPenalty = findings
       .filter((f) => f.category === "smell" || f.category === "style")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity] / 2, 0);
+      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity] * HALF_SMELL_PENALTY, 0);
 
     const security = clamp(MAX_SCORE - securityPenalty);
     const maintainability = clamp(MAX_SCORE - smellPenalty);
@@ -153,11 +159,16 @@ export class Scorer {
         (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
-      const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const longLineRatio = lines.length
+        ? lines.filter((l) => l.length > 120).length / lines.length
+        : 0;
+      const score =
+        MAX_SCORE -
+        longLineRatio * LONG_LINE_RATIO_PENALTY +
+        commentRatio * COMMENT_RATIO_BONUS;
+      total += Math.max(READABILITY_FLOOR, score);
     }
-    return fileCount ? total / fileCount : 100;
+    return fileCount ? total / fileCount : MAX_SCORE;
   }
 
   /** Coverage heuristic: fraction of source files that have a related test. */
@@ -170,7 +181,7 @@ export class Scorer {
         .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
     );
     const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
-    if (sourceFiles.length === 0) return 100;
+    if (sourceFiles.length === 0) return 0;
     let covered = 0;
     for (const f of sourceFiles) {
       const base = f.path.replace(/\.[^.]+$/, "");
