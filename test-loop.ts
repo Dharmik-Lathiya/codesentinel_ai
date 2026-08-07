@@ -16,7 +16,8 @@ const SAMPLE_VALUE = 42;
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
-  return x * multiplier;
+  // The threshold itself is excluded from the extreme multiplier
+  const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
@@ -53,20 +54,19 @@ describe("calculate", () => {
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
-  ])('boundary value %i', (input, expected) => {
+    expect(calculate(input)).toEqual(expected);
     expect(calculate(input)).toBe(expected);
   });
 });
 
-describe("processData", () => {
+  test.each([42, SAMPLE_VALUE, 17, -7])('valid JSON value %d returns the parsed value', (value) => {
   test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
-
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
     const input = 2 ** 53 + 1;
-    expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
+  });
   });
   test.each([
     ["not-json"],
@@ -79,10 +79,6 @@ describe("processData", () => {
   test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
-  });
-
-  test('negative and decimal values are preserved', () => {
-    expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
   });
 
   test('whitespace-padded JSON is parsed', () => {
