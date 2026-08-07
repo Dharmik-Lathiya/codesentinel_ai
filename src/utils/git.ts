@@ -111,16 +111,17 @@ export async function collectDiff(
     const status = mapStatus(statusCode);
     if (!status) continue;
     let content = "";
+    let readable = true;
     if (status !== "deleted") {
       const full = resolve(workspaceRoot, path);
       const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
+      if (rel === "" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
         continue;
       }
       try {
         content = await readContent(full);
       } catch {
+        readable = false;
         logger.debug(`Could not read content for ${path}`);
       }
     }
@@ -128,7 +129,42 @@ export async function collectDiff(
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
-    files.push({ path, status, content, diff });
+    if (readable) {
+      files.push({ path, status, content, diff });
+    } else {
+      logger.debug(`Skipping ${path}: content could not be read`);
+    }
+  }
+
+  if (!baseRef) {
+    const untracked = await git(
+      [
+        "-c",
+        "core.quotepath=false",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+      ],
+      cwd,
+    );
+    const seen = new Set(files.map((f) => f.path));
+    for (const path of untracked.split("\0").filter(Boolean)) {
+      if (seen.has(path)) continue;
+      const full = resolve(workspaceRoot, path);
+      const rel = relative(workspaceRoot, full);
+      if (rel === "" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
+        continue;
+      }
+      let content = "";
+      try {
+        content = await readContent(full);
+      } catch {
+        logger.debug(`Could not read content for ${path}`);
+        continue;
+      }
+      files.push({ path, status: "added", content, diff: "" });
+    }
   }
   return files;
 }
@@ -191,7 +227,7 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code === "M") return "modified";
+  if (code.includes("M") || code.includes("T")) return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
