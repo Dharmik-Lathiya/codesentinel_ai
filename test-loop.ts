@@ -23,7 +23,6 @@ function isValueObject(v: unknown): v is { value?: number } {
 function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
-export type ProcessDataResult =
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
@@ -59,13 +58,13 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([42, -7])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
     const input = 2 ** 53 + 1;
-    expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
+    expect(calculate(input)).toBe(73786976294838210000);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
@@ -79,6 +78,9 @@ describe("processData", () => {
   test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
+  });
+  test('{"value":0} returns { value: 0 } (indistinguishable from sentinel)', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
   });
 
   test('negative and decimal values are preserved', () => {
