@@ -37,6 +37,18 @@ import { EventBus } from "../event-bus/bus.js";
 import { parseJsonlString, validateAndNormalize, buildInlineComments } from "../jsonl-parser.js";
 import { groupIntoBatches } from "./batcher.js";
 
+/** Maximum characters of a file sent to the AI in fix prompts. */
+const MAX_FILE_CHARS = 30000;
+/** Fragment length used to key recurring patterns. */
+const PATTERN_KEY_FRAGMENT_LENGTH = 60;
+/** Fragment length used when auto-naming generated rules. */
+const RULE_NAME_FRAGMENT_LENGTH = 30;
+/** Timeout (ms) for git fetch/rebase operations. */
+const GIT_OPERATION_TIMEOUT_MS = 30000;
+/** Timeout (ms) for git push operations. */
+const GIT_PUSH_TIMEOUT_MS = 60000;
+/** Timeout (ms) for the verification typecheck. */
+const VERIFY_TSC_TIMEOUT_MS = 30000;
 /** A comment to post back to a PR (inline or summary). */
 export interface ReviewComment {
   file: string;
@@ -676,7 +688,7 @@ export class Engine {
     try {
       const groups = new Map<string, { count: number; category: string; comment: string; suggestion?: string }>();
       for (const f of findings) {
-        const key = `${f.category}:${f.comment.slice(0, 60)}`;
+        const key = `${f.category}:${f.comment.slice(0, PATTERN_KEY_FRAGMENT_LENGTH)}`;
         const existing = groups.get(key);
         if (existing) {
           existing.count++;
@@ -692,7 +704,7 @@ export class Engine {
       // Auto-create rules for patterns with frequency >= 3
       const freqPatterns = await this.learning.getPatternsAboveThreshold(3);
       for (const p of freqPatterns) {
-        const ruleName = `auto-${p.category}-${p.pattern_text.slice(0, 30).replace(/\s+/g, "_")}`;
+        const ruleName = `auto-${p.category}-${p.pattern_text.slice(0, RULE_NAME_FRAGMENT_LENGTH).replace(/\s+/g, "_")}`;
         await this.learning.autoCreateRule(p.id, ruleName, p.pattern_text, "medium", p.category, `Auto-generated from recurring pattern (frequency: ${p.frequency})`);
         logger.info(`recordPatterns: auto-created rule "${ruleName}" from pattern ${p.id} (freq=${p.frequency})`);
       }
@@ -894,14 +906,14 @@ export class Engine {
       execFileSync("git", ["config", "user.name", "CodeSentinel Bot"], { cwd: this.root, stdio: "pipe" });
       execFileSync("git", ["commit", "-m", msg], { cwd: this.root, stdio: "pipe" });
       try {
-        execFileSync("git", ["fetch", "origin", target], { cwd: this.root, stdio: "pipe", timeout: 30000 });
-        execFileSync("git", ["rebase", `origin/${target}`], { cwd: this.root, stdio: "pipe", timeout: 30000 });
+        execFileSync("git", ["fetch", "origin", target], { cwd: this.root, stdio: "pipe", timeout: GIT_OPERATION_TIMEOUT_MS });
+        execFileSync("git", ["rebase", `origin/${target}`], { cwd: this.root, stdio: "pipe", timeout: GIT_OPERATION_TIMEOUT_MS });
       } catch {
         logger.warn(`pushFixes: rebase failed for ${target}, will push to fix branch instead`);
         target = `codesentinel/fix-${Date.now()}`;
         execFileSync("git", ["checkout", "-b", target], { cwd: this.root, stdio: "pipe" });
       }
-      execFileSync("git", ["push", "origin", `HEAD:${target}`, "--set-upstream"], { cwd: this.root, stdio: "pipe", timeout: 60000 });
+      execFileSync("git", ["push", "origin", `HEAD:${target}`, "--set-upstream"], { cwd: this.root, stdio: "pipe", timeout: GIT_PUSH_TIMEOUT_MS });
       logger.info(`pushFixes: pushed ${fileArray.length} file(s) to ${target}`);
       return target;
     } catch (err) {
@@ -959,7 +971,6 @@ export class Engine {
 
     const numberedContent = content.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
     const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
-    const MAX_FILE_CHARS = 30000;
     const truncatedContent = redactedContent.length > MAX_FILE_CHARS
       ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FILE_CHARS} chars]`
       : redactedContent;
@@ -1067,7 +1078,6 @@ Suggestion: ${finding.suggestion ?? ""}
     const numberedContent = content.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
     const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
 
-    const MAX_FILE_CHARS = 30000;
     const truncatedContent = redactedContent.length > MAX_FILE_CHARS
       ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FILE_CHARS} chars]`
       : redactedContent;
@@ -1150,8 +1160,8 @@ ${issuesMd}
       if (!rawContent.trim()) continue;
       const numberedContent = rawContent.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
       const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
-      const truncatedContent = redactedContent.length > 30000
-        ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", 30000)) + `\n\n// ... [file truncated]`
+      const truncatedContent = redactedContent.length > MAX_FILE_CHARS
+        ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated]`
         : redactedContent;
       fileEntries.push({ path: filePath, content: truncatedContent, findings });
     }
@@ -1276,7 +1286,7 @@ ${promptBody}
 
     // Run typecheck
     try {
-      execSync("npx tsc --noEmit", { cwd: this.root, stdio: "ignore", timeout: 30000 });
+      execSync("npx tsc --noEmit", { cwd: this.root, stdio: "ignore", timeout: VERIFY_TSC_TIMEOUT_MS });
     } catch {
       logger.warn("runVerification: typecheck failed — fix introduced syntax/type errors");
       allPassed = false;
