@@ -42,12 +42,15 @@ class FileSystemBackend implements CacheBackend {
   }
 
   private filePath(key: string): string {
+    if (!/^[0-9a-f]{16}$/.test(key)) {
+      throw new Error(`Invalid cache key: ${key}`);
+    }
     return join(this.cacheDir, `${key}.json`);
   }
 
   async get(key: string): Promise<CacheEntry | null> {
-    const path = this.filePath(key);
     try {
+      const path = this.filePath(key);
       return JSON.parse(await readFile(path, "utf8")) as CacheEntry;
     } catch {
       return null;
@@ -100,17 +103,23 @@ export class LearningCache {
 
   private withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(key) ?? Promise.resolve();
+    let run: Promise<T> | undefined;
     const timedFn = () => {
+      run = Promise.resolve().then(fn);
       let timer: ReturnType<typeof setTimeout>;
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`Lock timeout for key: ${key}`)), LearningCache.LOCK_TIMEOUT);
       });
-      return Promise.race([fn(), timeout]).finally(() => clearTimeout(timer));
+      return Promise.race([run, timeout]).finally(() => clearTimeout(timer));
     };
     const next = prev.then(timedFn, timedFn);
-    this.locks.set(key, next);
-    next.finally(() => {
-      if (this.locks.get(key) === next) this.locks.delete(key);
+    const settle = () => (run ? run.catch(() => undefined) : undefined);
+    // Hold the lock until the tracked task settles (even past a caller-visible
+    // timeout) so a timed-out task cannot write stale data behind the next holder.
+    const lock = next.then(settle, settle);
+    this.locks.set(key, lock);
+    lock.finally(() => {
+      if (this.locks.get(key) === lock) this.locks.delete(key);
     });
     return next;
   }
@@ -151,9 +160,9 @@ export class LearningCache {
     });
   }
 
-  async getAll(): Promise<Lesson[]> {
+  private async readAll(): Promise<(CacheEntry | null)[]> {
     const files: string[] = await this.backend.list().catch(() => []);
-    const entries = await Promise.all(
+    return Promise.all(
       files.map(async (file) => {
         const key = file.replace(/\.json$/, "");
         try {
@@ -163,6 +172,10 @@ export class LearningCache {
         }
       })
     );
+  }
+
+  async getAll(): Promise<Lesson[]> {
+    const entries = await this.readAll();
     const lessons: Lesson[] = [];
     for (const entry of entries) {
       if (entry) lessons.push(...entry.lessons.map((l) => ({ ...l })));
@@ -179,21 +192,11 @@ export class LearningCache {
   }
 
   async getStats(): Promise<{ totalEntries: number; totalLessons: number }> {
-    const files = await this.backend.list();
-    const entries = await Promise.all(
-      files.map(async (file) => {
-        const key = file.replace(/\.json$/, "");
-        try {
-          return await this.backend.get(key);
-        } catch {
-          return null;
-        }
-      })
-    );
+    const entries = await this.readAll();
     let totalLessons = 0;
     for (const entry of entries) {
       if (entry) totalLessons += entry.lessons.length;
     }
-    return { totalEntries: files.length, totalLessons };
+    return { totalEntries: entries.length, totalLessons };
   }
 }
