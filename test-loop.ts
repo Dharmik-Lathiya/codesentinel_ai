@@ -3,11 +3,14 @@ import { describe, expect, test } from "vitest";
 export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
-const BELOW_THRESHOLD_INPUT = 4999;
-const MODERATE_INPUT = 5000;
-const HIGH_INPUT = 6000;
-const BELOW_EXTREME_INPUT = 9999;
-const SAMPLE_VALUE = 42;
+const MODERATE_MARK = 5000;
+const TEST_STEP = 1000;
+const BELOW_THRESHOLD_INPUT = MODERATE_MARK - 1;
+const MID_BAND_INPUT = MODERATE_MARK;
+const UPPER_BAND_INPUT = MODERATE_MARK + TEST_STEP;
+const BELOW_EXTREME_INPUT = EXTREME_THRESHOLD - 1;
+const SAMPLE_HALF = 21;
+const SAMPLE_VALUE = SAMPLE_HALF * 2;
 
 /**
  * Scales the input by a fixed multiplier.
@@ -45,8 +48,8 @@ describe("calculate", () => {
     [0, 0],
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
+[MID_BAND_INPUT, MID_BAND_INPUT * MULTIPLIER],
+[UPPER_BAND_INPUT, UPPER_BAND_INPUT * MULTIPLIER],
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
@@ -59,12 +62,12 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
-    const input = 2 ** 53 + 1;
+    const input = 2 ** 53 + 2;
     expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
