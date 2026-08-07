@@ -22,7 +22,7 @@ export interface RetryOptions {
    * Default: 1000ms (`DEFAULT_BASE_DELAY_MS`).
    */
   baseDelayMs?: number;
-  /** Max delay in ms for a single retry (cap on exponential backoff). Default: unbounded (grows with attempts). */
+/** Max delay in ms for a single retry (cap on exponential backoff). Default: the maximum backoff for the given attempt count (never binding). */
   maxDelayMs?: number;
   /**
    * Optional predicate: return true to retry on this error.
