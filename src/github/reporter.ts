@@ -16,6 +16,9 @@ export interface GitHubCoordinates {
 
 export class GitHubReporter {
   private readonly api = "https://api.github.com";
+  private readonly msPerSecond = 1000;
+  private readonly baseApiDelayMs = 2000;
+  private readonly rateLimitedStatus = 429;
 
   constructor(private coords: GitHubCoordinates) {}
 
@@ -47,9 +50,9 @@ export class GitHubReporter {
         const resetTime = res.headers.get("x-ratelimit-reset");
         let delayMs = 5000;
         if (retryAfter) {
-          delayMs = Number(retryAfter) * 1000;
+          delayMs = Number(retryAfter) * this.msPerSecond;
         } else if (resetTime) {
-          delayMs = Math.max(0, Number(resetTime) * 1000 - Date.now()) + 1000;
+          delayMs = Math.max(0, Number(resetTime) * this.msPerSecond - Date.now()) + this.msPerSecond;
         }
         logger.warn(`GitHub API rate limited, retrying after ${delayMs}ms`);
         throw new Error(`Rate limited (${res.status}), retrying after ${delayMs}ms`);
@@ -62,11 +65,11 @@ export class GitHubReporter {
       return res.json().catch(() => null);
     }, {
       maxAttempts: 3,
-      baseDelayMs: 2000,
+      baseDelayMs: this.baseApiDelayMs,
       shouldRetry: (err) => {
         if (err instanceof Error) {
           const msg = err.message.toLowerCase();
-          return msg.includes("rate limit") || msg.includes("429") || msg.includes("403") || msg.includes("503");
+          return msg.includes("rate limit") || msg.includes(String(this.rateLimitedStatus)) || msg.includes("403") || msg.includes("503");
         }
         return false;
       },

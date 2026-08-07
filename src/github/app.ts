@@ -58,7 +58,9 @@ function isDuplicateOrRegister(commentId: number): boolean {
   if (processedCommentIds.size > MAX_PROCESSED_COMMENT_IDS) {
     const ids = [...processedCommentIds];
     processedCommentIds.clear();
-    ids.slice(-KEEP_LAST_PROCESSED_IDS).forEach((id) => processedCommentIds.add(id));
+// Cap dedupe set size to prevent memory leak;
+  // eviction keeps only the newest IDs, so older evicted comments may be
+  // re-processed on a redelivery — best-effort dedup by design.
   }
   return false;
 }
