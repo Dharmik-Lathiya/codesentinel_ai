@@ -58,13 +58,13 @@ describe("calculate", () => {
   });
 });
 
-describe("processData", () => {
+  test.each([42, 17, -7])('valid JSON value %d returns the parsed value', (value) => {
   test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
-    const input = 2 ** 53 + 1;
+    expect(calculate(input)).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
     expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
