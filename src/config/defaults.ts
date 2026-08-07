@@ -1,4 +1,9 @@
-import type { CodeSentinelConfig, AnalyzerConfig, SeverityAdjustmentConfig, ConfidenceThresholds, ProgressiveAnalysisConfig, MultiFileAnalysisConfig, GateConfig, SecretPattern, DashboardConfig, LinterConfig, LearningConfig, MCPConfig, BatchConfig } from "./types.js";
+import type { CodeSentinelConfig, AnalyzerConfig, SeverityAdjustmentConfig, ConfidenceThresholds, ProgressiveAnalysisConfig, MultiFileAnalysisConfig, GateConfig, SecretPattern, DashboardConfig, LinterConfig, LearningConfig, MCPConfig, BatchConfig, EngineSettings } from "./types.js";
+const DEFAULT_MAX_CONCURRENT_FILES = 10;
+const DEFAULT_GATE_MAX_CRITICAL = 10;
+const DEFAULT_GATE_MAX_HIGH = 50;
+const AWS_ACCESS_KEY_ID_LENGTH = 16;
+const AWS_SECRET_KEY_GAP = 20;
 
 /**
  * Default severity adjustment configuration.
@@ -36,7 +41,7 @@ export const DEFAULT_PROGRESSIVE_ANALYSIS: ProgressiveAnalysisConfig = {
  * Default multi-file analysis configuration.
  */
 export const DEFAULT_MULTI_FILE_ANALYSIS: MultiFileAnalysisConfig = {
-  maxConcurrentFiles: 10,
+  maxConcurrentFiles: DEFAULT_MAX_CONCURRENT_FILES,
   analyzeDependencies: true,
   analyzeImports: true,
   analyzePatterns: true,
@@ -57,15 +62,15 @@ export const DEFAULT_ANALYZER_CONFIG: AnalyzerConfig = {
 
 export const DEFAULT_GATE_CONFIG: GateConfig = {
   minScore: 0,
-  maxCritical: 10,
-  maxHigh: 50,
+  maxCritical: DEFAULT_GATE_MAX_CRITICAL,
+  maxHigh: DEFAULT_GATE_MAX_HIGH,
   blockOnSecurity: false,
   blockOnBugs: false,
 };
 
 export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
-  { id: "aws-key", name: "AWS Access Key", regex: "AKIA[0-9A-Z]{16}", severity: "critical", message: "Hardcoded AWS Access Key ID detected.", suggestion: "Use IAM roles or environment variables instead." },
-  { id: "aws-secret", name: "AWS Secret Key", regex: "(?i)aws(.{0,20})?(secret|access)_?key\\s*[=:]\\s*['\"][A-Za-z0-9/+=]{40}['\"]", severity: "critical", message: "Hardcoded AWS Secret Access Key detected.", suggestion: "Use IAM roles or environment variables instead." },
+  { id: "aws-key", name: "AWS Access Key", regex: "AKIA[0-9A-Z]{" + AWS_ACCESS_KEY_ID_LENGTH + "}", severity: "critical", message: "Hardcoded AWS Access Key ID detected.", suggestion: "Use IAM roles or environment variables instead." },
+  { id: "aws-secret", name: "AWS Secret Key", regex: "(?i)aws(.{0," + AWS_SECRET_KEY_GAP + "})?(secret|access)_?key\\s*[=:]\\s*['\"][A-Za-z0-9/+=]{40}['\"]", severity: "critical", message: "Hardcoded AWS Secret Access Key detected.", suggestion: "Use IAM roles or environment variables instead." },
   { id: "github-token", name: "GitHub Token", regex: "(?i)github[-_]?(token|pat|key)\\s*[=:]\\s*['\"](ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}['\"]", severity: "critical", message: "Hardcoded GitHub token detected.", suggestion: "Use GITHUB_TOKEN secret or environment variables." },
   { id: "slack-token", name: "Slack Token", regex: "(xox[baprs]-[0-9a-zA-Z]{10,})", severity: "high", message: "Hardcoded Slack token detected.", suggestion: "Use environment variables for Slack tokens." },
   { id: "ssh-key", name: "SSH Private Key", regex: "(?i)-----BEGIN\\s+(?:(?:RSA|DSA|EC|OPENSSH)\\s+)?PRIVATE\\s+KEY-----", severity: "critical", message: "Hardcoded SSH private key detected.", suggestion: "Use SSH agent or secrets manager." },
@@ -129,6 +134,13 @@ export const DEFAULT_BATCH_CONFIG: BatchConfig = {
  * Default configuration. Values here are safe fallbacks; users are expected to
  * override via a config file, environment variables, or CLI flags.
  */
+/** Default per-project tuning knobs. */
+export const DEFAULT_SETTINGS: EngineSettings = {
+  maxFileChars: 30000,
+  maxFindingsPerFile: 5,
+  phaseSize: 5,
+};
+
 export const DEFAULT_CONFIG: CodeSentinelConfig = {
   mode: "review",
   max_iterations: 5,
@@ -194,6 +206,7 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   learning: DEFAULT_LEARNING_CONFIG,
   mcp: DEFAULT_MCP_CONFIG,
   batch: DEFAULT_BATCH_CONFIG,
+  settings: DEFAULT_SETTINGS,
   autoMerge: false,
   use_opencode_cli: true,
 };
@@ -272,6 +285,9 @@ export function mergeConfig(
     if (override.analyzer.customRules) {
       merged.analyzer.customRules = [...base.analyzer.customRules, ...override.analyzer.customRules];
     }
+  }
+  if (override.settings) {
+    merged.settings = { ...base.settings, ...override.settings };
   }
   if (override.autoMerge !== undefined) {
     merged.autoMerge = override.autoMerge;

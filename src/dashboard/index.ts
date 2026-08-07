@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { logger } from "../utils/logger.js";
 
@@ -66,9 +67,15 @@ const HTML_PAGE = `<!DOCTYPE html>
 </div>
 <script>
 async function loadData() {
-  const res = await fetch('/api/data');
-  const data = await res.json();
-  const runs = data.runs || [];
+  let runs;
+  try {
+    const res = await fetch('/api/data');
+    const data = await res.json();
+    runs = data.runs || [];
+  } catch (e) {
+    document.getElementById('empty-state').style.display = 'block';
+    return;
+  }
   if (runs.length === 0) { document.getElementById('empty-state').style.display = 'block'; return; }
   const latest = runs[runs.length - 1];
   const totalFindings = runs.reduce((s,r) => s + r.totalFindings, 0);
@@ -91,6 +98,7 @@ loadData();
 export class DashboardServer {
   private server: ReturnType<typeof createServer> | null = null;
   private data: DashboardData = { runs: [] };
+  private shutdownHandler: (() => void) | null = null;
 
   constructor(
     private port: number,
@@ -114,27 +122,31 @@ export class DashboardServer {
     }
   }
 
-  private saveData(): void {
+  private async saveData(): Promise<void> {
     const p = this.dataPath();
     const dir = resolve(this.dataDir);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(p, JSON.stringify(this.data, null, 2), "utf8");
+    await writeFile(p, JSON.stringify(this.data, null, 2), "utf8");
   }
 
-  recordRun(run: DashboardData["runs"][0]): void {
+  async recordRun(run: DashboardData["runs"][0]): Promise<void> {
     this.data.runs.push(run);
     if (this.data.runs.length > MAX_RUNS) this.data.runs = this.data.runs.slice(-MAX_RUNS);
-    this.saveData();
+    await this.saveData();
   }
 
   start(): void {
     this.server = createServer((req: IncomingMessage, res: ServerResponse) => {
-      if (req.url === "/api/data") {
+      const path = (req.url ?? "/").split("?")[0];
+      if (path === "/api/data") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(this.data));
-      } else {
+      } else if (path === "/") {
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(HTML_PAGE);
+      } else {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("Not found");
       }
     });
     this.server.listen(this.port, () => {
@@ -145,12 +157,21 @@ export class DashboardServer {
       logger.info("Shutting down dashboard server...");
       this.stop();
     };
+    this.shutdownHandler = shutdown;
     process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
   }
 
   stop(): void {
     if (this.server) {
-      this.server.close();
+      this.server.close(() => {
+        if (this.shutdownHandler) {
+          process.removeListener("SIGTERM", this.shutdownHandler);
+          process.removeListener("SIGINT", this.shutdownHandler);
+          this.shutdownHandler = null;
+        }
+        process.exitCode = 0;
+      });
       this.server = null;
     }
   }
