@@ -78,7 +78,7 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
     const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
     const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
-    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
+    const consumed = Math.max(fileIdx, lineIdx, ruleIdArgIdx) + 2;
     const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
     return { reason, filePath, lineNum, ruleIdArg };
   }
@@ -142,8 +142,8 @@ const WORKFLOW_CONTENT = [
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
   "        with:",
   "          mode: plan",
-  "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+  "          issue_title: \"${{ github.event.issue.title }}\"",
+  "          issue_body: \"${{ github.event.issue.body }}\"",
   "          use_opencode_cli: \"false\"",
   "",
 "      - name: Update comment with plan",
@@ -359,21 +359,19 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
+  "            git remote set-url origin \"https://github.com/${{ github.repository }}.git\" 2>&1",
+  "            AUTH_HEADER=\"Authorization: Basic $(printf 'x-access-token:%s' \"$GIT_PUSH_TOKEN\" | base64 -w0)\"",
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            git -c http.extraHeader=\"$AUTH_HEADER\" push origin HEAD:${{ github.ref_name }} 2>&1",
   "            if [ $? -ne 0 ]; then",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
   "              git fetch origin ${{ github.ref_name }} 2>&1",
   "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
-  "              git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "              git -c http.extraHeader=\"$AUTH_HEADER\" push origin HEAD:${{ github.ref_name }} 2>&1",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
@@ -631,9 +629,15 @@ async function main(): Promise<void> {
         process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
       }
     } else {
+      if (parsed.lineNum == null) {
+        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
+        process.stdout.write("Error: line required for --file.\n");
+        process.exitCode = 1;
+        return;
+      }
       try {
-        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
-        process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
+        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum, parsed.ruleIdArg!, parsed.reason);
+        process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}:${parsed.lineNum}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
       }
@@ -818,7 +822,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const report = await engine.run();
+  let report;
+  try {
+    report = await engine.run();
+  } catch (err) {
+    process.stderr.write(`Error in mode ${String(values.mode)}: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
 
   // JSON output mode
   if (values.json) {
