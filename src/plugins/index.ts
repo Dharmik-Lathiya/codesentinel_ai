@@ -33,46 +33,71 @@ export interface CodeSentinelPlugin {
  */
 export class PluginManager {
   private plugins: CodeSentinelPlugin[] = [];
+  private loadedPaths = new Set<string>();
 
   constructor(private ctx: PluginContext) {}
 
-  /** Dynamically import and register plugins listed in config. */
+  /** Dynamically import and register plugins listed in config.
+   * Plugin paths must be absolute: dynamic import() resolves a relative
+   * path against the importing module, not the process CWD, so relative
+   * paths are ambiguous and unsupported. */
   async load(paths: string[]): Promise<void> {
     for (const p of paths) {
+      if (this.loadedPaths.has(p)) continue;
+      this.loadedPaths.add(p);
       try {
-        const plugin = await this.loadPlugin(p);
-        if (plugin) {
-          this.plugins.push(plugin);
-          await plugin.init?.(this.ctx);
-          this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
-        }
+        await this.registerPlugin(p);
       } catch (err) {
         this.ctx.logger.warn(`Failed to load plugin "${p}":`, err);
       }
     }
   }
 
+  private async registerPlugin(path: string): Promise<void> {
+    const plugin = await this.loadPlugin(path);
+    if (!plugin) {
+      return;
+    }
+    await plugin.init?.(this.ctx);
+    this.plugins.push(plugin);
+    this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
+  }
+
   private async loadPlugin(path: string): Promise<CodeSentinelPlugin | null> {
     try {
       const mod = (await import(path)) as { default?: CodeSentinelPlugin };
-      const plugin = mod.default;
-      if (!plugin) {
-        this.ctx.logger.warn(
-          `Plugin "${path}" does not export a default CodeSentinelPlugin.`,
-        );
-        return null;
-      }
-      if (typeof plugin.name !== "string" || plugin.name.length === 0) {
-        this.ctx.logger.warn(
-          `Plugin "${path}" is missing a valid "name" property.`,
-        );
-        return null;
-      }
-      return plugin;
+      return this.validatePlugin(mod.default, path);
     } catch (err) {
       this.ctx.logger.warn(`Failed to load plugin "${path}":`, err);
       return null;
     }
+  }
+
+  private validatePlugin(
+    plugin: CodeSentinelPlugin | undefined,
+    path: string,
+  ): CodeSentinelPlugin | null {
+    if (!plugin) {
+      this.ctx.logger.warn(
+        `Plugin "${path}" does not export a default CodeSentinelPlugin.`,
+      );
+      return null;
+    }
+    if (typeof plugin.name !== "string" || plugin.name.length === 0) {
+      this.ctx.logger.warn(
+        `Plugin "${path}" is missing a valid "name" property.`,
+      );
+      return null;
+    }
+    for (const hook of ["analyze", "score"] as const) {
+      if (plugin[hook] !== undefined && typeof plugin[hook] !== "function") {
+        this.ctx.logger.warn(
+          `Plugin "${path}" has a non-function "${hook}" hook.`,
+        );
+        return null;
+      }
+    }
+    return plugin;
   }
 
   get all(): CodeSentinelPlugin[] {
@@ -83,23 +108,25 @@ export class PluginManager {
   async runAnalyze(
     files: { path: string; content: string }[],
   ): Promise<Finding[]> {
+    const results = await Promise.allSettled(
+      this.plugins.map((p) => this.runAnalyzeFor(p, files)),
+    );
+    return results.flatMap((r) =>
+      r.status === "fulfilled" ? r.value : [],
+    );
+  }
+
+  private async runAnalyzeFor(
+    plugin: CodeSentinelPlugin,
+    files: { path: string; content: string }[],
+  ): Promise<Finding[]> {
     try {
-      const results = await Promise.all(
-        this.plugins.map(async (p) => {
-          try {
-            return (await p.analyze?.(files)) ?? [];
-          } catch (err) {
-            this.ctx.logger.warn(
-              `Analyze hook failed for plugin "${p.name}":`,
-              err,
-            );
-            return [];
-          }
-        }),
-      );
-      return results.flat();
+      return (await plugin.analyze?.(files)) ?? [];
     } catch (err) {
-      this.ctx.logger.warn(`Analyze phase failed:`, err);
+      this.ctx.logger.warn(
+        `Analyze hook failed for plugin "${plugin.name}":`,
+        err,
+      );
       return [];
     }
   }
@@ -111,16 +138,24 @@ export class PluginManager {
   ): Promise<ScoreBreakdown> {
     let b = breakdown;
     for (const p of this.plugins) {
-      try {
-        b = (await p.score?.(b, files)) ?? b;
-      } catch (err) {
-        this.ctx.logger.warn(
-          `Score hook failed for plugin "${p.name}":`,
-          err,
-        );
-        // keep current breakdown
-      }
+      b = await this.runScoreFor(p, b, files);
     }
     return b;
+  }
+
+  private async runScoreFor(
+    plugin: CodeSentinelPlugin,
+    breakdown: ScoreBreakdown,
+    files: { path: string; content: string }[],
+  ): Promise<ScoreBreakdown> {
+    try {
+      return (await plugin.score?.(breakdown, files)) ?? breakdown;
+    } catch (err) {
+      this.ctx.logger.warn(
+        `Score hook failed for plugin "${plugin.name}":`,
+        err,
+      );
+      return breakdown;
+    }
   }
 }
