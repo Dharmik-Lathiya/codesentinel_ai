@@ -358,6 +358,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
+  '            git commit -m "fix: CodeSentinel auto-fix [skip ci]"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
   "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
@@ -818,7 +819,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const report = await engine.run();
+  let report: Awaited<ReturnType<typeof engine.run>>;
+  try {
+    report = await engine.run();
+  } catch (err) {
+    process.stderr.write(`Run failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
 
   // JSON output mode
   if (values.json) {
