@@ -1,4 +1,8 @@
 import type { CodeSentinelConfig, AnalyzerConfig, SeverityAdjustmentConfig, ConfidenceThresholds, ProgressiveAnalysisConfig, MultiFileAnalysisConfig, GateConfig, SecretPattern, DashboardConfig, LinterConfig, LearningConfig, MCPConfig, BatchConfig } from "./types.js";
+const AWS_SECRET_ACCESS_KEY_LENGTH = 40;
+const GITHUB_TOKEN_SUFFIX_LENGTH = 36;
+const SLACK_TOKEN_SUFFIX_LENGTH = 10;
+const JWT_SEGMENT_MIN_LENGTH = 10;
 
 /**
  * Default severity adjustment configuration.
@@ -65,11 +69,11 @@ export const DEFAULT_GATE_CONFIG: GateConfig = {
 
 export const DEFAULT_SECRET_PATTERNS: SecretPattern[] = [
   { id: "aws-key", name: "AWS Access Key", regex: "AKIA[0-9A-Z]{16}", severity: "critical", message: "Hardcoded AWS Access Key ID detected.", suggestion: "Use IAM roles or environment variables instead." },
-  { id: "aws-secret", name: "AWS Secret Key", regex: "(?i)aws(.{0,20})?(secret|access)_?key\\s*[=:]\\s*['\"][A-Za-z0-9/+=]{40}['\"]", severity: "critical", message: "Hardcoded AWS Secret Access Key detected.", suggestion: "Use IAM roles or environment variables instead." },
-  { id: "github-token", name: "GitHub Token", regex: "(?i)github[-_]?(token|pat|key)\\s*[=:]\\s*['\"](ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}['\"]", severity: "critical", message: "Hardcoded GitHub token detected.", suggestion: "Use GITHUB_TOKEN secret or environment variables." },
-  { id: "slack-token", name: "Slack Token", regex: "(xox[baprs]-[0-9a-zA-Z]{10,})", severity: "high", message: "Hardcoded Slack token detected.", suggestion: "Use environment variables for Slack tokens." },
+  { id: "aws-secret", name: "AWS Secret Access Key", regex: "(?i)aws(.{0,20})?(secret|access)_?key\s*[=:]\s*['\"][A-Za-z0-9/+=]{${AWS_SECRET_ACCESS_KEY_LENGTH}}['\"]", severity: "critical", message: "Hardcoded AWS Secret Access Key detected.", suggestion: "Use IAM roles or environment variables instead." },
+  { id: "github-token", name: "GitHub Token", regex: "(?i)github[-_]?(token|pat|key)\s*[=:]\s*['\"](ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{${GITHUB_TOKEN_SUFFIX_LENGTH},}['\"]", severity: "critical", message: "Hardcoded GitHub token detected.", suggestion: "Use GITHUB_TOKEN secret or environment variables." },
+  { id: "slack-token", name: "Slack Token", regex: "(xox[baprs]-[0-9a-zA-Z]{${SLACK_TOKEN_SUFFIX_LENGTH},})", severity: "high", message: "Hardcoded Slack token detected.", suggestion: "Use environment variables for Slack tokens." },
   { id: "ssh-key", name: "SSH Private Key", regex: "(?i)-----BEGIN\\s+(?:(?:RSA|DSA|EC|OPENSSH)\\s+)?PRIVATE\\s+KEY-----", severity: "critical", message: "Hardcoded SSH private key detected.", suggestion: "Use SSH agent or secrets manager." },
-  { id: "jwt-token", name: "JWT Token", regex: "(?i)(jwt|bearer)\\s*[=:]\\s*['\"]eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}['\"]", severity: "high", message: "Hardcoded JWT token detected.", suggestion: "Use short-lived tokens from a secure source." },
+  { id: "jwt-token", name: "JWT Token", regex: "(?i)(jwt|bearer)\s*[=:]\s*['\"]eyJ[A-Za-z0-9_-]{${JWT_SEGMENT_MIN_LENGTH},}\.[A-Za-z0-9_-]{${JWT_SEGMENT_MIN_LENGTH},}\.[A-Za-z0-9_-]{${JWT_SEGMENT_MIN_LENGTH},}['\"]", severity: "high", message: "Hardcoded JWT token detected.", suggestion: "Use short-lived tokens from a secure source." },
   { id: "pg-conn-str", name: "PostgreSQL Connection String", regex: "postgres(ql)?://\\w+:\\w+@", severity: "high", message: "Hardcoded PostgreSQL connection string detected.", suggestion: "Use environment variables for database URLs." },
   { id: "redis-conn-str", name: "Redis Connection String", regex: "redis://\\w+:\\w+@", severity: "high", message: "Hardcoded Redis connection string detected.", suggestion: "Use environment variables for Redis URLs." },
   { id: "private-key-header", name: "Private Key Header", regex: "(?i)-----BEGIN\\s+(?:(?:RSA|DSA|EC|OPENSSH)\\s+)?PRIVATE\\s+KEY-----", severity: "critical", message: "Hardcoded private key detected.", suggestion: "Use a secrets manager or environment variables." },
