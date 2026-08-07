@@ -282,7 +282,7 @@ export class Engine {
     this.finalizeReport(report);
     report.metrics.durationMs = Date.now() - start;
 
-    if (this.config.output.writeReportFile) this.writeReportFile(report);
+    if (this.config.output.writeReportFile) await this.writeReportFile(report);
     return report;
   }
 
@@ -2042,20 +2042,21 @@ ${promptBody}
     report.metrics.repairedResponses = this.repairedCount;
   }
 
-  private writeReportFile(report: EngineReport): void {
+private async writeReportFile(report: EngineReport): Promise<void> {
     ensureDir(resolve(this.root, this.config.output.reportDir));
+    const { writeFile } = await import("node:fs/promises");
     const name =
       report.mode === "score" && report.score
         ? "score.json"
         : `codesentinel-${report.mode}.json`;
     const path = resolve(this.root, this.config.output.reportDir, name);
-    writeFileSync(path, JSON.stringify(report, null, 2), "utf8");
+    await writeFile(path, JSON.stringify(report, null, 2), "utf8");
     logger.info(`Wrote report: ${path}`);
 
     if (this.config.output.writeHtmlReport) {
-      const htmlName = name.replace(".json", ".html");
+      const htmlName = name.replace(/\.json$/, "") + ".html";
       const htmlPath = resolve(this.root, this.config.output.reportDir, htmlName);
-      writeFileSync(htmlPath, renderHtmlReport(report), "utf8");
+      await writeFile(htmlPath, renderHtmlReport(report), "utf8");
       logger.info(`Wrote HTML report: ${htmlPath}`);
     }
   }
