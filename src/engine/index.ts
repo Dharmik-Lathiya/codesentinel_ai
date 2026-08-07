@@ -40,6 +40,12 @@ import { groupIntoBatches } from "./batcher.js";
 const DEFAULT_OPENCODE_PORT = 4096;
 const CHECK_PROVIDER_TIMEOUT_MS = 2000;
 const RULE_ID_PREFIX_SLICE = 40;
+const MAX_FILE_CHARS = 30000;
+const PROMPT_PREVIEW_CHARS = 300;
+const DEFAULT_MAX_TOKENS = 65536;
+const MAX_DOUBLED_TOKENS = 32768;
+const MAX_CONTEXT_CHARS = 40000;
+const MAX_LOG_PREVIEW_CHARS = 500;
 
 /** A comment to post back to a PR (inline or summary). */
 export interface ReviewComment {
@@ -946,7 +952,6 @@ export class Engine {
 
     const numberedContent = content.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
     const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
-    const MAX_FILE_CHARS = 30000;
     const truncatedContent = redactedContent.length > MAX_FILE_CHARS
       ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FILE_CHARS} chars]`
       : redactedContent;
@@ -984,7 +989,7 @@ Suggestion: ${finding.suggestion ?? ""}
         { role: "user", content: prompt + (attempt > 0 ? "\n\nIMPORTANT: You MUST output ONLY valid JSON. No explanations, no markdown, no extra text. The JSON must parse correctly." : "") },
       ], { responseFormat: "json_object" });
 
-      const snippet = res.content.length > 500 ? res.content.slice(0, 500) + "..." : res.content;
+const snippet = res.content.length > MAX_LOG_PREVIEW_CHARS ? res.content.slice(0, MAX_LOG_PREVIEW_CHARS) + "..." : res.content;
       logger.info(`applyFix[${iteration}]: AI response len=${res.content.length} preview=${JSON.stringify(snippet)}`);
 
       parsed = extractJson<{ fixed: boolean; explanation: string; hunks: Hunk[] }>(res.content);
@@ -1054,7 +1059,6 @@ Suggestion: ${finding.suggestion ?? ""}
     const numberedContent = content.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
     const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
 
-    const MAX_FILE_CHARS = 30000;
     const truncatedContent = redactedContent.length > MAX_FILE_CHARS
       ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated from ${redactedContent.length} to ${MAX_FILE_CHARS} chars]`
       : redactedContent;
@@ -1088,7 +1092,7 @@ ${issuesMd}
         { role: "user", content: prompt + (attempt > 0 ? "\n\nIMPORTANT: You MUST output ONLY valid JSON. No explanations, no markdown, no extra text. The JSON must parse correctly." : "") },
       ], { responseFormat: "json_object" });
 
-      const snippet = res.content.length > 500 ? res.content.slice(0, 500) + "..." : res.content;
+const snippet = res.content.length > MAX_LOG_PREVIEW_CHARS ? res.content.slice(0, MAX_LOG_PREVIEW_CHARS) + "..." : res.content;
       logger.info(`batchApplyFix[${iteration}]: AI response len=${res.content.length} preview=${JSON.stringify(snippet)}`);
 
       parsed = extractJson<{ fixed: boolean; explanation: string; hunks: Hunk[] }>(res.content);
@@ -1137,8 +1141,8 @@ ${issuesMd}
       if (!rawContent.trim()) continue;
       const numberedContent = rawContent.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
       const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
-      const truncatedContent = redactedContent.length > 30000
-        ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", 30000)) + `\n\n// ... [file truncated]`
+const truncatedContent = redactedContent.length > MAX_FILE_CHARS
+        ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", MAX_FILE_CHARS)) + `\n\n// ... [file truncated]`
         : redactedContent;
       fileEntries.push({ path: filePath, content: truncatedContent, findings });
     }
@@ -1471,7 +1475,7 @@ ${promptBody}
     const context = files
       .map((f) => `### ${f.path}\n${f.content}`)
       .join("\n\n")
-      .slice(0, 40000);
+      .slice(0, MAX_CONTEXT_CHARS);
     const prompt = `Project context: ${this.config.project_context || "(none)"}\n\nRelevant code:\n${context}\n\nQuestion: ${question}\n\nAnswer concisely and with references to the code where possible.`;
     const res = await this.ai.complete("chat", [
       { role: "system", content: "You are a helpful senior engineer answering questions about this codebase." },
@@ -1809,7 +1813,7 @@ ${promptBody}
       output_format: this.config.jsonl_output ? "JSONL" : "JSON",
     });
 
-    const preview = prompt.length > 300 ? prompt.slice(0, 300) + "..." : prompt;
+    const preview = prompt.length > PROMPT_PREVIEW_CHARS ? prompt.slice(0, PROMPT_PREVIEW_CHARS) + "..." : prompt;
     logger.info(`callAI: task=${task} prompt=${promptName} file=${file.path} prompt_preview=${JSON.stringify(preview)}`);
 
     const res = await this.ai.complete(task, [
@@ -1824,8 +1828,8 @@ ${promptBody}
     if (parsed.truncated && !parsed.parsed) {
       this.truncatedCount++;
       const modelConfig = this.ai.modelForTask(task);
-      const currentTokens = maxTokensOverride ?? modelConfig.maxTokens ?? 65536;
-      const doubledTokens = Math.min(currentTokens * 2, 32768);
+      const currentTokens = maxTokensOverride ?? modelConfig.maxTokens ?? DEFAULT_MAX_TOKENS;
+      const doubledTokens = Math.min(currentTokens * 2, MAX_DOUBLED_TOKENS);
       logger.warn(`callAI: truncated response for ${file.path} — retrying with maxTokens=${doubledTokens} (was ${currentTokens})`);
       const res2 = await this.ai.complete(task, [
         { role: "system", content: "You are an expert code reviewer." },
@@ -1921,7 +1925,7 @@ ${promptBody}
     const code = files
       .map((f) => `### ${f.path}\n${f.content}`)
       .join("\n\n")
-      .slice(0, 40000);
+      .slice(0, MAX_CONTEXT_CHARS);
     const prompt = this.prompts.render("score", {
       project_context: this.config.project_context || "(none)",
       language: files[0]?.path.split(".").pop() ?? "text",
