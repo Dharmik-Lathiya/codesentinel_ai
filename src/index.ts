@@ -499,7 +499,9 @@ Modes:
 Options:
   -m, --mode <mode>           Operational mode
   -c, --config <path>         Path to codesentinel.config.json
-  --provider <name>           AI provider (openai | anthropic | gemini | opencode)
+--provider <name>           AI provider (openai | anthropic | gemini | opencode)
+                              Overrides all task models at once; discards any per-task
+                              provider/model settings defined in your config file
                               Overrides all task models at once
   --max-iterations <n>        Max fix iterations (default: 5)
   --auto-fix                  Apply fixes automatically
@@ -697,9 +699,10 @@ async function main(): Promise<void> {
     [values["max-high"], "--max-high"],
   ];
   for (const [value, name] of numericFlags) {
-    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
-      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
-      showHelp();
+    const isInt = name === "--max-iterations" || name === "--max-critical" || name === "--max-high";
+    if (value !== undefined && (isInt ? !/^[0-9]+$/.test(value.trim()) : !/^[0-9]+(\.[0-9]+)?$/.test(value.trim()))) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a ${isInt ? "non-negative integer" : "non-negative number"})
+`);
       return;
     }
   }
