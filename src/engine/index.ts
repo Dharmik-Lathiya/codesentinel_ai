@@ -1472,10 +1472,27 @@ ${promptBody}
       .join("\n\n")
       .slice(0, 40000);
     const prompt = `Project context: ${this.config.project_context || "(none)"}\n\nRelevant code:\n${context}\n\nQuestion: ${question}\n\nAnswer concisely and with references to the code where possible.`;
-    const res = await this.ai.complete("chat", [
-      { role: "system", content: "You are a helpful senior engineer answering questions about this codebase." },
-      { role: "user", content: prompt },
-    ]);
+    let res;
+    try {
+      res = await this.ai.complete("chat", [
+        { role: "system", content: "You are a helpful senior engineer answering questions about this codebase." },
+        { role: "user", content: prompt },
+      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`runChat: AI completion failed: ${msg}`);
+      return {
+        mode: "chat",
+        summary: `AI completion failed: ${msg}`,
+        findings: [],
+        score: null,
+        comments: [],
+        generatedTests: [],
+        fixAttempts: [],
+        metrics: { filesAnalyzed: files.length, findingsBySeverity: {}, durationMs: 0 },
+      };
+    }
+
 
     return {
       mode: "chat",
@@ -1515,10 +1532,18 @@ ${promptBody}
       project_context: this.config.project_context || "(none)",
       diff,
     });
-    const res = await this.ai.complete("describe", [
-      { role: "system", content: "You write concise, structured PR descriptions." },
-      { role: "user", content: prompt },
-    ]);
+    let res;
+    try {
+      res = await this.ai.complete("describe", [
+        { role: "system", content: "You write concise, structured PR descriptions." },
+        { role: "user", content: prompt },
+      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`runDescribe: AI completion failed: ${msg}`);
+      res = { content: "" };
+    }
+
     const parsed = extractJson<{
       title: string;
       description: string;
@@ -1567,11 +1592,19 @@ ${promptBody}
       description,
       project_context: this.config.project_context || "(none)",
     });
-    const res = await this.ai.complete("plan", [
-      { role: "system", content: "You generate structured implementation plans for GitHub issues." },
-      { role: "user", content: prompt },
-    ]);
+    let res;
+    try {
+      res = await this.ai.complete("plan", [
+        { role: "system", content: "You generate structured implementation plans for GitHub issues." },
+        { role: "user", content: prompt },
+      ]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`generatePlan: AI completion failed: ${msg}`);
+      return `AI completion failed: ${msg}`;
+    }
     return res.content;
+
   }
 
   private async runPlan(): Promise<EngineReport> {
