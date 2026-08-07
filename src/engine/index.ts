@@ -281,13 +281,28 @@ export class Engine {
         report = await this.runDescribe();
         break;
       case "chat":
+      try {
         report = await this.runChat("(no prompt supplied; use ask())");
+      } catch (err) {
+        logger.warn(`runChat failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
         break;
       case "improve":
+      try {
         report = await this.runImprove();
+      } catch (err) {
+        logger.warn(`runImprove failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
         break;
       case "plan":
+      try {
         report = await this.runPlan();
+      } catch (err) {
+        logger.warn(`runPlan failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
         break;
       default:
         throw new Error(`Unsupported mode: ${this.config.mode}`);
