@@ -59,7 +59,7 @@ export function renderHtmlReport(report: EngineReport): string {
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
-        <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
+        <td>${escapeHtml(f.file)}${f.line != null ? `:${escapeHtml(String(f.line))}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
         <td>${f.suggestion ? escapeHtml(f.suggestion) : "—"}</td>
       </tr>`;
@@ -149,11 +149,10 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
   if (!score) return "";
   return `
     <div class="card" style="display:flex;align-items:center;gap:1rem">
-      <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
+      <div class="score-ring" style="background:${scoreColor(score.overall)}">${Number.isFinite(score.overall) ? score.overall : "N/A"}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
-
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
       </div>
     </div>`;
 }
@@ -212,7 +211,7 @@ function escapeHtml(s: string): string {
 }
 
 function scoreColor(score: number): string {
-  if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
+  if (!Number.isFinite(score)) return "#6b7280";
   if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
   if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
   return "#dc2626";
