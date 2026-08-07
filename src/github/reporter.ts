@@ -16,6 +16,9 @@ export interface GitHubCoordinates {
 
 export class GitHubReporter {
   private readonly api = "https://api.github.com";
+  private readonly apiVersion = "2022-11-28";
+  private readonly maxRateLimitBudget = 10;
+  private readonly baseRetryDelayMs = 5000;
 
   constructor(private coords: GitHubCoordinates) {}
 
@@ -24,8 +27,28 @@ export class GitHubReporter {
       Authorization: `Bearer ${this.coords.token}`,
       Accept: "application/vnd.github+json",
       "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
+      "X-GitHub-Api-Version": this.apiVersion,
     };
+  }
+
+  private computeRetryDelay(res: Response): number {
+    const retryAfter = res.headers.get("retry-after");
+    const resetTime = res.headers.get("x-ratelimit-reset");
+    let delayMs = this.baseRetryDelayMs;
+    if (retryAfter) {
+      delayMs = Number(retryAfter) * 1000;
+    } else if (resetTime) {
+      delayMs = Math.max(0, Number(resetTime) * 1000 - Date.now()) + 1000;
+    }
+    return delayMs;
+  }
+
+  private isRetryable(err: unknown): boolean {
+    if (err instanceof Error) {
+      const msg = err.message.toLowerCase();
+      return msg.includes("rate limit") || msg.includes("429") || msg.includes("403") || msg.includes("503");
+    }
+    return false;
   }
 
   private async request(method: string, url: string, body?: Record<string, unknown>): Promise<unknown> {
@@ -38,19 +61,12 @@ export class GitHubReporter {
 
       // Respect rate limiting
       const remaining = res.headers.get("x-ratelimit-remaining");
-      if (remaining && Number(remaining) < 10) {
+      if (remaining && Number(remaining) < this.maxRateLimitBudget) {
         logger.warn(`GitHub API rate limit low: ${remaining} requests remaining`);
       }
 
       if (res.status === 403 || res.status === 429) {
-        const retryAfter = res.headers.get("retry-after");
-        const resetTime = res.headers.get("x-ratelimit-reset");
-        let delayMs = 5000;
-        if (retryAfter) {
-          delayMs = Number(retryAfter) * 1000;
-        } else if (resetTime) {
-          delayMs = Math.max(0, Number(resetTime) * 1000 - Date.now()) + 1000;
-        }
+        const delayMs = this.computeRetryDelay(res);
         logger.warn(`GitHub API rate limited, retrying after ${delayMs}ms`);
         throw new Error(`Rate limited (${res.status}), retrying after ${delayMs}ms`);
       }
@@ -63,13 +79,7 @@ export class GitHubReporter {
     }, {
       maxAttempts: 3,
       baseDelayMs: 2000,
-      shouldRetry: (err) => {
-        if (err instanceof Error) {
-          const msg = err.message.toLowerCase();
-          return msg.includes("rate limit") || msg.includes("429") || msg.includes("403") || msg.includes("503");
-        }
-        return false;
-      },
+      shouldRetry: (err) => this.isRetryable(err),
     });
   }
 
