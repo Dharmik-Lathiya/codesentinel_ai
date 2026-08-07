@@ -112,7 +112,7 @@ export class Scorer {
       default:
         // Keep the more conservative (lower) security number: static analysis
         // is more reliable for security, so we take the stricter assessment.
-        security = Math.min(ai.security ?? MAX_SCORE, baseline.security);
+        security = ai.security === undefined ? baseline.security : Math.min(ai.security, baseline.security);
         break;
     }
     const test_coverage = ai.test_coverage ?? baseline.test_coverage;
@@ -155,7 +155,7 @@ export class Scorer {
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > 120).length;
       const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      total += Math.max(0, score);
     }
     return fileCount ? total / fileCount : 100;
   }
