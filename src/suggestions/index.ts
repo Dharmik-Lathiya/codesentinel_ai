@@ -18,10 +18,9 @@ export function buildSuggestionsComment(
       const ctxBefore = lines.slice(Math.max(0, f.line - 1 - CONTEXT_BEFORE), f.line - 1).join("\n");
       const ctxAfter = lines.slice(f.line, Math.min(lines.length, f.line + CONTEXT_AFTER)).join("\n");
       const context = ctxBefore ? ctxBefore + "\n" : "";
-      const after = ctxAfter ? ctxAfter : "";
       const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
       const original = lines[f.line - 1];
-      const code = suggested || `${context}  // ${f.comment}\n${original}\n${after}`;
+const code = suggested || `${context}  // ${f.comment}\n${original}\n${ctxAfter}`;
       parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
     } else {
       const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";

@@ -30,7 +30,14 @@ interface ReportingDescriptor {
 
 const PKG_VERSION = (() => {
   try {
-    return (createRequire(import.meta.url)("../../package.json") as { version: string }).version ?? "0.0.0";
+    const require = createRequire(import.meta.url);
+    let dir = import.meta.url;
+    for (;;) {
+      dir = dir.slice(0, dir.lastIndexOf("/"));
+      const pkgPath = `${dir}/package.json`;
+      const pkg = require(pkgPath);
+      if (pkg?.version) return pkg.version as string;
+    }
   } catch {
     return "0.0.0";
   }
@@ -44,7 +51,6 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
-const COMMENT_TRUNCATION_LENGTH = 40;
 
 function simpleHash(s: string): string {
   let hash = 0;
@@ -60,7 +66,7 @@ function createSarifLocation(file: string, line?: number): SarifResult["location
   return {
     physicalLocation: {
       artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
-      ...(line != null ? { region: { startLine: line } } : {}),
+  ...(line && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }

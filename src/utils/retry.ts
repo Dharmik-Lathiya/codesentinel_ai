@@ -2,9 +2,9 @@ import { logger } from "./logger.js";
 
 const MILLISECONDS_PER_SECOND = 1000;
 const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
-const HTTP_STATUS_RATE_LIMIT = "429";
-const HTTP_STATUS_SERVICE_UNAVAILABLE = "503";
-const HTTP_STATUS_BAD_GATEWAY = "502";
+const HTTP_STATUS_RATE_LIMIT = 429;
+const HTTP_STATUS_SERVICE_UNAVAILABLE = 503;
+const HTTP_STATUS_BAD_GATEWAY = 502;
 const RETRYABLE_STATUS_CODES = new Set([429, 502, 503]);
 
 export interface RetryOptions {
@@ -18,7 +18,6 @@ export interface RetryOptions {
   /** Max delay in ms for a single retry (cap on exponential backoff). Default: unbounded (grows with attempts). */
   maxDelayMs?: number;
   /**
-   * Optional predicate: return true to retry on this error.
    * Optional predicate: return true to retry on this error.
    * Note: the default predicate only matches `Error` instances; non-Error
    * throws (strings, plain objects) are never retried.
@@ -42,9 +41,9 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(HTTP_STATUS_RATE_LIMIT) ||
-      msg.includes(HTTP_STATUS_SERVICE_UNAVAILABLE) ||
-      msg.includes(HTTP_STATUS_BAD_GATEWAY) ||
+msg.includes(String(HTTP_STATUS_RATE_LIMIT)) ||
+      msg.includes(String(HTTP_STATUS_SERVICE_UNAVAILABLE)) ||
+      msg.includes(String(HTTP_STATUS_BAD_GATEWAY)) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
