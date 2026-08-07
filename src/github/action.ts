@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -11,13 +11,16 @@ const MAX_SCORE = 100;
 const MAX_ANNOTATIONS = 50;
 
 function buildGateAnnotations(findings: EngineReport["findings"]) {
-  return findings.slice(0, MAX_ANNOTATIONS).map((f) => ({
-    path: f.file,
-    start_line: f.line ?? 1,
-    end_line: f.line ?? 1,
-    annotation_level: (f.severity === "critical" || f.severity === "high" ? "failure" : "warning") as "failure" | "warning" | "notice",
-    message: f.comment,
-  }));
+  return findings
+    .filter((f) => f.line !== undefined)
+    .slice(0, MAX_ANNOTATIONS)
+    .map((f) => ({
+      path: f.file,
+      start_line: f.line as number,
+      end_line: f.line as number,
+      annotation_level: (f.severity === "critical" || f.severity === "high" ? "failure" : "warning") as "failure" | "warning" | "notice",
+      message: f.comment,
+    }));
 }
 
 async function postAuditIssues(reporter: GitHubReporter, report: EngineReport): Promise<void> {
@@ -123,6 +126,10 @@ export async function runAction(): Promise<void> {
   };
 
   const runMode = (inputs.mode || "review") as Mode;
+  const VALID_MODES: Mode[] = ["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan"];
+  if (!VALID_MODES.includes(runMode)) {
+    throw new Error(`Invalid mode "${inputs.mode}". Expected one of: ${VALID_MODES.join(", ")}`);
+  }
   const engine = Engine.fromInputs({
     configPath: get("config_path") || undefined,
     overrides: { ...configOverrides, mode: runMode, enable_auto_fix: configOverrides.enable_auto_fix ?? false },
@@ -191,7 +198,6 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, aut
   // Metrics as workflow outputs via GITHUB_OUTPUT (legacy ::set-output is deprecated).
   const outputPath = process.env.GITHUB_OUTPUT;
   if (outputPath) {
-    const { appendFileSync } = await import("node:fs");
     const score = report.score?.overall ?? "n/a";
     const findings = String(report.findings.length);
     appendFileSync(outputPath, `score=${score}\n`);
