@@ -60,12 +60,12 @@ export class PluginManager {
         this.ctx.logger.warn(
           `Plugin "${path}" does not export a default CodeSentinelPlugin.`,
         );
-        return null;
-      }
-      if (typeof plugin.name !== "string" || plugin.name.length === 0) {
-        this.ctx.logger.warn(
-          `Plugin "${path}" is missing a valid "name" property.`,
-        );
+    if (!plugin || typeof plugin !== "object") {
+      this.ctx.logger.warn(
+        `Plugin "${path}" does not export a default CodeSentinelPlugin.`,
+      );
+      return null;
+    }
         return null;
       }
       return plugin;
