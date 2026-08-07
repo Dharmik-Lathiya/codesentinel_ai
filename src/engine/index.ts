@@ -456,24 +456,24 @@ export class Engine {
 
     const filtered = this.dismissals.filterDismissed(allFindings);
 
-    // Auto-mute rules with persistently high false-positive rates
-    if (this.learning && this.config.learning.enabled) {
-      try {
-        const highFp = await this.learning.getHighFalsePositiveRules();
-        if (highFp.length) {
-          const mutedRuleIds = new Set(highFp.map((r) => r.ruleId));
-          const result = filtered.filter((f) => {
-            const ruleId = `${f.category}:${f.comment.slice(0, 40)}`;
-            return !mutedRuleIds.has(ruleId);
-          });
-          if (result.length < filtered.length) {
-            logger.info(`analyzeFiles: auto-muted ${filtered.length - result.length} finding(s) from ${highFp.length} high-FP rule(s)`);
-          }
-          return result;
-        }
-      } catch { /* best-effort */ }
-    }
+    return this.applyAutoMute(filtered);
+  }
 
+  /** Auto-mute rules with persistently high false-positive rates. */
+  private async applyAutoMute(filtered: Finding[]): Promise<Finding[]> {
+    if (!this.learning || !this.config.learning.enabled) return filtered;
+    try {
+      const highFp = await this.learning.getHighFalsePositiveRules();
+      if (!highFp.length) return filtered;
+      const mutedRuleIds = new Set(highFp.map((r) => r.ruleId));
+      const result = filtered.filter(
+        (f) => !mutedRuleIds.has(`${f.category}:${f.comment.slice(0, 40)}`),
+      );
+      if (result.length < filtered.length) {
+        logger.info(`analyzeFiles: auto-muted ${filtered.length - result.length} finding(s) from ${highFp.length} high-FP rule(s)`);
+      }
+      return result;
+    } catch { /* best-effort */ }
     return filtered;
   }
 
@@ -492,31 +492,9 @@ export class Engine {
     this.recordPatterns(findings).catch(() => {});
 
     // Auto-fix actionable findings when auto-fix is enabled
-    let fixAttempts: FixAttempt[] = [];
     if (this.config.enable_auto_fix && !this.config.dry_run) {
-      const actionable = findings.filter((f) => f.category !== "praise");
-      if (actionable.length > 0) {
-        logger.info(`runReview: auto-fixing ${actionable.length} issue(s)`);
-        const fixReport = await this.runFixLoopFor(actionable);
-        fixAttempts = fixReport.fixAttempts;
-        // Re-read files to get updated findings after fixes
-        const updatedFiles = await this.collectedFiles();
-        const updatedStatic = await this.analyzeFiles(updatedFiles);
-        const updatedAiFiles = this.redactFilesForAI(updatedFiles);
-        const { findings: updatedAi } = await this.aiReview(updatedAiFiles);
-        const updatedFindings = [...updatedStatic, ...updatedAi];
-        const summary = this.buildSummary("review", updatedFindings, fixAttempts, aiSummaries);
-        return {
-          mode: "review",
-          summary,
-          findings: updatedFindings,
-          score: this.config.enable_scoring ? await this.computeScore(updatedFiles, updatedFindings) : null,
-          comments: [],
-          generatedTests: [],
-          fixAttempts,
-          metrics: { filesAnalyzed: updatedFiles.length, findingsBySeverity: {}, durationMs: 0 },
-        };
-      }
+      const autoFixed = await this.tryAutoFixInReview(findings, aiSummaries);
+      if (autoFixed) return autoFixed;
     }
 
     const comments: ReviewComment[] = findings
@@ -552,6 +530,34 @@ export class Engine {
     return report;
   }
 
+  /** Auto-fix actionable findings (if any) and return an updated report, or null when nothing to fix. */
+  private async tryAutoFixInReview(
+    findings: Finding[],
+    aiSummaries: string[],
+  ): Promise<EngineReport | null> {
+    const actionable = findings.filter((f) => f.category !== "praise");
+    if (actionable.length === 0) return null;
+    logger.info(`runReview: auto-fixing ${actionable.length} issue(s)`);
+    const fixReport = await this.runFixLoopFor(actionable);
+    // Re-read files to get updated findings after fixes
+    const updatedFiles = await this.collectedFiles();
+    const updatedStatic = await this.analyzeFiles(updatedFiles);
+    const updatedAiFiles = this.redactFilesForAI(updatedFiles);
+    const { findings: updatedAi } = await this.aiReview(updatedAiFiles);
+    const updatedFindings = [...updatedStatic, ...updatedAi];
+    const summary = this.buildSummary("review", updatedFindings, fixReport.fixAttempts, aiSummaries);
+    return {
+      mode: "review",
+      summary,
+      findings: updatedFindings,
+      score: this.config.enable_scoring ? await this.computeScore(updatedFiles, updatedFindings) : null,
+      comments: [],
+      generatedTests: [],
+      fixAttempts: fixReport.fixAttempts,
+      metrics: { filesAnalyzed: updatedFiles.length, findingsBySeverity: {}, durationMs: 0 },
+    };
+  }
+
   /**
    * Create a deep copy of the file list with secrets redacted from `content`
    * before sending to the AI provider. Never mutates files on disk.
@@ -580,25 +586,7 @@ export class Engine {
 
     // Split large files into chunks by maxLinesPerFile
     const maxLines = this.config.batch.maxLinesPerFile;
-    const expandedFiles: { path: string; content: string; diff?: string; chunk?: number }[] = [];
-    for (const file of files) {
-      const lines = file.content.split("\n");
-      if (maxLines > 0 && lines.length > maxLines) {
-        const nChunks = Math.ceil(lines.length / maxLines);
-        logger.info(`aiReview: splitting ${file.path} (${lines.length} lines) into ${nChunks} chunks of ${maxLines} lines`);
-        for (let i = 0; i < nChunks; i++) {
-          const chunkLines = lines.slice(i * maxLines, (i + 1) * maxLines);
-          expandedFiles.push({
-            path: file.path,
-            content: chunkLines.join("\n"),
-            diff: file.diff,
-            chunk: i + 1,
-          });
-        }
-      } else {
-        expandedFiles.push({ ...file });
-      }
-    }
+    const expandedFiles = this.chunkLargeFiles(files, maxLines);
 
     // Group into batches if batching is enabled
     const batches = this.config.batch.enabled
@@ -609,38 +597,77 @@ export class Engine {
     const allSummaries: string[] = [];
     for (const batch of batches) {
       logger.info(`aiReview: batch size=${batch.length}`);
-      const results = await concurrentMap(batch, async (file) => {
-        const chunkLabel = file.chunk ? ` (chunk ${file.chunk})` : "";
-        logger.info(`aiReview: processing ${file.path}${chunkLabel} (content_len=${file.content.length})`);
-        try {
-          const cacheKey = { task: "review", path: file.path, content: file.content, chunk: file.chunk };
-          const cached = this.config.enable_cache
-            ? this.cache.get<{ findings: any[]; summary?: string }>("review", cacheKey)
-            : null;
-          const parsed = cached ?? (await this.callAI("review", "review", file));
-          if (!cached && this.config.enable_cache) {
-            this.cache.set("review", cacheKey, parsed);
-          }
-          if ("summary" in parsed && parsed.summary) allSummaries.push(parsed.summary);
-          const fileFindings = (parsed.findings ?? []).map((f: any) => ({
-            ...f,
-            file: file.path,
-            source: "ai" as const,
-          }));
-          logger.info(`aiReview: ${file.path}${chunkLabel} -> ${fileFindings.length} findings (cached=${!!cached})`);
-          return fileFindings;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.warn(`AI review failed for ${file.path}${chunkLabel}: ${msg}`);
-          return [];
-        }
-      }, 5);
-      allResults.push(...results.flat());
+      const results = await concurrentMap(
+        batch,
+        (file) => this.reviewOneFile(file, allSummaries),
+        5,
+      );
+      for (const r of results) {
+        if (r instanceof Error) continue;
+        allResults.push(...r);
+      }
     }
 
     const out = allResults;
     logger.info(`aiReview: total AI findings = ${out.length} | truncated=${this.truncatedCount} repaired=${this.repairedCount}`);
     return { findings: out, summaries: allSummaries };
+  }
+
+  /** Split files larger than `maxLines` into chunks (maxLines <= 0 disables chunking). */
+  private chunkLargeFiles(
+    files: { path: string; content: string; diff?: string }[],
+    maxLines: number,
+  ): { path: string; content: string; diff?: string; chunk?: number }[] {
+    const expanded: { path: string; content: string; diff?: string; chunk?: number }[] = [];
+    for (const file of files) {
+      const lines = file.content.split("\n");
+      if (!(maxLines > 0 && lines.length > maxLines)) {
+        expanded.push({ ...file });
+        continue;
+      }
+      const nChunks = Math.ceil(lines.length / maxLines);
+      logger.info(`aiReview: splitting ${file.path} (${lines.length} lines) into ${nChunks} chunks of ${maxLines} lines`);
+      for (let i = 0; i < nChunks; i++) {
+        expanded.push({
+          path: file.path,
+          content: lines.slice(i * maxLines, (i + 1) * maxLines).join("\n"),
+          diff: file.diff,
+          chunk: i + 1,
+        });
+      }
+    }
+    return expanded;
+  }
+
+  /** Run AI review on a single file with caching; never throws (falls back to []). */
+  private async reviewOneFile(
+    file: { path: string; content: string; diff?: string; chunk?: number },
+    allSummaries: string[],
+  ): Promise<Finding[]> {
+    const chunkLabel = file.chunk ? ` (chunk ${file.chunk})` : "";
+    logger.info(`aiReview: processing ${file.path}${chunkLabel} (content_len=${file.content.length})`);
+    try {
+      const cacheKey = { task: "review", path: file.path, content: file.content, chunk: file.chunk };
+      const cached = this.config.enable_cache
+        ? this.cache.get<{ findings: any[]; summary?: string }>("review", cacheKey)
+        : null;
+      const parsed = cached ?? (await this.callAI("review", "review", file));
+      if (!cached && this.config.enable_cache) {
+        this.cache.set("review", cacheKey, parsed);
+      }
+      if ("summary" in parsed && parsed.summary) allSummaries.push(parsed.summary);
+      const fileFindings = (parsed.findings ?? []).map((f: any) => ({
+        ...f,
+        file: file.path,
+        source: "ai" as const,
+      }));
+      logger.info(`aiReview: ${file.path}${chunkLabel} -> ${fileFindings.length} findings (cached=${!!cached})`);
+      return fileFindings;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`AI review failed for ${file.path}${chunkLabel}: ${msg}`);
+      return [];
+    }
   }
 
   /** Record recurring patterns and auto-create rules. */
@@ -1731,6 +1758,124 @@ ${promptBody}
     const code = file.diff && file.diff.trim() ? file.diff : file.content;
     let projectContext = this.config.project_context || "(none)";
 
+    // Enrich with MCP context, past lessons, and active prompt overrides
+    projectContext = await this.#enrichProjectContext(task, file, projectContext);
+
+    const prompt = this.prompts.render(promptName, {
+      project_context: projectContext,
+      language: file.path.split(".").pop() ?? "text",
+      code,
+      positive_feedback_instruction: this.config.include_positive_feedback
+        ? "Also include up to 2 praise findings where the code is exemplary."
+        : "Do not include positive/praise feedback.",
+      output_format: this.config.jsonl_output ? "JSONL" : "JSON",
+    });
+
+    const preview = prompt.length > 300 ? prompt.slice(0, 300) + "..." : prompt;
+    logger.info(`callAI: task=${task} prompt=${promptName} file=${file.path} prompt_preview=${JSON.stringify(preview)}`);
+
+    const res = await this.ai.complete(task, [
+      { role: "system", content: "You are an expert code reviewer." },
+      { role: "user", content: prompt },
+    ], { maxTokens: maxTokensOverride });
+    logger.info(`callAI response: provider=${res.provider} model=${res.model} tokens_in=${res.usage?.promptTokens} tokens_out=${res.usage?.completionTokens} content_len=${res.content.length}`);
+
+    const parsed = extractJson<{ findings: any[] }>(res.content, { detailed: true });
+
+    // Detect truncation — retry once with double tokens
+    if (parsed.truncated && !parsed.parsed) {
+      const retried = await this.#retryTruncatedCall(file, prompt, maxTokensOverride);
+      if (retried) return retried;
+    }
+
+    if (parsed.parsed) {
+      if (parsed.repaired) this.repairedCount++;
+    }
+
+    const parsedFindings = parsed.parsed?.findings ?? [];
+
+    let finalFindings = parsedFindings;
+    if (this.config.jsonl_output && !parsedFindings.length) {
+      finalFindings = this.#findingsFromJsonl(res.content);
+    }
+
+    // Record in learning store if enabled
+    await this.#recordLearningFindings(file, finalFindings);
+
+    return { findings: finalFindings };
+  }
+
+  /** Parse JSONL findings (falls back to an empty list on failure). */
+  #findingsFromJsonl(content: string): any[] {
+    const jsonlResult = parseJsonlString(content);
+    if (!jsonlResult.length) return [];
+    const normalized = validateAndNormalize(jsonlResult);
+    return normalized.issues.map((i) => ({
+      file: i.file,
+      line: i.line,
+      severity: i.severity,
+      message: i.message,
+      category: i.category,
+      suggestion: i.suggestion,
+      source: "ai" as const,
+    }));
+  }
+
+  /** Record AI findings in the learning store (best-effort). */
+  async #recordLearningFindings(
+    file: { path: string; content: string; diff?: string },
+    finalFindings: any[],
+  ): Promise<void> {
+    if (!this.learning || !finalFindings.length) return;
+    try {
+      for (const f of finalFindings) {
+        await this.learning.recordFinding({
+          file: file.path,
+          line: f.line,
+          severity: f.severity || "info",
+          category: f.category || f.type || "unknown",
+          message: f.message || f.comment || "",
+          suggestion: f.suggestion,
+          source: "ai",
+        });
+      }
+    } catch { /* best-effort */ }
+  }
+
+  /** Retry a truncated AI response once with doubled max tokens. */
+  async #retryTruncatedCall(
+    file: { path: string; content: string; diff?: string },
+    prompt: string,
+    maxTokensOverride?: number,
+  ): Promise<{ findings: any[] } | null> {
+    this.truncatedCount++;
+    const modelConfig = this.ai.modelForTask("review");
+    const currentTokens = maxTokensOverride ?? modelConfig.maxTokens ?? 65536;
+    const doubledTokens = Math.min(currentTokens * 2, 32768);
+    logger.warn(`callAI: truncated response for ${file.path} — retrying with maxTokens=${doubledTokens} (was ${currentTokens})`);
+    const res2 = await this.ai.complete("review", [
+      { role: "system", content: "You are an expert code reviewer." },
+      { role: "user", content: prompt },
+    ], { maxTokens: doubledTokens });
+    logger.info(`callAI retry response: provider=${res2.provider} model=${res2.model} tokens_in=${res2.usage?.promptTokens} tokens_out=${res2.usage?.completionTokens} content_len=${res2.content.length}`);
+
+    const parsed2 = extractJson<{ findings: any[] }>(res2.content, { detailed: true });
+    if (parsed2.parsed) {
+      if (parsed2.repaired) this.repairedCount++;
+      const finalFindings = this.#processFindings(file, parsed2.parsed, res2.content);
+      return { findings: finalFindings };
+    }
+    // Even truncated retry failed — fall through to original attempt
+    if (parsed2.truncated) this.truncatedCount++;
+    return null;
+  }
+
+  /** Enrich project context with MCP docs, past lessons, and active prompt overrides. */
+  async #enrichProjectContext(
+    task: "review",
+    file: { path: string; content: string; diff?: string },
+    projectContext: string,
+  ): Promise<string> {
     // Enrich with MCP context if available
     if (this.mcp) {
       const libs = projectContext.split(/[,;\s]+/).filter(Boolean);
@@ -1760,93 +1905,7 @@ ${promptBody}
         }
       } catch { /* best-effort */ }
     }
-
-    const prompt = this.prompts.render(promptName, {
-      project_context: projectContext,
-      language: file.path.split(".").pop() ?? "text",
-      code,
-      positive_feedback_instruction: this.config.include_positive_feedback
-        ? "Also include up to 2 praise findings where the code is exemplary."
-        : "Do not include positive/praise feedback.",
-      output_format: this.config.jsonl_output ? "JSONL" : "JSON",
-    });
-
-    const preview = prompt.length > 300 ? prompt.slice(0, 300) + "..." : prompt;
-    logger.info(`callAI: task=${task} prompt=${promptName} file=${file.path} prompt_preview=${JSON.stringify(preview)}`);
-
-    const res = await this.ai.complete(task, [
-      { role: "system", content: "You are an expert code reviewer." },
-      { role: "user", content: prompt },
-    ], { maxTokens: maxTokensOverride });
-    logger.info(`callAI response: provider=${res.provider} model=${res.model} tokens_in=${res.usage?.promptTokens} tokens_out=${res.usage?.completionTokens} content_len=${res.content.length}`);
-
-    const parsed = extractJson<{ findings: any[] }>(res.content, { detailed: true });
-
-    // Detect truncation — retry once with double tokens
-    if (parsed.truncated && !parsed.parsed) {
-      this.truncatedCount++;
-      const modelConfig = this.ai.modelForTask(task);
-      const currentTokens = maxTokensOverride ?? modelConfig.maxTokens ?? 65536;
-      const doubledTokens = Math.min(currentTokens * 2, 32768);
-      logger.warn(`callAI: truncated response for ${file.path} — retrying with maxTokens=${doubledTokens} (was ${currentTokens})`);
-      const res2 = await this.ai.complete(task, [
-        { role: "system", content: "You are an expert code reviewer." },
-        { role: "user", content: prompt },
-      ], { maxTokens: doubledTokens });
-      logger.info(`callAI retry response: provider=${res2.provider} model=${res2.model} tokens_in=${res2.usage?.promptTokens} tokens_out=${res2.usage?.completionTokens} content_len=${res2.content.length}`);
-
-      const parsed2 = extractJson<{ findings: any[] }>(res2.content, { detailed: true });
-      if (parsed2.parsed) {
-        if (parsed2.repaired) this.repairedCount++;
-        const finalFindings = this.#processFindings(file, parsed2.parsed, res2.content);
-        return { findings: finalFindings };
-      }
-      // Even truncated retry failed — fall through to original attempt
-      if (parsed2.truncated) this.truncatedCount++;
-    }
-
-    if (parsed.parsed) {
-      if (parsed.repaired) this.repairedCount++;
-    }
-
-    const parsedFindings = parsed.parsed?.findings ?? [];
-
-    // Try JSONL if configured
-    let finalFindings = parsedFindings;
-    if (this.config.jsonl_output && !parsedFindings.length) {
-      const jsonlResult = parseJsonlString(res.content);
-      if (jsonlResult.length) {
-        const normalized = validateAndNormalize(jsonlResult);
-        finalFindings = normalized.issues.map((i) => ({
-          file: i.file,
-          line: i.line,
-          severity: i.severity,
-          message: i.message,
-          category: i.category,
-          suggestion: i.suggestion,
-          source: "ai" as const,
-        }));
-      }
-    }
-
-    // Record in learning store if enabled
-    if (this.learning && finalFindings.length) {
-      try {
-        for (const f of finalFindings) {
-          await this.learning.recordFinding({
-            file: file.path,
-            line: f.line,
-            severity: f.severity || "info",
-            category: f.category || f.type || "unknown",
-            message: f.message || f.comment || "",
-            suggestion: f.suggestion,
-            source: "ai",
-          });
-        }
-      } catch { /* best-effort */ }
-    }
-
-    return { findings: finalFindings };
+    return projectContext;
   }
 
   /** Helper: process findings from extracted JSON, including JSONL fallback. */
@@ -1924,12 +1983,7 @@ ${promptBody}
       parts.push("No issues found. The code looks clean.");
     } else {
       parts.push(`Found **${issues.length}** issue(s) and **${strengths.length}** positive observation(s).`);
-      const severityParts = Object.entries(counts)
-        .filter(([k]) => k !== "praise")
-        .map(([k, v]) => `**${k}**: ${v}`);
-      if (severityParts.length) {
-        parts.push(`Severity breakdown: ${severityParts.join(", ")}.`);
-      }
+      parts.push(...this.#buildSeverityBreakdown(counts));
     }
 
     if (this.truncatedCount > 0) {
@@ -1939,44 +1993,15 @@ ${promptBody}
     parts.push(`**Ready to merge?** ${readyToMerge}`);
 
     if (issues.length > 0) {
-      const top = issues.slice(0, 3);
-      const reasons = top.map(
-        (i) => `${i.file}${i.line ? `:${i.line}` : ""} — ${i.comment}`,
-      );
-      parts.push(`\n**Reasoning:** ${reasons.join("; ")}`);
+      parts.push(...this.#buildReasoning(issues));
     }
 
     if (strengths.length > 0) {
-      parts.push(`\n### Strengths\n`);
-      for (const s of strengths) {
-        parts.push(
-          `- **${s.file}${s.line ? `:${s.line}` : ""}** — ${s.comment}`,
-        );
-      }
+      parts.push(...this.#buildStrengths(strengths));
     }
 
     if (issues.length > 0) {
-      const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-      const MAX_VISIBLE = 5;
-      const sorted = [...issues].sort(
-        (a, b) => (SEVERITY_ORDER[a.severity] ?? 99) - (SEVERITY_ORDER[b.severity] ?? 99),
-      );
-      const visible = sorted.slice(0, MAX_VISIBLE);
-      const hidden = sorted.length - MAX_VISIBLE;
-
-      parts.push(`\n### Issues (showing ${visible.length} of ${sorted.length})\n`);
-      for (const i of visible) {
-        const label =
-          i.severity === "critical" || i.severity === "high"
-            ? `**[${i.severity.toUpperCase()}]** `
-            : "";
-        parts.push(
-          `- ${label}**${i.file}${i.line ? `:${i.line}` : ""}** — ${i.comment}${i.suggestion ? `\n  > Suggestion: ${i.suggestion}` : ""}`,
-        );
-      }
-      if (hidden > 0) {
-        parts.push(`\n_… and ${hidden} more issues. Check the report file for the full list._`);
-      }
+      parts.push(...this.#buildIssuesBlock(issues));
     }
 
     if (fixAttempts && fixAttempts.length > 0) {
@@ -1997,6 +2022,61 @@ ${promptBody}
     }
 
     return parts.join("\n");
+  }
+
+  /** Build the severity breakdown line(s) for the summary. */
+  #buildSeverityBreakdown(counts: Record<string, number>): string[] {
+    const severityParts = Object.entries(counts)
+      .filter(([k]) => k !== "praise")
+      .map(([k, v]) => `**${k}**: ${v}`);
+    if (!severityParts.length) return [];
+    return [`Severity breakdown: ${severityParts.join(", ")}.`];
+  }
+
+  /** Build the reasoning line(s) for the top issues. */
+  #buildReasoning(issues: Finding[]): string[] {
+    if (!issues.length) return [];
+    const top = issues.slice(0, 3);
+    const reasons = top.map(
+      (i) => `${i.file}${i.line ? `:${i.line}` : ""} — ${i.comment}`,
+    );
+    return [`\n**Reasoning:** ${reasons.join("; ")}`];
+  }
+
+  /** Build the strengths section for the summary. */
+  #buildStrengths(strengths: Finding[]): string[] {
+    if (!strengths.length) return [];
+    const lines = strengths.map(
+      (s) => `- **${s.file}${s.line ? `:${s.line}` : ""}** — ${s.comment}`,
+    );
+    return [`\n### Strengths\n`, ...lines];
+  }
+
+  /** Build the issues breakdown for the summary. */
+  #buildIssuesBlock(issues: Finding[]): string[] {
+    if (!issues.length) return [];
+    const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+    const MAX_VISIBLE = 5;
+    const sorted = [...issues].sort(
+      (a, b) => (SEVERITY_ORDER[a.severity] ?? 99) - (SEVERITY_ORDER[b.severity] ?? 99),
+    );
+    const visible = sorted.slice(0, MAX_VISIBLE);
+    const hidden = sorted.length - MAX_VISIBLE;
+
+    const lines: string[] = [`\n### Issues (showing ${visible.length} of ${sorted.length})\n`];
+    for (const i of visible) {
+      const label =
+        i.severity === "critical" || i.severity === "high"
+          ? `**[${i.severity.toUpperCase()}]** `
+          : "";
+      lines.push(
+        `- ${label}**${i.file}${i.line ? `:${i.line}` : ""}** — ${i.comment}${i.suggestion ? `\n  > Suggestion: ${i.suggestion}` : ""}`,
+      );
+    }
+    if (hidden > 0) {
+      lines.push(`\n_… and ${hidden} more issues. Check the report file for the full list._`);
+    }
+    return lines;
   }
 
   private tallySeverity(findings: Finding[]): Record<string, number> {
