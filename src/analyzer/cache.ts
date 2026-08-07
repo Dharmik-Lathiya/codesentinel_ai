@@ -189,8 +189,8 @@ export class AnalysisCache {
     previousFindings: Finding[],
     currentFindings: Finding[],
   ): AnalysisComparison {
-    const previousMap = new Map(previousFindings.map((f, i) => [`${f.file}:${f.line}:${f.comment}`, f]));
-    const currentMap = new Map(currentFindings.map((f, i) => [`${f.file}:${f.line}:${f.comment}`, f]));
+    const previousMap = new Map(previousFindings.map((f) => [`${f.file}:${f.line}:${f.comment}`, f]));
+    const currentMap = new Map(currentFindings.map((f) => [`${f.file}:${f.line}:${f.comment}`, f]));
 
     const newFindings: Finding[] = [];
     const fixedFindings: Finding[] = [];
@@ -224,7 +224,7 @@ export class AnalysisCache {
     const currentTotal = currentFindings.length;
     const netChange = currentTotal - previousTotal;
     const percentageChange = previousTotal > 0 
-      ? ((netChange / previousTotal) * 100)
+      ? Math.round((netChange / previousTotal) * 100)
       : 0;
 
     return {
@@ -286,11 +286,28 @@ export class AnalysisCache {
       if (!existsSync(filePath)) return null;
 
       const content = readFileSync(filePath, "utf8");
-      return JSON.parse(content) as AnalysisCacheEntry;
+      const entry = JSON.parse(content) as AnalysisCacheEntry;
+      return this.isValidEntry(entry) ? entry : null;
     } catch {
       logger.debug("Cache load failed");
       return null;
     }
+  }
+
+  private isValidEntry(value: unknown): value is AnalysisCacheEntry {
+    if (!value || typeof value !== "object") return false;
+    const e = value as Partial<AnalysisCacheEntry>;
+    return (
+      typeof e.key === "string" &&
+      typeof e.filePath === "string" &&
+      typeof e.contentHash === "string" &&
+      typeof e.timestamp === "number" &&
+      Array.isArray(e.findings) &&
+      !!e.metadata &&
+      typeof e.metadata.durationMs === "number" &&
+      Array.isArray(e.metadata.rulesApplied) &&
+      typeof e.metadata.configHash === "string"
+    );
   }
 
   /**
@@ -318,7 +335,7 @@ export class AnalysisCache {
         const content = readFileSync(filePath, "utf8");
         const entry = JSON.parse(content) as AnalysisCacheEntry;
         
-        if (this.isValid(entry)) {
+        if (this.isValidEntry(entry) && this.isValid(entry)) {
           this.memoryCache.set(entry.key, entry);
         }
       }
@@ -384,8 +401,14 @@ export class AnalysisCache {
       const files = require("node:fs").readdirSync(this.cacheDir);
       for (const file of files) {
         if (!file.endsWith(".json")) continue;
-        diskEntries++;
         const filePath = join(this.cacheDir, file);
+        try {
+          const entry = JSON.parse(readFileSync(filePath, "utf8")) as AnalysisCacheEntry;
+          if (!this.isValidEntry(entry) || !this.isValid(entry)) continue;
+        } catch {
+          continue;
+        }
+        diskEntries++;
         const stat = statSync(filePath);
         totalSizeBytes += stat.size;
       }

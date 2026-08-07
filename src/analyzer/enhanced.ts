@@ -181,84 +181,10 @@ export class EnhancedAnalyzer {
     // Determine base severity adjustment based on file risk
     const severityMultiplier = this.calculateSeverityMultiplier(path, fileHistory);
 
-    lines.forEach((line, idx) => {
-      // 1. Hardcoded secrets / API keys
-      if (/api[_-]?key\s*=\s*["'][A-Za-z0-9_\-]{16,}/i.test(line)) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("high", severityMultiplier),
-          "security",
-          path,
-          idx + 1,
-          "Possible hardcoded API key detected.",
-          "Move secrets to environment variables or a secrets manager.",
-          0.9, // High confidence
-        ));
-      }
-
-      // 2. console.log left in source
-      if (/\bconsole\.(log|debug)\(/.test(line) && !path.includes(".test.")) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("low", severityMultiplier),
-          "smell",
-          path,
-          idx + 1,
-          "Debug logging left in source.",
-          "Remove or replace with a proper logger.",
-          0.8, // High confidence
-        ));
-      }
-
-      // 3. eval usage
-      if (/\beval\s*\(/.test(line)) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("critical", severityMultiplier),
-          "security",
-          path,
-          idx + 1,
-          "Use of eval() is dangerous and can lead to code injection.",
-          "Avoid eval; parse structured input instead.",
-          0.95, // Very high confidence
-        ));
-      }
-
-      // 4. TODO/FIXME without tracking
-      if (/(TODO|FIXME|XXX)\b/.test(line)) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("info", severityMultiplier),
-          "smell",
-          path,
-          idx + 1,
-          "Tech-debt marker (TODO/FIXME) found.",
-          "Link to a tracked issue where possible.",
-          0.9, // High confidence
-        ));
-      }
-
-      // 5. Hardcoded passwords
-      if (/password\s*=\s*["'][^"']+["']/i.test(line)) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("high", severityMultiplier),
-          "security",
-          path,
-          idx + 1,
-          "Possible hardcoded password detected.",
-          "Use environment variables or a secrets manager.",
-          0.85, // High confidence
-        ));
-      }
-
-      // 6. process.exit() usage
-      if (/\bprocess\.exit\s*\(/.test(line)) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("medium", severityMultiplier),
-          "smell",
-          path,
-          idx + 1,
-          "Direct process.exit() call found.",
-          "Use exceptions or return codes for cleaner shutdown.",
-          0.9, // High confidence
-        ));
-      }
+lines.forEach((line, idx) => {
+      findings.push(
+        ...this.detectPatternRecommendations(path, line, idx + 1, severityMultiplier),
+      );
     });
 
     // 7. Deep nesting detection
@@ -399,6 +325,145 @@ export class EnhancedAnalyzer {
     });
   }
 
+  /**
+   * Dispatch single-line pattern rules to their own detection methods.
+   */
+  private detectPatternRecommendations(
+    path: string,
+    line: string,
+    lineNumber: number,
+    severityMultiplier: number,
+  ): Finding[] {
+    const candidates: (Finding | null)[] = [
+      this.detectHardcodedApiKey(path, line, lineNumber, severityMultiplier),
+      this.detectConsoleLog(path, line, lineNumber, severityMultiplier),
+      this.detectEvalUsage(path, line, lineNumber, severityMultiplier),
+      this.detectTechDebtMarker(path, line, lineNumber, severityMultiplier),
+      this.detectHardcodedPassword(path, line, lineNumber, severityMultiplier),
+      this.detectProcessExit(path, line, lineNumber, severityMultiplier),
+    ];
+    return candidates.filter((f): f is Finding => f !== null);
+  }
+
+  private detectHardcodedApiKey(
+    path: string,
+    line: string,
+    lineNumber: number,
+    severityMultiplier: number,
+  ): Finding | null {
+    if (/api[_-]?key\s*=\s*["'][A-Za-z0-9_\-]{16,}/i.test(line)) {
+      return this.createFinding(
+        this.adjustSeverity("high", severityMultiplier),
+        "security",
+        path,
+        lineNumber,
+        "Possible hardcoded API key detected.",
+        "Move secrets to environment variables or a secrets manager.",
+        0.9,
+      );
+    }
+    return null;
+  }
+
+  private detectConsoleLog(
+    path: string,
+    line: string,
+    lineNumber: number,
+    severityMultiplier: number,
+  ): Finding | null {
+    if (/\bconsole\.(log|debug)\(/.test(line) && !path.includes(".test.")) {
+      return this.createFinding(
+        this.adjustSeverity("low", severityMultiplier),
+        "smell",
+        path,
+        lineNumber,
+        "Debug logging left in source.",
+        "Remove or replace with a proper logger.",
+        0.8,
+      );
+    }
+    return null;
+  }
+
+  private detectEvalUsage(
+    path: string,
+    line: string,
+    lineNumber: number,
+    severityMultiplier: number,
+  ): Finding | null {
+    if (/\beval\s*\(/.test(line)) {
+      return this.createFinding(
+        this.adjustSeverity("critical", severityMultiplier),
+        "security",
+        path,
+        lineNumber,
+        "Use of eval() is dangerous and can lead to code injection.",
+        "Avoid eval; parse structured input instead.",
+        0.95,
+      );
+    }
+    return null;
+  }
+
+  private detectTechDebtMarker(
+    path: string,
+    line: string,
+    lineNumber: number,
+    severityMultiplier: number,
+  ): Finding | null {
+    if (/(TODO|FIXME|XXX)\b/.test(line)) {
+      return this.createFinding(
+        this.adjustSeverity("info", severityMultiplier),
+        "smell",
+        path,
+        lineNumber,
+        "Tech-debt marker (TODO/FIXME) found.",
+        "Link to a tracked issue where possible.",
+        0.9,
+      );
+    }
+    return null;
+  }
+
+  private detectHardcodedPassword(
+    path: string,
+    line: string,
+    lineNumber: number,
+    severityMultiplier: number,
+  ): Finding | null {
+    if (/password\s*=\s*["'][^"']+["']/i.test(line)) {
+      return this.createFinding(
+        this.adjustSeverity("high", severityMultiplier),
+        "security",
+        path,
+        lineNumber,
+        "Possible hardcoded password detected.",
+        "Use environment variables or a secrets manager.",
+        0.85,
+      );
+    }
+    return null;
+  }
+
+  private detectProcessExit(
+    path: string,
+    line: string,
+    lineNumber: number,
+    severityMultiplier: number,
+  ): Finding | null {
+    if (/\bprocess\.exit\s*\(/.test(line)) {
+      return this.createFinding(
+        this.adjustSeverity("medium", severityMultiplier),
+        "smell",
+        path,
+        lineNumber,
+        "Direct process.exit() call found.",
+        "Use exceptions or return codes for cleaner shutdown.",
+        0.9,
+      );
+    }
+    return null;
+  }
   /**
    * Detect deep nesting with severity adjustment.
    */
