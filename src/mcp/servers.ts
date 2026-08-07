@@ -28,7 +28,7 @@ export function githubMCPServer(token?: string): MCPServerConfig {
 
 export function getDefaultMCPServers(token?: string, context7Key?: string): MCPServerConfig[] {
   const servers: MCPServerConfig[] = [];
-  servers.push(context7Server(context7Key));
+  servers.push(context7Server(context7Key)); // context7 key is optional; server is valid without it
   if (token) {
     servers.push(githubMCPServer(token));
   }
