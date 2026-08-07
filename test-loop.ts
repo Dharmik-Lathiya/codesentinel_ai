@@ -61,11 +61,13 @@ describe("calculate", () => {
 describe("processData", () => {
   test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
-  });
-
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
     const input = 2 ** 53 + 1;
+    expect(calculate(EXTREME_THRESHOLD)).toBe(EXTREME_THRESHOLD * EXTREME_MULTIPLIER);
+    expect(calculate(EXTREME_THRESHOLD + 1)).toBe((EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER);
     expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
+    expect(Number.isSafeInteger(calculate(input))).toBe(false);
+  });
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
