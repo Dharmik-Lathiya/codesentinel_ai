@@ -1,6 +1,12 @@
 import { retry } from "../utils/retry.js";
 import { logger } from "../utils/logger.js";
 
+const API_VERSION = "2022-11-28";
+const RATE_LIMIT_THRESHOLD = 10;
+const HTTP_FORBIDDEN = 403;
+const HTTP_TOO_MANY_REQUESTS = 429;
+const RATE_LIMIT_DEFAULT_DELAY_MS = 5000;
+
 /**
  * Minimal GitHub REST client for posting PR comments and creating issues,
  * implemented with `fetch` so we avoid an extra SDK dependency. It is used by
@@ -24,7 +30,7 @@ export class GitHubReporter {
       Authorization: `Bearer ${this.coords.token}`,
       Accept: "application/vnd.github+json",
       "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
+      "X-GitHub-Api-Version": API_VERSION,
     };
   }
 
@@ -38,14 +44,14 @@ export class GitHubReporter {
 
       // Respect rate limiting
       const remaining = res.headers.get("x-ratelimit-remaining");
-      if (remaining && Number(remaining) < 10) {
+      if (remaining && Number(remaining) < RATE_LIMIT_THRESHOLD) {
         logger.warn(`GitHub API rate limit low: ${remaining} requests remaining`);
       }
 
-      if (res.status === 403 || res.status === 429) {
+      if (res.status === HTTP_FORBIDDEN || res.status === HTTP_TOO_MANY_REQUESTS) {
         const retryAfter = res.headers.get("retry-after");
         const resetTime = res.headers.get("x-ratelimit-reset");
-        let delayMs = 5000;
+        let delayMs = RATE_LIMIT_DEFAULT_DELAY_MS;
         if (retryAfter) {
           delayMs = Number(retryAfter) * 1000;
         } else if (resetTime) {
@@ -186,14 +192,10 @@ export class GitHubReporter {
     return result.number;
   }
 
-  /** Enable auto-merge on a PR (merges when all required checks pass). */
-  async enableAutoMerge(pullNumber: number, mergeMethod: "merge" | "squash" | "rebase" = "squash"): Promise<void> {
-    try {
-      const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/pulls/${pullNumber}/merge`;
-      await this.request("PUT", url, { merge_method: mergeMethod });
-    } catch {
-      logger.warn("enableAutoMerge: auto-merge not available, trying squash");
-    }
+  /** Merge a PR immediately (PUT /pulls/{n}/merge). */
+  async mergePR(pullNumber: number, mergeMethod: "merge" | "squash" | "rebase" = "squash"): Promise<void> {
+    const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/pulls/${pullNumber}/merge`;
+    await this.request("PUT", url, { merge_method: mergeMethod });
   }
 
   /** Get the default branch name and its latest commit SHA. */

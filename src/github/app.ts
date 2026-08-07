@@ -21,9 +21,6 @@ const processedCommentIds = new Set<number>();
  * Also auto-analyzes newly opened issues and posts an implementation plan.
  */
 export function codesentinelApp(app: Probot): void {
-  app.on("pull_request.opened", async (ctx) => {
-    logger.info(`PR opened: ${ctx.payload.pull_request.number}`);
-  });
 
   app.on("issues.opened", async (ctx) => {
     logger.info(`Issue opened: ${ctx.payload.issue.number}`);
@@ -191,7 +188,7 @@ async function handleComment(ctx: any): Promise<void> {
 function parseCommand(
   body: string,
 ): { mode: Mode; arg: string } | null {
-  const m = body.match(/^\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\b\s*([\s\S]*)$/i);
+  const m = body.match(/^\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)(?=\s|$)\s*([\s\S]*)$/i);
   if (!m) return null;
   const name = m[1].toLowerCase();
   const arg = (m[2] ?? "").trim();
