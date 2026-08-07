@@ -10,6 +10,7 @@ const VAGUE_PHRASES = [
 ];
 
 const MIN_MESSAGE_LENGTH = 15;
+const MAX_AI_RESPONSE_TOKENS = 1024;
 
 export interface VerifyOptions {
   aiHub?: AIHub;
@@ -50,40 +51,30 @@ function buildAiPrompt(findings: Issue[]): string {
   ].join("\n");
 }
 
+function parseJsonArray(content: string, maxIndex: number): number[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  return parsed.filter(
+    (i): i is number =>
+      typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
+  );
+}
+
 function parseAiResponse(
   content: string,
   maxIndex: number,
 ): number[] | null {
-  try {
-    const parsed = JSON.parse(content);
-    if (Array.isArray(parsed)) {
-      const indices = parsed.filter(
-        (i): i is number =>
-          typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-      );
-      return indices.length > 0 ? indices : null;
-    }
-  } catch {
-    // fall through
+  let indices = parseJsonArray(content, maxIndex);
+  if (indices === null) {
+    const extracted = content.match(/\[[\d\s,]*\]/);
+    if (extracted) indices = parseJsonArray(extracted[0], maxIndex);
   }
-
-  const extracted = content.match(/\[[\d\s,]*\]/);
-  if (extracted) {
-    try {
-      const parsed = JSON.parse(extracted[0]);
-      if (Array.isArray(parsed)) {
-        const indices = parsed.filter(
-          (i): i is number =>
-            typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex,
-        );
-        return indices.length > 0 ? indices : null;
-      }
-    } catch {
-      // fall through
-    }
-  }
-
-  return null;
+  return indices;
 }
 
 async function aiVerify(
@@ -97,7 +88,7 @@ async function aiVerify(
     result = await aiHub.complete(
       "review",
       [{ role: "user", content: prompt }],
-      { maxTokens: 1024 },
+      { maxTokens: MAX_AI_RESPONSE_TOKENS },
     );
   } catch {
     return afterRules;

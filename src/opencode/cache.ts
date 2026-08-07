@@ -119,26 +119,37 @@ export class LearningCache {
     this.locks.set(key, next);
     next.finally(() => {
       if (this.locks.get(key) === next) this.locks.delete(key);
-    });
+    }).catch(() => {});
     return next;
   }
 
   async get(key: string): Promise<Lesson[]> {
-    let entry: CacheEntry | null;
-    try {
-      entry = await this.backend.get(key);
-    } catch {
-      entry = null;
-    }
-    if (!entry) return [];
-    entry.lessons.forEach((l) => l.hitCount++);
-    await this.backend.set(key, entry);
-    return entry.lessons.map((l) => ({ ...l }));
+    return this.withLock(key, async () => {
+      let entry: CacheEntry | null;
+      try {
+        entry = await this.backend.get(key);
+      } catch {
+        entry = null;
+      }
+      if (!entry) return [];
+      entry.lessons.forEach((l) => l.hitCount++);
+      try {
+        await this.backend.set(key, entry);
+      } catch {
+        // best-effort
+      }
+      return entry.lessons.map((l) => ({ ...l }));
+    });
   }
 
   async set(key: string, lesson: Lesson): Promise<void> {
     return this.withLock(key, async () => {
-      const existing = await this.backend.get(key);
+      let existing: CacheEntry | null = null;
+      try {
+        existing = await this.backend.get(key);
+      } catch {
+        // best-effort
+      }
       if (existing) {
         const idx = existing.lessons.findIndex((l) => l.pattern === lesson.pattern);
         if (idx >= 0) {
@@ -161,19 +172,15 @@ export class LearningCache {
 
   async getAll(): Promise<Lesson[]> {
     const files: string[] = await this.backend.list().catch(() => []);
-    const entries = await Promise.all(
-      files.map(async (file) => {
-        const key = file.replace(/\.json$/, "");
-        try {
-          return await this.backend.get(key);
-        } catch {
-          return null;
-        }
-      })
-    );
     const lessons: Lesson[] = [];
-    for (const entry of entries) {
-      if (entry) lessons.push(...entry.lessons.map((l) => ({ ...l })));
+    for (const file of files) {
+      const key = file.replace(/\.json$/, "");
+      try {
+        const entry = await this.backend.get(key);
+        if (entry) lessons.push(...entry.lessons.map((l) => ({ ...l })));
+      } catch {
+        // best-effort
+      }
     }
     return lessons;
   }
