@@ -20,19 +20,14 @@ export class GitHubReporter {
 
   constructor(private coords: GitHubCoordinates) {}
 
-  private headers(): Record<string, string> {
-    return {
+  private headers(hasBody: boolean): Record<string, string> {
+    const result: Record<string, string> = {
       Authorization: `Bearer ${this.coords.token}`,
       Accept: "application/vnd.github+json",
-      "Content-Type": "application/json",
       "X-GitHub-Api-Version": GITHUB_API_VERSION,
     };
-  }
-
-  private computeRetryDelay(retryAfter: string | undefined, resetTime: string | undefined): number {
-    if (retryAfter) return Number(retryAfter) * 1000;
-    if (resetTime) return Math.max(0, Number(resetTime) * 1000 - Date.now()) + 1000;
-    return 5000;
+    if (hasBody) result["Content-Type"] = "application/json";
+    return result;
   }
 
   private retriesOnError(err: unknown): boolean {
@@ -46,7 +41,7 @@ export class GitHubReporter {
     return retry(async () => {
       const res = await fetch(url, {
         method,
-        headers: this.headers(),
+        headers: this.headers(body !== undefined),
         body: body ? JSON.stringify(body) : undefined,
       });
 
@@ -57,12 +52,8 @@ export class GitHubReporter {
       }
 
       if (res.status === 403 || res.status === 429) {
-        const delayMs = this.computeRetryDelay(
-          res.headers.get("retry-after") ?? undefined,
-          res.headers.get("x-ratelimit-reset") ?? undefined,
-        );
-        logger.warn(`GitHub API rate limited, retrying after ${delayMs}ms`);
-        throw new Error(`Rate limited (${res.status}), retrying after ${delayMs}ms`);
+        logger.warn(`GitHub API rate limited, retrying: ${res.status}`);
+        throw new Error(`Rate limited (${res.status})`);
       }
 
       if (!res.ok) {
@@ -87,13 +78,18 @@ export class GitHubReporter {
     if (!this.coords.pullNumber) return;
     const base = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/pulls/${this.coords.pullNumber}/comments`;
     if (opts.file && opts.line && opts.commitId) {
-      await this.request("POST", base, {
-        body: opts.body,
-        path: opts.file,
-        line: opts.line,
-        commit_id: opts.commitId,
-        side: "RIGHT",
-      });
+      try {
+        await this.request("POST", base, {
+          body: opts.body,
+          path: opts.file,
+          line: opts.line,
+          commit_id: opts.commitId,
+          side: "RIGHT",
+        });
+      } catch (err) {
+        logger.error(`postReviewComment failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }
     } else {
       await this.postIssueComment(opts.body);
     }
@@ -103,7 +99,12 @@ export class GitHubReporter {
   async postIssueComment(body: string): Promise<void> {
     if (!this.coords.pullNumber) return;
     const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues/${this.coords.pullNumber}/comments`;
-    await this.request("POST", url, { body });
+    try {
+      await this.request("POST", url, { body });
+    } catch (err) {
+      logger.error(`postIssueComment failed: ${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    }
   }
 
   /** List all comments on a PR with pagination. */
@@ -115,7 +116,10 @@ export class GitHubReporter {
 
     while (true) {
       const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues/${this.coords.pullNumber}/comments?per_page=${perPage}&page=${page}`;
-      const result = await this.request("GET", url) as Array<{ id: number; body: string; created_at: string }> | null;
+      const result = await this.request("GET", url).catch((err) => {
+        logger.error(`listIssueComments failed: ${err instanceof Error ? err.message : String(err)}`);
+        throw err;
+      }) as Array<{ id: number; body: string; created_at: string }> | null;
       if (!result || result.length === 0) break;
       comments.push(...result);
       if (result.length < perPage) break;
@@ -127,7 +131,12 @@ export class GitHubReporter {
   /** Create a GitHub issue (used by audit mode). */
   async createIssue(title: string, body: string): Promise<void> {
     const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues`;
-    await this.request("POST", url, { title, body });
+    try {
+      await this.request("POST", url, { title, body });
+    } catch (err) {
+      logger.error(`createIssue failed: ${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    }
   }
 
   /** Create a GitHub Check Run with annotations. */
@@ -143,13 +152,18 @@ export class GitHubReporter {
     };
   }): Promise<void> {
     const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/check-runs`;
-    await this.request("POST", url, {
-      name: opts.name,
-      head_sha: opts.headSha,
-      status: opts.status,
-      conclusion: opts.conclusion,
-      output: opts.output,
-    });
+    try {
+      await this.request("POST", url, {
+        name: opts.name,
+        head_sha: opts.headSha,
+        status: opts.status,
+        conclusion: opts.conclusion,
+        output: opts.output,
+      });
+    } catch (err) {
+      logger.error(`createCheckRun failed: ${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    }
   }
 
   /** Set commit status (for gate results). */
