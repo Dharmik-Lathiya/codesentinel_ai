@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import type { Finding } from "../analyzer/index.js";
 import { logger } from "../utils/logger.js";
 
@@ -48,10 +48,16 @@ const gitleaks: ScannerTool = {
   },
   run(root: string): Finding[] {
     try {
-      const out = execSync(
-        "gitleaks detect --no-git --source . --report-format json --report-path /dev/stdout 2>/dev/null || true",
+      const res = spawnSync(
+        "gitleaks",
+        ["detect", "--no-git", "--source", ".", "--report-format", "json", "--report-path", "/dev/stdout"],
         { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
+      if (res.status !== 0 && !(res.stdout || "").trim()) {
+        logger.warn(`gitleaks run failed (status ${res.status}): ${res.stderr}`);
+        return [];
+      }
+      const out = res.stdout || "";
       if (!out.trim()) return [];
       let results: { File: string; StartLine: number; RuleID: string; Description: string; Match: string; Severity: string }[];
       try {
@@ -63,7 +69,7 @@ const gitleaks: ScannerTool = {
       return results.map((r) => ({
         file: r.File,
         line: r.StartLine || null,
-        severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
+        severity: (r.Severity?.toLowerCase() as Finding["severity"]) ?? "high",
         category: "security" as const,
         comment: `[gitleaks] ${r.Description}`,
         suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
