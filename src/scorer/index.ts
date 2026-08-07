@@ -27,6 +27,15 @@ export const WEIGHTS = {
 
 const MAX_SCORE = 100;
 
+/** Lines longer than this are penalized as unreadable. */
+const MAX_LINE_LENGTH = 120;
+/** Points deducted per over-length line. */
+const LONG_LINE_PENALTY = 2;
+/** Points added per full unit of comment-to-code ratio. */
+const COMMENT_BONUS = 20;
+/** Floor so readability never scores below this. */
+const MIN_READABILITY = 20;
+
 const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
 
 
@@ -40,6 +49,10 @@ const SEVERITY_PENALTY: Record<Severity, number> = {
   high: HIGH_SEVERITY_PENALTY,
   critical: CRITICAL_SEVERITY_PENALTY,
 };
+
+/** True if a path points to a test or spec file. */
+const isTestPath = (p: string): boolean =>
+  /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p);
 
 /**
  * Scorer computes a deterministic baseline quality score from static findings
@@ -65,7 +78,7 @@ export class Scorer {
     const security = clamp(MAX_SCORE - securityPenalty);
     const maintainability = clamp(MAX_SCORE - smellPenalty);
 
-    // Readability proxy: average function length / comment presence.
+    // Readability proxy: long-line density and comment presence.
     const readability = clamp(this.readabilityMetric(files));
 
     // Test coverage proxy: ratio of source files that have a sibling test.
@@ -137,10 +150,17 @@ export class Scorer {
         security * WEIGHTS.security +
         test_coverage * WEIGHTS.test_coverage,
     );
-    return { readability, maintainability, security, test_coverage, overall, rationale: b.rationale };
+    return {
+      readability,
+      maintainability,
+      security,
+      test_coverage,
+      overall,
+      rationale: b.rationale,
+    };
   }
 
-  /** Readability heuristic: penalize very long functions and reward comments. */
+  /** Readability heuristic: penalize very long lines and reward comments. */
   private readabilityMetric(
     files: { path: string; content: string }[],
   ): number {
@@ -153,9 +173,10 @@ export class Scorer {
         (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
-      const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const longLines = lines.filter((l) => l.length > MAX_LINE_LENGTH).length;
+      const score =
+        MAX_SCORE - longLines * LONG_LINE_PENALTY + commentRatio * COMMENT_BONUS;
+      total += Math.max(MIN_READABILITY, score);
     }
     return fileCount ? total / fileCount : 100;
   }
@@ -164,18 +185,23 @@ export class Scorer {
   private coverageMetric(
     files: { path: string; content: string }[],
   ): number {
-    const testPaths = new Set(
+    const sourceFiles = files.filter((f) => !isTestPath(f.path));
+    if (sourceFiles.length === 0) return MAX_SCORE;
+    const testBases = new Set(
       files
-        .map((f) => f.path)
-        .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
+        .filter((f) => isTestPath(f.path))
+        .map((f) => f.path.replace(/\.(test|spec)\.[jt]sx?$/, "")),
     );
-    const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
-    if (sourceFiles.length === 0) return 100;
     let covered = 0;
     for (const f of sourceFiles) {
-      const base = f.path.replace(/\.[^.]+$/, "");
-      if ([...testPaths].some((t) => t.startsWith(base))) covered++;
+      const base = f.path.replace(/\.[^.]_+$/, "");
+      if (
+        testBases.has(base) ||
+        [...testBases].some((tb) => tb.startsWith(base + "/"))
+      ) {
+        covered++;
+      }
     }
-    return (covered / sourceFiles.length) * 100;
+    return (covered / sourceFiles.length) * MAX_SCORE;
   }
 }
