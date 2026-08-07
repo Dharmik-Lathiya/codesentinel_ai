@@ -74,7 +74,10 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     }
     const lineIdx = dismissArgs.indexOf("--line");
     const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-    const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+    if (rawLine !== undefined && !/^\d+$/.test(rawLine.trim())) {
+      return { reason: "dismissed by user", error: "Invalid line number for --line." };
+    }
+    const lineNum = rawLine !== undefined ? parseInt(rawLine, PARSE_INT_RADIX) : null;
     const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
     const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
     const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
@@ -134,6 +137,12 @@ const WORKFLOW_CONTENT = [
 "              core.setFailed(err.message);",
 "            }",
   "",
+  "      - name: Get issue body (truncated)",
+  "        id: issue_body",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            core.setOutput('body', (context.payload.issue.body || '').slice(0, " + `${MAX_ISSUE_BODY_LENGTH}` + "));",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
   "      - name: Run CodeSentinel plan",
@@ -143,7 +152,7 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          mode: plan",
   "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+  "          issue_body: ${{ steps.issue_body.outputs.body }}",
   "          use_opencode_cli: \"false\"",
   "",
 "      - name: Update comment with plan",
@@ -295,7 +304,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  build-fix:",
-  "    if: ${{ github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
+  "    if: ${{ github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && github.event.head_commit.committer.name != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
   "        with:",
@@ -338,6 +347,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "            FAILED=0",
   "            npm run build 2>&1 || FAILED=1",
   "            npm run typecheck 2>&1 || FAILED=1",
+  "            npm test 2>&1 || FAILED=1",
   "",
   "            if [ $FAILED -eq 0 ]; then",
   '              echo "✅ Build succeeded on iteration $i"',
@@ -359,14 +369,14 @@ const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            GIT_AUTH_HEADER=\"Authorization: Basic $(printf 'x-access-token:%s' \"$GIT_PUSH_TOKEN\" | base64)\"",
+  "            git -c http.extraHeader=\"$GIT_AUTH_HEADER\" pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
+  "            git -c http.extraHeader=\"$GIT_AUTH_HEADER\" push origin HEAD:${{ github.ref_name }} 2>&1",
   "            if [ $? -ne 0 ]; then",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
-  "              git fetch origin ${{ github.ref_name }} 2>&1",
+  "              git -c http.extraHeader=\"$GIT_AUTH_HEADER\" fetch origin ${{ github.ref_name }} 2>&1",
   "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
-  "              git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "              git -c http.extraHeader=\"$GIT_AUTH_HEADER\" push origin HEAD:${{ github.ref_name }} 2>&1",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
