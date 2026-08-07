@@ -10,7 +10,8 @@ const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 
 /**
- * Scales the input by a fixed multiplier.
+ * Output is intentionally discontinuous at EXTREME_THRESHOLD: inputs above it use EXTREME_MULTIPLIER (2x MULTIPLIER) instead of MULTIPLIER.
+ */
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
  */
@@ -26,15 +27,15 @@ function isValueObject(v: unknown): v is { value?: number } {
 export type ProcessDataResult =
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
- * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
+export function processData(input: string): { value?: number } {
  */
 export function processData(input: string): { value: number } {
   try {
     const parsed = JSON.parse(input) as unknown;
     if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
-      return { value: parsed.value };
+    return {};
     }
-    return { value: 0 };
+    return {};
   } catch {
     return { value: 0 };
   }
@@ -57,7 +58,7 @@ describe("calculate", () => {
     expect(calculate(input)).toBe(expected);
   });
 });
-
+  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
 describe("processData", () => {
   test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
@@ -75,7 +76,7 @@ describe("processData", () => {
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
-    ['{"value":1e999}'],
+    expect(processData(input)).toEqual({});
   test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
@@ -87,7 +88,7 @@ describe("processData", () => {
 
   test('whitespace-padded JSON is parsed', () => {
     expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
-  });
+    expect(processData("")).toEqual({});
 
   test('empty string input is handled', () => {
     expect(processData("")).toEqual({ value: 0 });
