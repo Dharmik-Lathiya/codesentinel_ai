@@ -23,7 +23,6 @@ export interface RetryOptions {
   maxDelayMs?: number;
   /**
    * Optional predicate: return true to retry on this error.
-   * Optional predicate: return true to retry on this error.
    * Note: the default predicate only matches `Error` instances; non-Error
    * throws (strings, plain objects) are never retried.
    */
@@ -69,14 +68,12 @@ export async function retry<T>(
   const maxAttempts = opts.maxAttempts ?? 3;
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
-  const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, maxAttempts - 1);
+const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, maxAttempts - 2);
 
-  let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      lastError = err;
       if (attempt === maxAttempts || !shouldRetry(err)) {
         throw err;
       }
@@ -89,5 +86,5 @@ export async function retry<T>(
       await new Promise((r) => setTimeout(r, delay));
     }
   }
-  throw lastError;
+throw new Error("Unexpected exit from retry loop");
 }
