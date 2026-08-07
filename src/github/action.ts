@@ -122,10 +122,14 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, aut
     }
     if (report.mode === "audit") {
       for (const f of report.findings) {
-        await reporter.createIssue(
-          `[${f.severity}] ${f.file}`,
-          f.comment,
-        );
+        try {
+          await reporter.createIssue(
+            `[${f.severity}] ${f.file}`,
+            f.comment,
+          );
+        } catch (err) {
+          logger.warn(`publishOutputs: failed to create issue for ${f.file} (${err})`);
+        }
       }
     }
 
@@ -139,30 +143,42 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, aut
         message: f.comment,
       }));
 
-      await reporter.createCheckRun({
-        name: "CodeSentinel Gate",
-        headSha,
-        status: "completed",
-        conclusion: report.gatePassed ? "success" : "failure",
-        output: {
-          title: report.gatePassed ? "Quality Gate Passed" : "Quality Gate Failed",
-          summary: report.summary,
-          annotations,
-        },
-      });
+      try {
+        await reporter.createCheckRun({
+          name: "CodeSentinel Gate",
+          headSha,
+          status: "completed",
+          conclusion: report.gatePassed ? "success" : "failure",
+          output: {
+            title: report.gatePassed ? "Quality Gate Passed" : "Quality Gate Failed",
+            summary: report.summary,
+            annotations,
+          },
+        });
+      } catch (err) {
+        logger.warn(`failed to create check run (${err})`);
+      }
 
       // Also set commit status
-      await reporter.setCommitStatus({
-        sha: headSha,
-        state: report.gatePassed ? "success" : "failure",
-        description: report.gatePassed ? "All gate checks passed" : "Gate checks failed",
-        context: "codesentinel/gate",
-      });
+      try {
+        await reporter.setCommitStatus({
+          sha: headSha,
+          state: report.gatePassed ? "success" : "failure",
+          description: report.gatePassed ? "All gate checks passed" : "Gate checks failed",
+          context: "codesentinel/gate",
+        });
+      } catch (err) {
+        logger.warn(`failed to set commit status (${err})`);
+      }
 
       // Auto-merge when gate passes
       if (report.gatePassed && autoMerge && pullNumber) {
-        await reporter.enableAutoMerge(pullNumber, "squash");
-        logger.info(`publishOutputs: enabled auto-merge on PR #${pullNumber}`);
+        try {
+          await reporter.enableAutoMerge(pullNumber, "squash");
+          logger.info(`publishOutputs: enabled auto-merge on PR #${pullNumber}`);
+        } catch (err) {
+          logger.warn(`failed to enable auto-merge on PR #${pullNumber} (${err})`);
+        }
       }
     }
   }
@@ -176,10 +192,17 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, aut
   // Metrics as workflow outputs via GITHUB_OUTPUT (legacy ::set-output is deprecated).
   const outputPath = process.env.GITHUB_OUTPUT;
   if (outputPath) {
-    const { appendFileSync } = await import("node:fs");
-    const score = report.score?.overall ?? "n/a";
-    const findings = String(report.findings.length);
-    appendFileSync(outputPath, `score=${score}\n`);
+        let appendFileSync: typeof import("node:fs").appendFileSync;
+        try {
+          ({ appendFileSync } = await import("node:fs"));
+        } catch (err) {
+          logger.warn(`failed to load node:fs (${err})`);
+          return;
+        }
+        const score = report.score?.overall ?? "n/a";
+        const findings = String(report.findings.length);
+        appendFileSync(outputPath, `score=${score}\n`);
+        appendFileSync(outputPath, `findings=${findings}\n`);
     appendFileSync(outputPath, `findings=${findings}\n`);
   }
 }
