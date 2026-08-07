@@ -451,24 +451,28 @@ export class Engine {
     const filtered = this.dismissals.filterDismissed(allFindings);
 
     // Auto-mute rules with persistently high false-positive rates
-    if (this.learning && this.config.learning.enabled) {
-      try {
-        const highFp = await this.learning.getHighFalsePositiveRules();
-        if (highFp.length) {
-          const mutedRuleIds = new Set(highFp.map((r) => r.ruleId));
-          const result = filtered.filter((f) => {
-            const ruleId = `${f.category}:${f.comment.slice(0, 40)}`;
-            return !mutedRuleIds.has(ruleId);
-          });
-          if (result.length < filtered.length) {
-            logger.info(`analyzeFiles: auto-muted ${filtered.length - result.length} finding(s) from ${highFp.length} high-FP rule(s)`);
-          }
-          return result;
-        }
-      } catch { /* best-effort */ }
-    }
+    return this.applyAutoMute(filtered);
+  }
 
-    return filtered;
+  /** Auto-mute rules with persistently high false-positive rates. */
+  private async applyAutoMute(findings: Finding[]): Promise<Finding[]> {
+    if (!this.learning || !this.config.learning.enabled) return findings;
+    let highFp: { ruleId: string }[] = [];
+    try {
+      highFp = await this.learning.getHighFalsePositiveRules();
+    } catch {
+      return findings;
+    }
+    if (!highFp.length) return findings;
+    const mutedRuleIds = new Set(highFp.map((r) => r.ruleId));
+    const result = findings.filter((f) => {
+      const ruleId = `${f.category}:${f.comment.slice(0, 40)}`;
+      return !mutedRuleIds.has(ruleId);
+    });
+    if (result.length < findings.length) {
+      logger.info(`analyzeFiles: auto-muted ${findings.length - result.length} finding(s) from ${highFp.length} high-FP rule(s)`);
+    }
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -486,31 +490,9 @@ export class Engine {
     this.recordPatterns(findings).catch(() => {});
 
     // Auto-fix actionable findings when auto-fix is enabled
-    let fixAttempts: FixAttempt[] = [];
     if (this.config.enable_auto_fix && !this.config.dry_run) {
-      const actionable = findings.filter((f) => f.category !== "praise");
-      if (actionable.length > 0) {
-        logger.info(`runReview: auto-fixing ${actionable.length} issue(s)`);
-        const fixReport = await this.runFixLoopFor(actionable);
-        fixAttempts = fixReport.fixAttempts;
-        // Re-read files to get updated findings after fixes
-        const updatedFiles = await this.collectedFiles();
-        const updatedStatic = await this.analyzeFiles(updatedFiles);
-        const updatedAiFiles = this.redactFilesForAI(updatedFiles);
-        const { findings: updatedAi } = await this.aiReview(updatedAiFiles);
-        const updatedFindings = [...updatedStatic, ...updatedAi];
-        const summary = this.buildSummary("review", updatedFindings, fixAttempts, aiSummaries);
-        return {
-          mode: "review",
-          summary,
-          findings: updatedFindings,
-          score: this.config.enable_scoring ? await this.computeScore(updatedFiles, updatedFindings) : null,
-          comments: [],
-          generatedTests: [],
-          fixAttempts,
-          metrics: { filesAnalyzed: updatedFiles.length, findingsBySeverity: {}, durationMs: 0 },
-        };
-      }
+      const autoFixReport = await this.runReviewAutoFix(findings, aiSummaries);
+      if (autoFixReport) return autoFixReport;
     }
 
     const comments: ReviewComment[] = findings
@@ -546,6 +528,34 @@ export class Engine {
     return report;
   }
 
+  /** Auto-fix actionable findings, re-analyze, and report the fixed state. */
+  private async runReviewAutoFix(
+    findings: Finding[],
+    aiSummaries: string[],
+  ): Promise<EngineReport | null> {
+    const actionable = findings.filter((f) => f.category !== "praise");
+    if (actionable.length === 0) return null;
+    logger.info(`runReview: auto-fixing ${actionable.length} issue(s)`);
+    const fixReport = await this.runFixLoopFor(actionable);
+    const fixAttempts = fixReport.fixAttempts;
+    const updatedFiles = await this.collectedFiles();
+    const updatedStatic = await this.analyzeFiles(updatedFiles);
+    const updatedAiFiles = this.redactFilesForAI(updatedFiles);
+    const { findings: updatedAi } = await this.aiReview(updatedAiFiles);
+    const updatedFindings = [...updatedStatic, ...updatedAi];
+    const summary = this.buildSummary("review", updatedFindings, fixAttempts, aiSummaries);
+    return {
+      mode: "review",
+      summary,
+      findings: updatedFindings,
+      score: this.config.enable_scoring ? await this.computeScore(updatedFiles, updatedFindings) : null,
+      comments: [],
+      generatedTests: [],
+      fixAttempts,
+      metrics: { filesAnalyzed: updatedFiles.length, findingsBySeverity: {}, durationMs: 0 },
+    };
+  }
+
   /**
    * Create a deep copy of the file list with secrets redacted from `content`
    * before sending to the AI provider. Never mutates files on disk.
@@ -573,26 +583,7 @@ export class Engine {
     logger.info(`aiReview: starting AI review for ${files.length} files`);
 
     // Split large files into chunks by maxLinesPerFile
-    const maxLines = this.config.batch.maxLinesPerFile;
-    const expandedFiles: { path: string; content: string; diff?: string; chunk?: number }[] = [];
-    for (const file of files) {
-      const lines = file.content.split("\n");
-      if (maxLines > 0 && lines.length > maxLines) {
-        const nChunks = Math.ceil(lines.length / maxLines);
-        logger.info(`aiReview: splitting ${file.path} (${lines.length} lines) into ${nChunks} chunks of ${maxLines} lines`);
-        for (let i = 0; i < nChunks; i++) {
-          const chunkLines = lines.slice(i * maxLines, (i + 1) * maxLines);
-          expandedFiles.push({
-            path: file.path,
-            content: chunkLines.join("\n"),
-            diff: file.diff,
-            chunk: i + 1,
-          });
-        }
-      } else {
-        expandedFiles.push({ ...file });
-      }
-    }
+    const expandedFiles = this.expandLargeFiles(files, this.config.batch.maxLinesPerFile);
 
     // Group into batches if batching is enabled
     const batches = this.config.batch.enabled
@@ -603,38 +594,83 @@ export class Engine {
     const allSummaries: string[] = [];
     for (const batch of batches) {
       logger.info(`aiReview: batch size=${batch.length}`);
-      const results = await concurrentMap(batch, async (file) => {
-        const chunkLabel = file.chunk ? ` (chunk ${file.chunk})` : "";
-        logger.info(`aiReview: processing ${file.path}${chunkLabel} (content_len=${file.content.length})`);
-        try {
-          const cacheKey = { task: "review", path: file.path, content: file.content, chunk: file.chunk };
-          const cached = this.config.enable_cache
-            ? this.cache.get<{ findings: any[]; summary?: string }>("review", cacheKey)
-            : null;
-          const parsed = cached ?? (await this.callAI("review", "review", file));
-          if (!cached && this.config.enable_cache) {
-            this.cache.set("review", cacheKey, parsed);
-          }
-          if ("summary" in parsed && parsed.summary) allSummaries.push(parsed.summary);
-          const fileFindings = (parsed.findings ?? []).map((f: any) => ({
-            ...f,
-            file: file.path,
-            source: "ai" as const,
-          }));
-          logger.info(`aiReview: ${file.path}${chunkLabel} -> ${fileFindings.length} findings (cached=${!!cached})`);
-          return fileFindings;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          logger.warn(`AI review failed for ${file.path}${chunkLabel}: ${msg}`);
-          return [];
+      const results = await concurrentMap(batch, (file) => this.reviewOneFile(file), 5);
+      for (const r of results) {
+        if (r instanceof Error) {
+          logger.warn(`aiReview: batch item failed: ${r.message}`);
+          continue;
         }
-      }, 5);
-      allResults.push(...results.flat());
+        allResults.push(...r.findings);
+        if (r.summary) allSummaries.push(r.summary);
+      }
     }
 
     const out = allResults;
     logger.info(`aiReview: total AI findings = ${out.length} | truncated=${this.truncatedCount} repaired=${this.repairedCount}`);
     return { findings: out, summaries: allSummaries };
+  }
+
+  /** Split large files into chunked entries for AI review. */
+  private expandLargeFiles(
+    files: { path: string; content: string; diff?: string }[],
+    maxLines: number,
+  ): { path: string; content: string; diff?: string; chunk?: number }[] {
+    const expandedFiles: { path: string; content: string; diff?: string; chunk?: number }[] = [];
+    for (const file of files) {
+      const lines = file.content.split("\n");
+      if (maxLines > 0 && lines.length > maxLines) {
+        const chunks = this.makeFileChunks(file, lines, maxLines);
+        expandedFiles.push(...chunks);
+      } else {
+        expandedFiles.push({ ...file });
+      }
+    }
+    return expandedFiles;
+  }
+
+  private makeFileChunks(
+    file: { path: string; content: string; diff?: string },
+    lines: string[],
+    maxLines: number,
+  ): { path: string; content: string; diff?: string; chunk: number }[] {
+    const nChunks = Math.ceil(lines.length / maxLines);
+    logger.info(`aiReview: splitting ${file.path} (${lines.length} lines) into ${nChunks} chunks of ${maxLines} lines`);
+    return Array.from({ length: nChunks }, (_, i) => ({
+      path: file.path,
+      content: lines.slice(i * maxLines, (i + 1) * maxLines).join("\n"),
+      diff: file.diff,
+      chunk: i + 1,
+    }));
+  }
+
+  /** Review a single (possibly chunked) file via the AI provider, with caching. */
+  private async reviewOneFile(
+    file: { path: string; content: string; diff?: string; chunk?: number },
+  ): Promise<{ findings: Finding[]; summary?: string }> {
+    const chunkLabel = file.chunk ? ` (chunk ${file.chunk})` : "";
+    logger.info(`aiReview: processing ${file.path}${chunkLabel} (content_len=${file.content.length})`);
+    try {
+      const cacheKey = { task: "review", path: file.path, content: file.content, chunk: file.chunk };
+      const cached = this.config.enable_cache
+        ? this.cache.get<{ findings: any[]; summary?: string }>("review", cacheKey)
+        : null;
+      const parsed = cached ?? (await this.callAI("review", "review", file));
+      if (!cached && this.config.enable_cache) {
+        this.cache.set("review", cacheKey, parsed);
+      }
+      const summary = "summary" in parsed && parsed.summary ? parsed.summary : undefined;
+      const findings = (parsed.findings ?? []).map((f: any) => ({
+        ...f,
+        file: file.path,
+        source: "ai" as const,
+      }));
+      logger.info(`aiReview: ${file.path}${chunkLabel} -> ${findings.length} findings (cached=${!!cached})`);
+      return { findings, summary };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`AI review failed for ${file.path}${chunkLabel}: ${msg}`);
+      return { findings: [] };
+    }
   }
 
   /** Record recurring patterns and auto-create rules. */
@@ -1495,7 +1531,7 @@ ${promptBody}
       "",
       parsed.highlights?.length ? "### Highlights\n- " + parsed.highlights.join("\n- ") : "",
       "",
-      parsed.todo?.length ? "### TODO\n- " + parsed.todo.join("\n- ") : "",
+      parsed.todo?.length ? "### Tasks\n- " + parsed.todo.join("\n- ") : "",
     ].filter(Boolean).join("\n");
 
     return {

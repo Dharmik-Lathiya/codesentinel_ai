@@ -49,15 +49,10 @@ export class EventBus {
     const matching = Array.from(this.subscribers.values()).filter((s) =>
       s.eventTypes.includes(event.type),
     );
-    try {
-      const results = await Promise.allSettled(
-        matching.map((s) => this.dispatch(s, event)),
-      );
-      this.handleEmitResults(matching, results);
-    } catch (error) {
-      logger.error(`EventBus: emit failed unexpectedly: ${error}`);
-      throw error;
-    }
+    const results = await Promise.allSettled(
+      matching.map((s) => this.dispatch(s, event)),
+    );
+    this.handleEmitResults(matching, results);
   }
 
   private handleEmitResults(matching: Subscriber[], results: PromiseSettledResult<void>[]): void {
@@ -72,7 +67,7 @@ export class EventBus {
   private async dispatch(subscriber: Subscriber, event: GitHubEvent): Promise<void> {
     const health = this.health.get(subscriber.name);
     if (health && health.cooldownUntil > Date.now()) {
-      logger.warn(`EventBus: "${subscriber.name}" in cooldown, skipping`);
+      logger.debug(`EventBus: "${subscriber.name}" in cooldown, skipping event`);
       return;
     }
 
@@ -97,5 +92,13 @@ export class EventBus {
 
   getSubscriberHealth(name: string): SubscriberHealth | undefined {
     return this.health.get(name);
+  }
+
+  getHistory(): GitHubEvent[] {
+    return [...this.history];
+  }
+
+  clear(): void {
+    this.history.length = 0;
   }
 }
