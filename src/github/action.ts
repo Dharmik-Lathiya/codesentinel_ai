@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -34,31 +34,8 @@ export async function runAction(): Promise<void> {
 
   const useOpencodeCliFlag = inputs.use_opencode_cli === "true";
   const opencodeVersion = get("opencode_version") || "latest";
+  await configureOpenCodePath(useOpencodeCliFlag, opencodeVersion);
 
-  // When the OpenCode CLI mode is requested, install the binary (or use cached)
-  // and prepend its directory to PATH so runner.ts can locate it.
-  if (useOpencodeCliFlag) {
-    try {
-      const { binaryPath } = await setupOpenCode(opencodeVersion);
-      const binDir = dirname(binaryPath);
-      const existingPath = process.env.PATH ?? "";
-      if (!existingPath.split(":").includes(binDir)) {
-        process.env.PATH = `${binDir}:${existingPath}`;
-      }
-      logger.info(`action: OpenCode CLI installed at ${binaryPath}`);
-    } catch (err) {
-      logger.warn(`action: OpenCode CLI install failed (${err}), continuing without it`);
-    }
-  } else {
-    // Also prepend the default install dir so system-installed opencode is found
-    const defaultBinDir = `${process.env.HOME ?? homedir()}/.codesentinel/bin`;
-    const existingPath = process.env.PATH ?? "";
-    if (!existingPath.split(":").includes(defaultBinDir)) {
-      process.env.PATH = `${defaultBinDir}:${existingPath}`;
-    }
-  }
-
-  // Build config overrides from all inputs (including use_opencode_cli)
   const configOverrides = configFromInputs({ ...inputs, use_opencode_cli: useOpencodeCliFlag ? "true" : undefined });
 
   const secrets: RuntimeSecrets = {
@@ -87,49 +64,114 @@ export async function runAction(): Promise<void> {
   const autoMerge = configOverrides.autoMerge ?? false;
   const report = await engine.run();
 
-  // Write human-readable output to stdout so workflows can capture it via tee
-  const outputMode = report.mode ?? configOverrides.mode ?? "plan";
+  writeStdoutOutput(report, configOverrides.mode);
+  await publishOutputs(report, secrets, autoMerge);
+}
+
+/** Install (or locate) the OpenCode CLI and prepend its binary dir to PATH. */
+async function configureOpenCodePath(useOpencodeCliFlag: boolean, version: string): Promise<void> {
+  const prependToPath = (binDir: string) => {
+    const existingPath = process.env.PATH ?? "";
+    if (!existingPath.split(":").includes(binDir)) {
+      process.env.PATH = `${binDir}:${existingPath}`;
+    }
+  };
+
+  if (useOpencodeCliFlag) {
+    try {
+      const { binaryPath } = await setupOpenCode(version);
+      prependToPath(dirname(binaryPath));
+      logger.info(`action: OpenCode CLI installed at ${binaryPath}`);
+    } catch (err) {
+      logger.warn(`action: OpenCode CLI install failed (${err}), continuing without it`);
+    }
+  } else {
+    prependToPath(`${process.env.HOME ?? homedir()}/.codesentinel/bin`);
+  }
+}
+
+/** Write the human-readable report to stdout so workflows can capture it via tee. */
+function writeStdoutOutput(report: EngineReport, defaultMode: string | undefined): void {
+  const outputMode = report.mode ?? defaultMode ?? "plan";
   process.stdout.write(`\n=== CodeSentinel [${outputMode}] ===\n`);
   process.stdout.write(report.summary + "\n");
   if (report.score) {
     process.stdout.write(
       `Score: ${report.score.overall}/100 ` +
-      `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
-      `security ${report.score.security}, coverage ${report.score.test_coverage})\n`,
+        `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
+        `security ${report.score.security}, coverage ${report.score.test_coverage})\n`,
     );
   }
+}
 
-  await publishOutputs(report, secrets, autoMerge);
+/** Resolve the PR number from GITHUB_PR_NUMBER or the GITHUB_EVENT_PATH payload. */
+function getPullRequestNumber(): number | undefined {
+  const raw = process.env.GITHUB_PR_NUMBER;
+  if (raw && Number.isFinite(Number(raw))) {
+    return Number(raw);
+  }
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (eventPath) {
+    try {
+      const event = JSON.parse(readFileSync(eventPath, "utf8")) as { pull_request?: { number?: unknown } };
+      const number = Number(event?.pull_request?.number);
+      if (Number.isFinite(number) && number > 0) {
+        return number;
+      }
+    } catch (err) {
+      logger.warn(`action: failed to parse GITHUB_EVENT_PATH payload (${err})`);
+    }
+  }
+  logger.warn("action: no pull request number resolved; PR comments, statuses and auto-merge are skipped");
+  return undefined;
+}
+
+/** Run a reporting step in isolation so a single failure cannot fail the whole action. */
+async function safe(label: string, fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    logger.warn(`publishOutputs: ${label} failed: ${err}`);
+  }
 }
 
 /** Post comments / issues and write the step summary + metrics outputs. */
 async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, autoMerge = false): Promise<void> {
   const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
   const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
-  const pullNumber = process.env.GITHUB_PR_NUMBER
-    ? Number(process.env.GITHUB_PR_NUMBER)
-    : undefined;
-  const headSha = process.env.GITHUB_SHA;
+  const pullNumber = getPullRequestNumber();
 
   if (secrets.github_token && owner && repo) {
     const reporter = new GitHubReporter({ token: secrets.github_token, owner, repo, pullNumber });
-    for (const c of report.comments) {
-      await reporter.postReviewComment({
-        body: c.body,
-        file: c.file,
-        line: c.line,
-      });
-    }
-    if (report.mode === "audit") {
-      for (const f of report.findings) {
-        await reporter.createIssue(
-          `[${f.severity}] ${f.file}`,
-          f.comment,
-        );
+
+    // Resolve the PR head commit SHA so inline review comments attach correctly.
+    const envHeadSha = process.env.GITHUB_SHA;
+    let headSha = envHeadSha;
+    if (pullNumber) {
+      try {
+        const prHead = await reporter.getPullRequestHeadSha(pullNumber);
+        if (prHead) {
+          headSha = prHead;
+        } else {
+          logger.warn("publishOutputs: could not resolve PR head commit SHA, falling back to GITHUB_SHA");
+        }
+      } catch (err) {
+        logger.warn(`publishOutputs: resolvePullHeadSha failed: ${err}`);
       }
     }
 
-    // Create Check Run for gate mode
+    for (const c of report.comments) {
+      await safe("postReviewComment", () =>
+        reporter.postReviewComment({ body: c.body, file: c.file, line: c.line, commitId: headSha }),
+      );
+    }
+
+    if (report.mode === "audit") {
+      for (const f of report.findings) {
+        await safe("createIssue", () => reporter.createIssue(`[${f.severity}] ${f.file}`, f.comment));
+      }
+    }
+
     if (report.mode === "gate" && headSha) {
       const annotations = report.findings.slice(0, 50).map((f) => ({
         path: f.file,
@@ -139,29 +181,31 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, aut
         message: f.comment,
       }));
 
-      await reporter.createCheckRun({
-        name: "CodeSentinel Gate",
-        headSha,
-        status: "completed",
-        conclusion: report.gatePassed ? "success" : "failure",
-        output: {
-          title: report.gatePassed ? "Quality Gate Passed" : "Quality Gate Failed",
-          summary: report.summary,
-          annotations,
-        },
-      });
+      await safe("createCheckRun", () =>
+        reporter.createCheckRun({
+          name: "CodeSentinel Gate",
+          headSha,
+          status: "completed",
+          conclusion: report.gatePassed ? "success" : "failure",
+          output: {
+            title: report.gatePassed ? "Quality Gate Passed" : "Quality Gate Failed",
+            summary: report.summary,
+            annotations,
+          },
+        }),
+      );
 
-      // Also set commit status
-      await reporter.setCommitStatus({
-        sha: headSha,
-        state: report.gatePassed ? "success" : "failure",
-        description: report.gatePassed ? "All gate checks passed" : "Gate checks failed",
-        context: "codesentinel/gate",
-      });
+      await safe("setCommitStatus", () =>
+        reporter.setCommitStatus({
+          sha: headSha,
+          state: report.gatePassed ? "success" : "failure",
+          description: report.gatePassed ? "All gate checks passed" : "Gate checks failed",
+          context: "codesentinel/gate",
+        }),
+      );
 
-      // Auto-merge when gate passes
       if (report.gatePassed && autoMerge && pullNumber) {
-        await reporter.enableAutoMerge(pullNumber, "squash");
+        await safe("enableAutoMerge", () => reporter.enableAutoMerge(pullNumber, "squash"));
         logger.info(`publishOutputs: enabled auto-merge on PR #${pullNumber}`);
       }
     }
@@ -177,10 +221,8 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, aut
   const outputPath = process.env.GITHUB_OUTPUT;
   if (outputPath) {
     const { appendFileSync } = await import("node:fs");
-    const score = report.score?.overall ?? "n/a";
-    const findings = String(report.findings.length);
-    appendFileSync(outputPath, `score=${score}\n`);
-    appendFileSync(outputPath, `findings=${findings}\n`);
+    appendFileSync(outputPath, `score=${report.score?.overall ?? "n/a"}\n`);
+    appendFileSync(outputPath, `findings=${String(report.findings.length)}\n`);
   }
 }
 

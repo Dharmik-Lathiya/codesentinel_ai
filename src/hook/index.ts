@@ -1,7 +1,7 @@
-import { writeFileSync, chmodSync } from "node:fs";
+import { mkdirSync, writeFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 
-const DEFAULT_HIGH_SCORE_LIMIT = 10;
+const DEFAULT_MAX_HIGH_FINDINGS = 10;
 const DEFAULT_MAX_ITERATIONS = 5;
 
 const PRE_COMMIT_SCRIPT = `#!/bin/sh
@@ -22,7 +22,7 @@ fi
 
 # Run CodeSentinel gate on staged files
 if command -v codesentinel &> /dev/null; then
-  codesentinel gate --files "$STAGED" --min-score 0 --max-critical 0 --max-high ${DEFAULT_HIGH_SCORE_LIMIT}
+  codesentinel gate --files "$STAGED" --min-score 0 --max-critical 0 --max-high ${DEFAULT_MAX_HIGH_FINDINGS}
   GATE_EXIT=$?
   if [ $GATE_EXIT -ne 0 ]; then
     echo "❌ CodeSentinel: Gate check failed. Fix issues before committing."
@@ -92,7 +92,12 @@ export function installHook(root: string, type: HookType = "pre-commit"): string
   const hookName = type === "post-commit" ? "post-commit" : "pre-commit";
   const hookPath = join(hookDir, hookName);
   const script = type === "post-commit" ? POST_COMMIT_SCRIPT : PRE_COMMIT_SCRIPT;
-  writeFileSync(hookPath, script, "utf8");
-  chmodSync(hookPath, 0o755);
-  return hookPath;
+  try {
+    mkdirSync(hookDir, { recursive: true });
+    writeFileSync(hookPath, script, "utf8");
+    chmodSync(hookPath, 0o755);
+    return hookPath;
+  } catch (err) {
+    throw new Error(`CodeSentinel: failed to install ${hookName} hook at ${hookPath}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
