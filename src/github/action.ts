@@ -8,6 +8,9 @@ import type { Mode, RuntimeSecrets } from "../config/types.js";
 import { logger } from "../utils/logger.js";
 import { setupOpenCode } from "../opencode/installer.js";
 
+const MAX_QUALITY_SCORE = 100;
+const MAX_GATE_ANNOTATIONS = 50;
+
 /**
  * GitHub Action entrypoint. Reads inputs from the environment (set by action.yml
  * as INPUT_<NAME>), runs the engine, posts PR comments and writes the job
@@ -93,7 +96,7 @@ export async function runAction(): Promise<void> {
   process.stdout.write(report.summary + "\n");
   if (report.score) {
     process.stdout.write(
-      `Score: ${report.score.overall}/100 ` +
+`Score: ${report.score.overall}/${MAX_QUALITY_SCORE} ` +
       `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
       `security ${report.score.security}, coverage ${report.score.test_coverage})\n`,
     );
@@ -121,49 +124,12 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, aut
       });
     }
     if (report.mode === "audit") {
-      for (const f of report.findings) {
-        await reporter.createIssue(
-          `[${f.severity}] ${f.file}`,
-          f.comment,
-        );
-      }
+      await postAuditFindings(reporter, report);
     }
 
     // Create Check Run for gate mode
     if (report.mode === "gate" && headSha) {
-      const annotations = report.findings.slice(0, 50).map((f) => ({
-        path: f.file,
-        start_line: f.line ?? 1,
-        end_line: f.line ?? 1,
-        annotation_level: (f.severity === "critical" || f.severity === "high" ? "failure" : "warning") as "failure" | "warning" | "notice",
-        message: f.comment,
-      }));
-
-      await reporter.createCheckRun({
-        name: "CodeSentinel Gate",
-        headSha,
-        status: "completed",
-        conclusion: report.gatePassed ? "success" : "failure",
-        output: {
-          title: report.gatePassed ? "Quality Gate Passed" : "Quality Gate Failed",
-          summary: report.summary,
-          annotations,
-        },
-      });
-
-      // Also set commit status
-      await reporter.setCommitStatus({
-        sha: headSha,
-        state: report.gatePassed ? "success" : "failure",
-        description: report.gatePassed ? "All gate checks passed" : "Gate checks failed",
-        context: "codesentinel/gate",
-      });
-
-      // Auto-merge when gate passes
-      if (report.gatePassed && autoMerge && pullNumber) {
-        await reporter.enableAutoMerge(pullNumber, "squash");
-        logger.info(`publishOutputs: enabled auto-merge on PR #${pullNumber}`);
-      }
+      await postGateResults(reporter, report, headSha, autoMerge, pullNumber);
     }
   }
 
@@ -198,8 +164,57 @@ function renderSummary(report: EngineReport): string {
   }
   return lines.join("\n");
 }
+/** Post audit findings as separate GitHub issues. */
+async function postAuditFindings(reporter: GitHubReporter, report: EngineReport): Promise<void> {
+  for (const f of report.findings) {
+    await reporter.createIssue(`[${f.severity}] ${f.file}`, f.comment);
+  }
+}
+
+/** Create the gate Check Run, commit status and optional auto-merge. */
+async function postGateResults(
+  reporter: GitHubReporter,
+  report: EngineReport,
+  headSha: string,
+  autoMerge: boolean,
+  pullNumber?: number,
+): Promise<void> {
+  const annotations = report.findings.slice(0, MAX_GATE_ANNOTATIONS).map((f) => ({
+    path: f.file,
+    start_line: f.line ?? 1,
+    end_line: f.line ?? 1,
+    annotation_level: (f.severity === "critical" || f.severity === "high" ? "failure" : "warning") as "failure" | "warning" | "notice",
+    message: f.comment,
+  }));
+
+  await reporter.createCheckRun({
+    name: "CodeSentinel Gate",
+    headSha,
+    status: "completed",
+    conclusion: report.gatePassed ? "success" : "failure",
+    output: {
+      title: report.gatePassed ? "Quality Gate Passed" : "Quality Gate Failed",
+      summary: report.summary,
+      annotations,
+    },
+  });
+
+  // Also set commit status
+  await reporter.setCommitStatus({
+    sha: headSha,
+    state: report.gatePassed ? "success" : "failure",
+    description: report.gatePassed ? "All gate checks passed" : "Gate checks failed",
+    context: "codesentinel/gate",
+  });
+
+  // Auto-merge when gate passes
+  if (report.gatePassed && autoMerge && pullNumber) {
+    await reporter.enableAutoMerge(pullNumber, "squash");
+    logger.info(`publishOutputs: enabled auto-merge on PR #${pullNumber}`);
+  }
+}
 
 runAction().catch((err) => {
   logger.error("Action failed:", err);
-  process.exit(1);
+  process.exitCode = 1;
 });
