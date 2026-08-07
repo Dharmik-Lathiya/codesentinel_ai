@@ -614,7 +614,10 @@ export class Engine {
     const allSummaries: string[] = [];
     for (const batch of batches) {
       logger.info(`aiReview: batch size=${batch.length}`);
-      const results = await concurrentMap(batch, (file) => this.reviewOneFile(file), 5);
+const results = await concurrentMap(batch, (file) => this.reviewOneFile(file), 5).catch((err) => {
+        logger.warn(`aiReview: batch failed: ${err instanceof Error ? err.message : String(err)}`);
+        return [];
+      });
       for (const r of results) {
         if (r instanceof Error) {
           logger.warn(`aiReview: batch item failed: ${r.message}`);
