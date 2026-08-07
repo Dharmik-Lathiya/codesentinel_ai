@@ -11,6 +11,13 @@ import { setupOpenCode } from "../opencode/installer.js";
 const MAX_SCORE = 100;
 const MAX_ANNOTATIONS = 50;
 
+const MODES = ["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan"] as const;
+
+/** Format the four-dimension score breakdown for display. */
+function formatScore(score: NonNullable<EngineReport["score"]>): string {
+  return `(readability ${score.readability}, maintainability ${score.maintainability}, security ${score.security}, coverage ${score.test_coverage})`;
+}
+
 /**
  * GitHub Action entrypoint. Reads inputs from the environment (set by action.yml
  * as INPUT_<NAME>), runs the engine, posts PR comments and writes the job
@@ -54,7 +61,7 @@ export async function runAction(): Promise<void> {
     }
   } else {
     // Also prepend the default install dir so system-installed opencode is found
-    const defaultBinDir = `${process.env.HOME ?? homedir()}/.codesentinel/bin`;
+    const defaultBinDir = `${homedir()}/.codesentinel/bin`;
     const existingPath = process.env.PATH ?? "";
     if (!existingPath.split(":").includes(defaultBinDir)) {
       process.env.PATH = `${defaultBinDir}:${existingPath}`;
@@ -73,10 +80,14 @@ export async function runAction(): Promise<void> {
     opencode_base_url: process.env.OPENCODE_BASE_URL || get("opencode_base_url"),
   };
 
-  const runMode = (inputs.mode || "review") as Mode;
+  const rawMode = inputs.mode || "review";
+  if (!(MODES as readonly string[]).includes(rawMode)) {
+    throw new Error(`Invalid mode "${rawMode}". Expected one of: ${MODES.join(", ")}`);
+  }
+  const runMode = rawMode as Mode;
   const engine = Engine.fromInputs({
     configPath: get("config_path") || undefined,
-    overrides: { ...configOverrides, mode: runMode, enable_auto_fix: configOverrides.enable_auto_fix ?? false },
+    overrides: { ...configOverrides, mode: runMode, enable_auto_fix: configOverrides.enable_auto_fix },
     secrets,
   });
 
@@ -95,11 +106,7 @@ export async function runAction(): Promise<void> {
   process.stdout.write(`\n=== CodeSentinel [${outputMode}] ===\n`);
   process.stdout.write(report.summary + "\n");
   if (report.score) {
-    process.stdout.write(
-      `Score: ${report.score.overall}/${MAX_SCORE} ` +
-      `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
-      `security ${report.score.security}, coverage ${report.score.test_coverage})\n`,
-    );
+    process.stdout.write(`Score: ${report.score.overall}/${MAX_SCORE} ${formatScore(report.score)}\n`);
   }
 
   await publishOutputs(report, secrets, autoMerge);
@@ -215,11 +222,7 @@ function buildGateCheckParams(
 function renderSummary(report: EngineReport): string {
   const lines = [`# CodeSentinel — ${report.mode}`, "", report.summary, ""];
   if (report.score) {
-    lines.push(
-      `**Score:** ${report.score.overall}/${MAX_SCORE} ` +
-        `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
-        `security ${report.score.security}, coverage ${report.score.test_coverage})`,
-    );
+    lines.push(`**Score:** ${report.score.overall}/${MAX_SCORE} ${formatScore(report.score)}`);
   }
   if (report.gatePassed !== undefined) {
     lines.push(`**Gate:** ${report.gatePassed ? "PASSED" : "FAILED"}`);
