@@ -4,18 +4,53 @@ import { logger } from "../utils/logger.js";
 
 interface ScannerTool {
   name: string;
+  path: string | null;
   detect(): boolean;
   run(root: string): Finding[];
 }
 
-const BYTES_PER_KILOBYTE = 1024;
-const ONE_KB = BYTES_PER_KILOBYTE;
-const ONE_MB = ONE_KB * ONE_KB;
-const MAX_BUFFER_SIZE_IN_MB = 10;
-const MAX_BUFFER_MB = MAX_BUFFER_SIZE_IN_MB;
-const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
-const SNIPPET_MAX_CHAR_LENGTH = 80;
-const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
+const ONE_MB = 1024 * 1024;
+const MAX_BUFFER = 10 * ONE_MB;
+const SNIPPET_LENGTH = 80;
+
+function redactSecret(value: string): string {
+  return `${value.slice(0, 8)}[redacted ${value.length} chars]`;
+}
+
+function createExecScanner(opts: {
+  name: string;
+  detectCmd: string;
+  runArgs: string;
+  buildFindings: (out: string) => Finding[];
+}): ScannerTool {
+  const tool: ScannerTool = {
+    name: opts.name,
+    path: null,
+    detect(): boolean {
+      try {
+        tool.path = execSync(`which ${opts.detectCmd}`, { stdio: "pipe" }).toString().trim();
+        return true;
+      } catch {
+        logger.debug(`${opts.name} not found`);
+        return false;
+      }
+    },
+    run(root: string): Finding[] {
+      if (!tool.path) return [];
+      try {
+        const out = execSync(
+          `"${tool.path}" ${opts.runArgs} 2>/dev/null || true`,
+          { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
+        );
+        return opts.buildFindings(out);
+      } catch (e) {
+        logger.warn(`${opts.name} run failed: ${e}`);
+        return [];
+      }
+    },
+  };
+  return tool;
+}
 
 function parseTrufflehogLine(line: string): Finding | null {
   try {
@@ -26,7 +61,7 @@ function parseTrufflehogLine(line: string): Finding | null {
       severity: "high" as const,
       category: "security" as const,
       comment: `[trufflehog] ${r.DetectorName ?? "secret"}: ${r.Description ?? ""}`,
-      suggestion: `Matched: ${(r.Raw || "").slice(0, SNIPPET_LENGTH)}`,
+      suggestion: `Matched: ${redactSecret(r.Raw ?? "")}`,
       source: "scanner" as const,
     } as Finding;
   } catch {
@@ -35,73 +70,41 @@ function parseTrufflehogLine(line: string): Finding | null {
   }
 }
 
-const gitleaks: ScannerTool = {
+const gitleaks = createExecScanner({
   name: "gitleaks",
-  detect(): boolean {
+  detectCmd: "gitleaks",
+  runArgs: "detect --no-git --source . --report-format json --report-path /dev/stdout",
+  buildFindings(out: string): Finding[] {
+    if (!out.trim()) return [];
+    let results: { File: string; StartLine: number; RuleID: string; Description: string; Match: string; Severity: string }[];
     try {
-      execSync("which gitleaks", { stdio: "ignore" });
-      return true;
+      results = JSON.parse(out);
     } catch {
-      logger.debug("gitleaks not found");
-      return false;
-    }
-  },
-  run(root: string): Finding[] {
-    try {
-      const out = execSync(
-        "gitleaks detect --no-git --source . --report-format json --report-path /dev/stdout 2>/dev/null || true",
-        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
-      );
-      if (!out.trim()) return [];
-      let results: { File: string; StartLine: number; RuleID: string; Description: string; Match: string; Severity: string }[];
-      try {
-        results = JSON.parse(out);
-      } catch {
-        logger.warn("gitleaks JSON parse failed");
-        return [];
-      }
-      return results.map((r) => ({
-        file: r.File,
-        line: r.StartLine || null,
-        severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
-        category: "security" as const,
-        comment: `[gitleaks] ${r.Description}`,
-        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
-        source: "scanner" as const,
-      }));
-    } catch (e) {
-      logger.warn(`gitleaks run failed: ${e}`);
+      logger.warn("gitleaks JSON parse failed");
       return [];
     }
+    return results.map((r) => ({
+      file: r.File,
+      line: r.StartLine || null,
+      severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
+      category: "security" as const,
+      comment: `[gitleaks] ${r.Description}`,
+      suggestion: `Match: ${redactSecret(r.Match.trim())}`,
+      source: "scanner" as const,
+    }));
   },
-};
+});
 
-const trufflehog: ScannerTool = {
+const trufflehog = createExecScanner({
   name: "trufflehog",
-  detect(): boolean {
-    try {
-      execSync("which trufflehog", { stdio: "ignore" });
-      return true;
-    } catch {
-      logger.debug("trufflehog not found");
-      return false;
-    }
+  detectCmd: "trufflehog",
+  runArgs: "filesystem . --json --no-verification",
+  buildFindings(out: string): Finding[] {
+    if (!out.trim()) return [];
+    const lines = out.trim().split("\n").filter(Boolean);
+    return lines.map(parseTrufflehogLine).filter((f): f is Finding => f !== null);
   },
-  run(root: string): Finding[] {
-    try {
-      const out = execSync(
-        "trufflehog filesystem . --json --no-verification 2>/dev/null || true",
-        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
-      );
-      if (!out.trim()) return [];
-      const lines = out.trim().split("\n").filter(Boolean);
-      return lines.map(parseTrufflehogLine).filter((f): f is Finding => f !== null);
-    } catch (e) {
-      logger.warn(`trufflehog run failed: ${e}`);
-      return [];
-    }
-  },
-};
+});
 
 const scanners: Record<string, ScannerTool> = { gitleaks, trufflehog };
 
