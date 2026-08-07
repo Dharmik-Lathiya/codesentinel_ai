@@ -202,8 +202,8 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
