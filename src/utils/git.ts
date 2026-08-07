@@ -12,6 +12,13 @@ const MAX_BUFFER_MEGABYTES = 64;
 const MAX_BUFFER = MAX_BUFFER_MEGABYTES * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
+/**
+ * Memoized result of `defaultBaseRef` so repeated `collectDiff` calls do not
+ * re-spawn git merely to re-resolve the same base ref.
+ */
+let cachedBaseRef: string | undefined;
+let baseRefResolved = false;
+
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -50,6 +57,33 @@ function logGitFailure(
   );
 }
 
+/**
+ * Log a git diff-collection failure, giving a clearer message when the output
+ * exceeds the child-process buffer ceiling, then rethrow.
+ */
+function failCollect(
+  opName: string,
+  baseRef: string | undefined,
+  err: unknown,
+): never {
+  const maxBuffer =
+    err instanceof Error &&
+    (err as { code?: string }).code ===
+      "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+  if (maxBuffer) {
+    logger.warn(
+      `git ${opName} output exceeded the ${MAX_BUFFER_MEGABYTES}MB buffer ` +
+      `against "${baseRef ?? "working tree"}": change set too large.`,
+    );
+  } else {
+    logger.warn(
+      `Failed to run git ${opName} against "${baseRef ?? "working tree"}":`,
+      err,
+    );
+  }
+  throw err;
+}
+
 export interface DiffFile {
   /** Path of the file changed in the diff. */
   path: string;
@@ -76,6 +110,12 @@ export async function collectDiff(
   } catch {
     logger.debug("Failed to determine base ref; falling back to working-tree diff");
   }
+  if (!(await refExists("HEAD", cwd))) {
+    logger.warn(
+      "Repository has no commits yet (unborn HEAD); nothing to diff.",
+    );
+    return [];
+  }
   const rangeArgs = baseRef ? [baseRef + "..."] : [];
   let nameStatus: string;
   try {
@@ -92,11 +132,7 @@ export async function collectDiff(
       cwd,
     );
   } catch (err) {
-    logger.warn(
-      `Failed to collect diff against "${baseRef ?? "working tree"}":`,
-      err,
-    );
-    throw err;
+    failCollect("diff --name-status", baseRef, err);
   }
 
   const workspaceRoot = resolve(cwd);
@@ -108,16 +144,16 @@ export async function collectDiff(
       cwd,
     );
   } catch (err) {
-    logger.warn(
-      `Failed to collect diff output against "${baseRef ?? "working tree"}":`,
-      err,
-    );
-    throw err;
+    failCollect("diff --no-renames", baseRef, err);
   }
   const diffByPath = splitDiffByPath(diffText);
 
   const files: DiffFile[] = [];
   const nameStatusEntries = nameStatus.split("\0");
+  // git -z NUL-terminates each --name-status record, so the trailing NUL
+  // leaves an empty last element that `length - 1` skips. Keep the bound
+  // in case a future version stops emitting the trailing NUL.
+
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
@@ -146,6 +182,15 @@ export async function collectDiff(
   }
   return files;
 }
+
+/**
+ * Split combined git diff --no-renames output into per-file diffs.
+ *
+ * Only the statuses these calls produce (added/modified/deleted) are
+ * handled here. If rename support is ever needed, key the map by
+ * `match[1] || match[2]` (rename lines differ in the a/ and b/ paths)
+ * and reconcile with the actual status.
+ */
 
 function splitDiffByPath(diffText: string): Map<string, string> {
   const byPath = new Map<string, string>();
@@ -180,22 +225,48 @@ async function readContent(full: string): Promise<string> {
   return text;
 }
 
-/** Determine a sensible base ref (main/master/develop or upstream merge-base). */
+/** Determine a sensible base ref (main/master/develop or origin/HEAD). */
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
+  if (baseRefResolved) return cachedBaseRef;
+
+  // One for-each-ref call instead of up to 5 rev-parse spawns; set-compare
+  // against the candidates in the same precedence as before.
+  const available = await existingRefs(cwd);
   const candidates = ["origin/main", "origin/master", "main", "master"];
-  for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
-  }
+  cachedBaseRef = candidates.find((ref) => available.has(ref));
+  baseRefResolved = true;
   // No base ref found: fall back to a plain working-tree diff.
-  return undefined;
+  return cachedBaseRef;
+}
+
+/**
+ * List local branches and the origin/HEAD default ref in a single git call.
+ */
+async function existingRefs(cwd: string): Promise<Set<string>> {
+  try {
+    const out = await git(
+      [
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/heads",
+        "refs/remotes/origin/HEAD",
+      ],
+      cwd,
+      { quiet: true },
+    );
+    return new Set(out.split("\n").filter(Boolean));
+  } catch {
+    logger.debug("Failed to list refs");
+    return new Set();
+  }
 }
 
 async function refExists(ref: string, cwd: string): Promise<boolean> {
