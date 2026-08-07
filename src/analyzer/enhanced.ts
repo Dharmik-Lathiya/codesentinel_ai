@@ -183,82 +183,28 @@ export class EnhancedAnalyzer {
 
     lines.forEach((line, idx) => {
       // 1. Hardcoded secrets / API keys
-      if (/api[_-]?key\s*=\s*["'][A-Za-z0-9_\-]{16,}/i.test(line)) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("high", severityMultiplier),
-          "security",
-          path,
-          idx + 1,
-          "Possible hardcoded API key detected.",
-          "Move secrets to environment variables or a secrets manager.",
-          0.9, // High confidence
-        ));
-      }
+      const apiKeyFinding = this.detectHardcodedApiKey(path, line, idx, severityMultiplier);
+      if (apiKeyFinding) findings.push(apiKeyFinding);
 
       // 2. console.log left in source
-      if (/\bconsole\.(log|debug)\(/.test(line) && !path.includes(".test.")) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("low", severityMultiplier),
-          "smell",
-          path,
-          idx + 1,
-          "Debug logging left in source.",
-          "Remove or replace with a proper logger.",
-          0.8, // High confidence
-        ));
-      }
+      const consoleFinding = this.detectConsoleLog(path, line, idx, severityMultiplier);
+      if (consoleFinding) findings.push(consoleFinding);
 
       // 3. eval usage
-      if (/\beval\s*\(/.test(line)) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("critical", severityMultiplier),
-          "security",
-          path,
-          idx + 1,
-          "Use of eval() is dangerous and can lead to code injection.",
-          "Avoid eval; parse structured input instead.",
-          0.95, // Very high confidence
-        ));
-      }
+      const evalFinding = this.detectEvalUsage(path, line, idx, severityMultiplier);
+      if (evalFinding) findings.push(evalFinding);
 
       // 4. TODO/FIXME without tracking
-      if (/(TODO|FIXME|XXX)\b/.test(line)) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("info", severityMultiplier),
-          "smell",
-          path,
-          idx + 1,
-          "Tech-debt marker (TODO/FIXME) found.",
-          "Link to a tracked issue where possible.",
-          0.9, // High confidence
-        ));
-      }
+      const todoFinding = this.detectTodoMarker(path, line, idx, severityMultiplier);
+      if (todoFinding) findings.push(todoFinding);
 
       // 5. Hardcoded passwords
-      if (/password\s*=\s*["'][^"']+["']/i.test(line)) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("high", severityMultiplier),
-          "security",
-          path,
-          idx + 1,
-          "Possible hardcoded password detected.",
-          "Use environment variables or a secrets manager.",
-          0.85, // High confidence
-        ));
-      }
+      const passwordFinding = this.detectHardcodedPassword(path, line, idx, severityMultiplier);
+      if (passwordFinding) findings.push(passwordFinding);
 
       // 6. process.exit() usage
-      if (/\bprocess\.exit\s*\(/.test(line)) {
-        findings.push(this.createFinding(
-          this.adjustSeverity("medium", severityMultiplier),
-          "smell",
-          path,
-          idx + 1,
-          "Direct process.exit() call found.",
-          "Use exceptions or return codes for cleaner shutdown.",
-          0.9, // High confidence
-        ));
-      }
+      const exitFinding = this.detectProcessExit(path, line, idx, severityMultiplier);
+      if (exitFinding) findings.push(exitFinding);
     });
 
     // 7. Deep nesting detection
@@ -274,6 +220,149 @@ export class EnhancedAnalyzer {
     findings.push(...this.detectLongFunctions(path, lines, severityMultiplier));
 
     return findings;
+  }
+  /**
+   * Detect hardcoded API keys in a single line.
+   */
+  private detectHardcodedApiKey(
+    path: string,
+    line: string,
+    idx: number,
+    severityMultiplier: number,
+  ): Finding | undefined {
+    if (!/api[_-]?key\s*=\s*[\"'][A-Za-z0-9_\-]{16,}/i.test(line)) {
+      return undefined;
+    }
+
+    return this.createFinding(
+      this.adjustSeverity("high", severityMultiplier),
+      "security",
+      path,
+      idx + 1,
+      "Possible hardcoded API key detected.",
+      "Move secrets to environment variables or a secrets manager.",
+      0.9, // High confidence
+    );
+  }
+
+  /**
+   * Detect debug logging left in source.
+   */
+  private detectConsoleLog(
+    path: string,
+    line: string,
+    idx: number,
+    severityMultiplier: number,
+  ): Finding | undefined {
+    if (!/\bconsole\.(log|debug)\(/.test(line) || path.includes(".test.")) {
+      return undefined;
+    }
+
+    return this.createFinding(
+      this.adjustSeverity("low", severityMultiplier),
+      "smell",
+      path,
+      idx + 1,
+      "Debug logging left in source.",
+      "Remove or replace with a proper logger.",
+      0.8, // High confidence
+    );
+  }
+
+  /**
+   * Detect eval() usage in a single line.
+   */
+  private detectEvalUsage(
+    path: string,
+    line: string,
+    idx: number,
+    severityMultiplier: number,
+  ): Finding | undefined {
+    if (!/\beval\s*\(/.test(line)) {
+      return undefined;
+    }
+
+    return this.createFinding(
+      this.adjustSeverity("critical", severityMultiplier),
+      "security",
+      path,
+      idx + 1,
+      "Use of eval() is dangerous and can lead to code injection.",
+      "Avoid eval; parse structured input instead.",
+      0.95, // Very high confidence
+    );
+  }
+
+  /**
+   * Detect untracked TODO/FIXME markers in a single line.
+   */
+  private detectTodoMarker(
+    path: string,
+    line: string,
+    idx: number,
+    severityMultiplier: number,
+  ): Finding | undefined {
+    if (!/(TODO|FIXME|XXX)\b/.test(line)) {
+      return undefined;
+    }
+
+    return this.createFinding(
+      this.adjustSeverity("info", severityMultiplier),
+      "smell",
+      path,
+      idx + 1,
+      "Tech-debt marker (TODO/FIXME) found.",
+      "Link to a tracked issue where possible.",
+      0.9, // High confidence
+    );
+  }
+
+  /**
+   * Detect hardcoded passwords in a single line.
+   */
+  private detectHardcodedPassword(
+    path: string,
+    line: string,
+    idx: number,
+    severityMultiplier: number,
+  ): Finding | undefined {
+    if (!/password\s*=\s*[\"'][^\"']+[\"']/i.test(line)) {
+      return undefined;
+    }
+
+    return this.createFinding(
+      this.adjustSeverity("high", severityMultiplier),
+      "security",
+      path,
+      idx + 1,
+      "Possible hardcoded password detected.",
+      "Use environment variables or a secrets manager.",
+      0.85, // High confidence
+    );
+  }
+
+  /**
+   * Detect direct process.exit() calls in a single line.
+   */
+  private detectProcessExit(
+    path: string,
+    line: string,
+    idx: number,
+    severityMultiplier: number,
+  ): Finding | undefined {
+    if (!/\bprocess\.exit\s*\(/.test(line)) {
+      return undefined;
+    }
+
+    return this.createFinding(
+      this.adjustSeverity("medium", severityMultiplier),
+      "smell",
+      path,
+      idx + 1,
+      "Direct process.exit() call found.",
+      "Use exceptions or return codes for cleaner shutdown.",
+      0.9, // High confidence
+    );
   }
 
   /**
