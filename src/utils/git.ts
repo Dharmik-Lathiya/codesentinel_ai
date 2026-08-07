@@ -5,9 +5,11 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
-const KILOBYTE = 1024;
+const BYTES_PER_KILOBYTE = 1024;
+const KILOBYTE = BYTES_PER_KILOBYTE;
 const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const MAX_BUFFER_MEGABYTES = 64;
+const MAX_BUFFER = MAX_BUFFER_MEGABYTES * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
 
@@ -28,17 +30,24 @@ export async function git(
   } catch (err) {
     const timedOut =
       err instanceof Error && (err as { killed?: boolean }).killed === true;
-    const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
-      logger.error(
-        timedOut
-          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-          : `git command failed: ${command}`,
-        err,
-      );
+      logGitFailure(`git ${args.join(" ")}`, timedOut, err);
     }
     throw err;
   }
+}
+
+function logGitFailure(
+  command: string,
+  timedOut: boolean,
+  err: unknown,
+): void {
+  logger.error(
+    timedOut
+      ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
+      : `git command failed: ${command}`,
+    err,
+  );
 }
 
 export interface DiffFile {
@@ -61,7 +70,12 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  const baseRef = base ?? (await defaultBaseRef(cwd));
+  let baseRef: string | undefined;
+  try {
+    baseRef = base ?? (await defaultBaseRef(cwd));
+  } catch {
+    logger.debug("Failed to determine base ref; falling back to working-tree diff");
+  }
   const rangeArgs = baseRef ? [baseRef + "..."] : [];
   let nameStatus: string;
   try {
@@ -147,7 +161,13 @@ function splitDiffByPath(diffText: string): Map<string, string> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
+  let fileStat: { size: number };
+  try {
+    fileStat = await stat(full);
+  } catch {
+    logger.debug(`Could not stat file: ${full}`);
+    return "";
+  }
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";

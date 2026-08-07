@@ -59,11 +59,15 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
   }
 
   if (hasRule) {
+
     const ruleId = dismissArgs[ruleIdx + 1];
     if (!ruleId || ruleId.startsWith("--")) {
       return { reason: "dismissed by user", error: "Missing rule id for --rule." };
     }
-    const reason = dismissArgs.slice(ruleIdx + 2).join(" ").trim() || "dismissed by user";
+    const trailing = dismissArgs.slice(ruleIdx + 2);
+    const end = trailing.findIndex((t) => t.startsWith("--"));
+    const reason =
+      trailing.slice(0, end === -1 ? trailing.length : end).join(" ").trim() || "dismissed by user";
     return { reason, ruleId };
   }
 
@@ -72,15 +76,33 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     if (!filePath || filePath.startsWith("--")) {
       return { reason: "dismissed by user", error: "Missing file path for --file." };
     }
-    const lineIdx = dismissArgs.indexOf("--line");
-    const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-    const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
-    const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
-    const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
-    const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
-    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
-    const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
-    return { reason, filePath, lineNum, ruleIdArg };
+    let lineNum: number | null = null;
+    let ruleIdArg: string | undefined;
+    const reasonParts: string[] = [];
+    const tokens = dismissArgs.slice(fileIdx + 2);
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token === "--line") {
+        const raw = tokens[i + 1];
+        if (raw !== undefined && !raw.startsWith("--")) {
+          i++;
+          lineNum = /^\d+$/.test(raw.trim()) ? parseInt(raw, PARSE_INT_RADIX) : null;
+        } else {
+          lineNum = null;
+        }
+      } else if (token === "--rule-id") {
+        const value = tokens[i + 1];
+        if (value !== undefined && !value.startsWith("--")) {
+          i++;
+          ruleIdArg = value;
+        }
+      } else if (!token.startsWith("--")) {
+        reasonParts.push(token);
+      }
+    }
+    const finalRuleIdArg = ruleIdArg && !ruleIdArg.startsWith("--") ? ruleIdArg : `${filePath}:${lineNum ?? "all"}`;
+    const reason = reasonParts.join(" ").trim() || "dismissed by user";
+    return { reason, filePath, lineNum, ruleIdArg: finalRuleIdArg };
   }
 
   return { reason: "dismissed by user", error: "Missing --rule or --file." };
@@ -316,7 +338,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "          fetch-depth: 1",
   "",
   "      - name: Install CodeSentinel CLI dependencies",
-  "        run: npm ci --prefix \"${{ runner.temp }}/codesentinel\" --omit=dev --ignore-scripts --no-audit --no-fund",
+  "        run: npm ci --prefix \"${{ runner.temp }}/codesentinel\" --omit=dev --ignore-scripts --no-audit --no-fund && npm rebuild --prefix \"${{ runner.temp }}/codesentinel\" better-sqlite3",
   "      - name: Install dependencies (includes devDeps for tsc/build)",
   "      - name: Install dependencies (includes devDeps for tsc/build)",
   "        run: npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund",
@@ -331,7 +353,7 @@ const BUILD_WORKFLOW_CONTENT = [
 '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
 '          CODESENTINEL_GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN }}',
   "        run: |",
-  "          MAX_ITER=${MAX_ITERATIONS:-5}",
+  "          MAX_ITER=5",
   '          echo "::group::Build-Fix Loop"',
   "          for i in $(seq 1 $MAX_ITER); do",
   '            echo "=== Iteration $i/$MAX_ITER ==="',
@@ -461,7 +483,7 @@ function runSetup(force: boolean): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
