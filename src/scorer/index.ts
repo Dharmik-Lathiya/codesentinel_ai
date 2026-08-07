@@ -103,7 +103,7 @@ export class Scorer {
     let security: number;
     switch (strategy) {
       case "avg":
-        security = Math.round(((ai.security ?? baseline.security) + baseline.security) / 2);
+        security = ((ai.security ?? baseline.security) + baseline.security) / 2;
         break;
       case "static-only":
         security = baseline.security;
@@ -155,7 +155,7 @@ export class Scorer {
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > 120).length;
       const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      total += score;
     }
     return fileCount ? total / fileCount : 100;
   }

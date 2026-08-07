@@ -20,10 +20,12 @@ export function buildSuggestionsComment(
     return lines;
   };
   const escapeFence = (text: string): string =>
-    text.split("\n").map((line) => (line.trim() === "```" ? "`\\``" : line)).join("\n");
+    text.split("\n").map((line) => (line.trim() === "```" ? "`\\`" : line)).join("\n");
+  const stripFences = (s?: string): string =>
+    s?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
   for (const f of findings.slice(0, MAX_FINDINGS)) {
     const comment = escapeFence(f.comment);
-    const rawSuggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
+    const rawSuggested = stripFences(f.suggestion);
     const suggested = escapeFence(rawSuggested);
     const lines = getLines(f.file);
     if (f.line && f.line > 0 && lines.length > 0) {
@@ -44,6 +46,10 @@ export function buildSuggestionsComment(
     } else {
       parts.push(`**${f.file}** — ${f.severity.toUpperCase()} — ${comment}\n\n` + "```suggestion\n" + (suggested || "// " + comment) + "\n```\n");
     }
+  }
+  const truncated = findings.length - MAX_FINDINGS;
+  if (truncated > 0) {
+    parts.push(`...and ${truncated} more finding${truncated === 1 ? "" : "s"}.`);
   }
   return parts.join("\n---\n");
 }
