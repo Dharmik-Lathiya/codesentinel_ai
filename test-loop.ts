@@ -7,8 +7,9 @@ const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
+export const MAX_SAFE_EXPONENT = 53;
 const SAMPLE_VALUE = 42;
-const DECIMAL_SAMPLE_VALUE = -7.25;
+export const DECIMAL_SAMPLE_VALUE = -7.25;
 
 /**
  * Scales the input by a fixed multiplier.
@@ -20,9 +21,8 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-function isValueObject(v: unknown): v is { value?: number } {
-function isValueObject(v: unknown): v is { value?: number } {
-  return typeof v === "object" && v !== null && "value" in v;
+function isValueObject(v: unknown): v is { value: number } {
+  return typeof v === "object" && v !== null && typeof (v as { value?: unknown }).value === "number";
 }
 export type ProcessDataResult =
 /**
@@ -60,19 +60,19 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
-  test('inputs above 2^53 lose integer precision (documented limitation)', () => {
-    const input = 2 ** 53 + 1;
+  test(`inputs above 2^${MAX_SAFE_EXPONENT} lose integer precision (documented limitation)`, () => {
+    const input = 2 ** MAX_SAFE_EXPONENT + 1;
     expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
     ["not-json"],
     ["[1,2,3]"],
-    ['{"value":"42"}'],
+    ['{"value":"' + SAMPLE_VALUE + '"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
