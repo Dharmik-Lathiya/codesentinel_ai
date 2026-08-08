@@ -15,9 +15,12 @@ const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
 /**
  * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Scaling by a power of two is exact; results may exceed Number.MAX_SAFE_INTEGER (output range) but never lose precision, and overflow only at ±Infinity.
  */
 export function calculate(x: number): number {
+  // NOTE: crossing EXTREME_THRESHOLD (x > 10000) flips MULTIPLIER to EXTREME_MULTIPLIER (its 2x), so
+  // output roughly doubles discontinuously near the boundary (10000 -> 4096x, 10001 -> 8192x).
+  // Callers near the boundary should account for this ~2x step.
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
   return x * multiplier;
 }
