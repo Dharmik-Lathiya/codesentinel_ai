@@ -16,6 +16,8 @@ const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
  * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * NOTE: inputs strictly greater than EXTREME_THRESHOLD use EXTREME_MULTIPLIER
+ * (a hard 2x multiplier) — a documented 2x discontinuity at the boundary.
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
@@ -28,8 +30,10 @@ function isValueObject(v: unknown): v is { value?: number } {
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparsable JSON, missing/non-numeric value, NaN/Infinity).
- * NOTE: 0 is an overloaded sentinel — a legitimate {"value":0} is indistinguishable
- * from a parse failure; callers needing error detection should use a discriminated result.
+ * NOTE: 0 is an overloaded sentinel — a legitimate {"value":0} is distinguishable
+ * from a parse failure *only* by validating the input beforehand; callers that need
+ * to distinguish a real 0 from an error should use a discriminated result
+ * (e.g. { ok: boolean, value: number }) or validate the source input.
  */
 export function processData(input: string): { value: number } {
   try {
