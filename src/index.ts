@@ -71,8 +71,12 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
       }
       return { reason: "dismissed by user", error: "Missing value for --reason." };
     }
-    const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
-    const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
+    const trailing = dismissArgs.slice(ruleIdx + 2);
+    const unknownFlag = trailing.find((arg) => arg.startsWith("--"));
+    if (unknownFlag) {
+      return { reason: "dismissed by user", error: `Unsupported flag: ${unknownFlag}.` };
+    }
+    const reason = trailing.join(" ").trim() || "dismissed by user";
     return { reason, ruleId };
   }
 
@@ -93,6 +97,14 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
     const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
     const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
+    const reasonIdx = dismissArgs.indexOf("--reason");
+    if (reasonIdx >= 0) {
+      const reasonValue = dismissArgs[reasonIdx + 1];
+      if (reasonValue === undefined || reasonValue.startsWith("--")) {
+        return { reason: "dismissed by user", error: "Missing value for --reason." };
+      }
+      return { reason: reasonValue, filePath, lineNum, ruleIdArg };
+    }
     const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
     const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
     return { reason, filePath, lineNum, ruleIdArg };
@@ -644,11 +656,9 @@ async function main(): Promise<void> {
     }
     const parsed = parseDismissArgs(args.slice(1));
     if (parsed.error) {
+      process.stderr.write(`Error: ${parsed.error}\n`);
       process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
       process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
-      if (parsed.error.startsWith("Options")) {
-        process.stderr.write("Options --rule and --file are mutually exclusive.\n");
-      }
       process.exitCode = 1;
       return;
     }

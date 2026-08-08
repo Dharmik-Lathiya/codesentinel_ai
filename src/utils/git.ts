@@ -27,7 +27,9 @@ export async function git(
     return stdout;
   } catch (err) {
     const timedOut =
-      err instanceof Error && (err as { killed?: boolean }).killed === true;
+      err instanceof Error &&
+      (err as { killed?: boolean; signal?: NodeJS.Signals | null }).killed === true &&
+      (err as { signal?: NodeJS.Signals | null }).signal === "SIGTERM";
     const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
       logger.error(
@@ -54,8 +56,7 @@ export interface DiffFile {
 
 /**
  * Collect the changed files for the current PR/branch relative to a base ref.
- * Falls back to the working tree diff when no base ref is supplied and no
- * upstream branch is configured.
+ * Falls back to the working tree diff when no base ref can be resolved.
  */
 export async function collectDiff(
   base?: string,
@@ -100,10 +101,14 @@ export async function collectDiff(
     );
     throw err;
   }
-  const diffByPath = splitDiffByPath(diffText);
+  const nameStatusEntries = nameStatus.split("\u0000");
+  const knownNames = new Set<string>();
+  for (let i = 1; i < nameStatusEntries.length; i += 2) {
+    if (nameStatusEntries[i]) knownNames.add(nameStatusEntries[i]);
+  }
+  const diffByPath = splitDiffByPath(diffText, knownNames);
 
   const files: DiffFile[] = [];
-  const nameStatusEntries = nameStatus.split("\0");
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
@@ -129,6 +134,9 @@ export async function collectDiff(
       logger.warn(`Could not collect diff for ${path}`);
     }
 
+    files.push({ path, status, content, diff });
+  }
+
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
     for (const path of untracked) {
@@ -147,20 +155,24 @@ export async function collectDiff(
       files.push({ path, status: "added", content, diff: "" });
     }
   }
-    files.push({ path, status, content, diff });
-  }
+
   return files;
 }
 
-function splitDiffByPath(diffText: string): Map<string, string> {
+function splitDiffByPath(
+  diffText: string,
+  knownPaths: ReadonlySet<string>,
+): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
-    byPath.set(path, part);
+    for (const path of knownPaths) {
+      if (firstLine.startsWith(`a/${path} `) && firstLine.endsWith(` b/${path}`)) {
+        byPath.set(path, part);
+        break;
+      }
+    }
   }
   return byPath;
 }
@@ -187,8 +199,14 @@ async function listUntrackedFiles(cwd: string): Promise<string[]> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
-  if (fileStat.size > MAX_CONTENT_BYTES) {
+  let fileSize: number;
+  try {
+    fileSize = (await stat(full)).size;
+  } catch {
+    logger.debug(`Failed to stat content of: ${full}`);
+    return "";
+  }
+  if (fileSize > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
@@ -249,7 +267,7 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code === "M") return "modified";
+  if (code === "M" || code === "T" || code === "U") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
