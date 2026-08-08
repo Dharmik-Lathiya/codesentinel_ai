@@ -16,6 +16,7 @@ const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
  * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Products large enough to exceed Number.MAX_VALUE overflow to ±Infinity.
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
@@ -23,7 +24,7 @@ export function calculate(x: number): number {
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
-  return typeof v === "object" && v !== null && "value" in v;
+  return typeof v === "object" && v !== null && Object.hasOwn(v, "value");
 }
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
@@ -59,10 +60,16 @@ describe("calculate", () => {
   ])('boundary value %i', (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
+
+  test('input near Number.MAX_VALUE overflows to ±Infinity (documented limitation)', () => {
+    expect(calculate(Number.MAX_VALUE / 2)).toBe(Infinity);
+    expect(calculate(-Number.MAX_VALUE / 2)).toBe(-Infinity);
+  });
 });
 
 describe("processData", () => {
-  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  // Note: {"value":0} is the overloaded sentinel — a valid result indistinguishable from a parse failure
+  test.each([SAMPLE_VALUE, 0])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
@@ -75,7 +82,6 @@ describe("processData", () => {
   test.each([
     ["not-json"],
     ["[1,2,3]"],
-    ['{"value":"' + SAMPLE_VALUE + '"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
