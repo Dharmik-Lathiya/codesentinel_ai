@@ -112,17 +112,9 @@ export async function collectDiff(
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
-        continue;
-      }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
+      const fileContent = await readWorkspaceFile(path, workspaceRoot);
+      if (fileContent === null) continue;
+      content = fileContent;
     }
     const diff = diffByPath.get(path) ?? "";
     if (!diff && status !== "deleted") {
@@ -132,18 +124,9 @@ export async function collectDiff(
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
     for (const path of untracked) {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
-        continue;
-      }
-      let content = "";
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
+      const fileContent = await readWorkspaceFile(path, workspaceRoot);
+      if (fileContent === null) continue;
+      const content = fileContent;
       files.push({ path, status: "added", content, diff: "" });
     }
   }
@@ -159,7 +142,7 @@ function splitDiffByPath(diffText: string): Map<string, string> {
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
     const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
     if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const path = match[1];
     byPath.set(path, part);
   }
   return byPath;
@@ -206,7 +189,7 @@ async function readContent(full: string): Promise<string> {
   return text;
 }
 
-/** Determine a sensible base ref (main/master/develop or upstream merge-base). */
+/** Determine a sensible base ref (PR base or main/master; else a working-tree diff). */
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
@@ -252,4 +235,22 @@ function mapStatus(code: string): DiffFile["status"] | null {
   if (code === "M") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
+}
+
+async function readWorkspaceFile(
+  relPath: string,
+  workspaceRoot: string,
+): Promise<string | null> {
+  const full = resolve(workspaceRoot, relPath);
+  const rel = relative(workspaceRoot, full);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    logger.warn(`Skipping path outside workspace: ${relPath}`);
+    return null;
+  }
+  try {
+    return await readContent(full);
+  } catch {
+    logger.debug(`Could not read content for ${relPath}`);
+    return "";
+  }
 }
