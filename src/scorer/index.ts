@@ -56,7 +56,7 @@ export class Scorer {
   ): ScoreBreakdown {
     const securityPenalty = findings
       .filter((f) => f.category === "security")
-      .reduce((sum, f) => sum + SEVERITY_PENALTY[f.severity], 0);
+      .reduce((sum, f) => sum + (SEVERITY_PENALTY[f.severity] ?? 0), 0);
 
     const smellPenalty = findings
       .filter((f) => f.category === "smell" || f.category === "style")
@@ -170,12 +170,12 @@ export class Scorer {
         .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
     );
     const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
-    if (sourceFiles.length === 0) return 100;
+    if (sourceFiles.length === 0) return MAX_SCORE;
     let covered = 0;
     for (const f of sourceFiles) {
       const base = f.path.replace(/\.[^.]+$/, "");
-      if ([...testPaths].some((t) => t.startsWith(base))) covered++;
+      if ([...testPaths].some((t) => t.startsWith(base + ".") || t.startsWith(base + "/"))) covered++;
     }
-    return (covered / sourceFiles.length) * 100;
+    return (covered / sourceFiles.length) * MAX_SCORE;
   }
 }
