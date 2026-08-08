@@ -10,6 +10,7 @@ const RETRYABLE_STATUS_CODES = new Set([
   HTTP_STATUS_SERVICE_UNAVAILABLE,
   HTTP_STATUS_BAD_GATEWAY,
 ]);
+const RETRYABLE_STATUS_RE = /\b(429|502|503)\b/;
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -21,6 +22,10 @@ export interface RetryOptions {
   baseDelayMs?: number;
   /** Max delay in ms for a single retry (cap on exponential backoff). Default: 32x baseDelayMs (baseDelayMs * 2^5). */
   maxDelayMs?: number;
+  /** Minimum wait in ms applied to the next retry delay (e.g. from a Retry-After header). Default: none. */
+  retryAfterMs?: number;
+  /** Optional AbortSignal; cancels an in-flight backoff sleep (e.g. during shutdown). */
+  abort?: AbortSignal;
   /**
    * Optional predicate: return true to retry on this error.
    * Note: the default predicate only matches `Error` instances; non-Error
@@ -40,21 +45,43 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
   if (status !== undefined) {
     return RETRYABLE_STATUS_CODES.has(status);
   }
-  if (err instanceof Error) {
-    const msg = err.message.toLowerCase();
-    return (
+  let e: unknown = err;
+  while (e instanceof Error) {
+    const msg = e.message.toLowerCase();
+    if (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(String(HTTP_STATUS_RATE_LIMIT)) ||
-      msg.includes(String(HTTP_STATUS_SERVICE_UNAVAILABLE)) ||
-      msg.includes(String(HTTP_STATUS_BAD_GATEWAY)) ||
+      RETRYABLE_STATUS_RE.test(msg) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
-    );
+    ) {
+      return true;
+    }
+    e = e.cause;
   }
   return false;
 };
+
+const abortReason = (signal?: AbortSignal): unknown => signal?.reason ?? new Error("Retry aborted");
+
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortReason(signal));
+      return;
+    }
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = (): void => {
+      if (timeout !== undefined) clearTimeout(timeout);
+      reject(abortReason(signal));
+    };
+    timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 
 /**
  * Retry an async operation with exponential backoff. Only retries on transient
@@ -79,11 +106,11 @@ export async function retry<T>(
       }
       const backoff = baseDelayMs * Math.pow(2, attempt - 1);
       const capped = Math.min(maxDelayMs, backoff);
-      const delay = capped * (0.5 + Math.random() * 0.5);
+      const delay = Math.max(capped * (0.5 + Math.random() * 0.5), opts.retryAfterMs ?? 0);
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
-      await new Promise((r) => setTimeout(r, delay));
+      await sleep(delay, opts.abort);
     }
   }
 }

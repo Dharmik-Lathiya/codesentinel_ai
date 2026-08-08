@@ -1,12 +1,23 @@
 import type { EngineReport } from "../engine/index.js";
 
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: "#dc2626",
-  high: "#ea580c",
-  medium: "#d97706",
-  low: "#2563eb",
-  info: "#6b7280",
+const STATUS_COLORS: Record<string, string> = {
+  verified: "#16a34a",
+  applied: "#d97706",
+  skipped: "#6b7280",
+  pass: "#16a34a",
+  warn: "#ea580c",
+  fail: "#dc2626",
 };
+
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: STATUS_COLORS.fail,
+  high: STATUS_COLORS.warn,
+  medium: STATUS_COLORS.applied,
+  low: "#2563eb",
+  info: STATUS_COLORS.skipped,
+};
+
+const SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"];
 
 const BOLD_FONT_WEIGHT = "700";
 const H2_COLOR = "#334155";
@@ -70,7 +81,7 @@ export function renderHtmlReport(report: EngineReport): string {
   const fixRows = report.fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
+      const statusColor = a.fixed ? (a.verified ? STATUS_COLORS.verified : STATUS_COLORS.applied) : STATUS_COLORS.skipped;
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
@@ -86,7 +97,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    SEVERITY_ORDER.filter((s) => (severityCounts[s] ?? 0) > 0).map((s) => ({ key: s, value: severityCounts[s] ?? 0, color: SEVERITY_COLORS[s] ?? STATUS_COLORS.skipped })),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -146,14 +157,14 @@ function renderSummaryCards(report: EngineReport, severityCounts: Record<string,
   </div>`;
 }
 
-function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): string {
+function renderScoreCard(score: EngineReport["score"]): string {
   if (!score) return "";
   return `
     <div class="card" style="display:flex;align-items:center;gap:1rem">
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-<div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -209,12 +220,12 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-.replace(/'/g, APOSTROPHE_ENTITY);
+    .replace(/'/g, APOSTROPHE_ENTITY);
 }
 
 function scoreColor(score: number): string {
-  if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
-  if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
-  if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
-  return "#dc2626";
+  if (score >= SCORE_GREEN_THRESHOLD) return STATUS_COLORS.pass;
+  if (score >= SCORE_ORANGE_THRESHOLD) return STATUS_COLORS.applied;
+  if (score >= SCORE_RED_THRESHOLD) return STATUS_COLORS.warn;
+  return STATUS_COLORS.fail;
 }
