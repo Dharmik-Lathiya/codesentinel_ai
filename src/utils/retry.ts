@@ -45,11 +45,12 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(String(HTTP_STATUS_RATE_LIMIT)) ||
-      msg.includes(String(HTTP_STATUS_SERVICE_UNAVAILABLE)) ||
-      msg.includes(String(HTTP_STATUS_BAD_GATEWAY)) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
+      msg.includes("econnrefused") ||
+      msg.includes("socket hang up") ||
+      msg.includes("fetch failed") ||
+      msg.includes("enotfound") ||
       msg.includes("overloaded")
     );
   }
@@ -65,7 +66,7 @@ export async function retry<T>(
   fn: () => Promise<T>,
   opts: RetryOptions = {},
 ): Promise<T> {
-  const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
+  const maxAttempts = Math.min(10, Math.max(1, opts.maxAttempts ?? 3));
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
   const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, 5);
