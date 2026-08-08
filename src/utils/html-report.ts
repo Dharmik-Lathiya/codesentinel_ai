@@ -149,10 +149,10 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
   if (!score) return "";
   return `
     <div class="card" style="display:flex;align-items:center;gap:1rem">
-      <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
+        <div class="score-ring" style="background:${scoreColor(score.overall)}" title="${escapeHtml(scoreBandLabel(score.overall))} quality score">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">${escapeHtml(scoreBandLabel(score.overall))} &middot; Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
 
       </div>
     </div>`;
@@ -211,6 +211,12 @@ function escapeHtml(s: string): string {
 .replace(/'/g, APOSTROPHE_ENTITY);
 }
 
+function scoreBandLabel(score: number): string {
+  if (score >= SCORE_GREEN_THRESHOLD) return "Good";
+  if (score >= SCORE_ORANGE_THRESHOLD) return "Fair";
+  if (score >= SCORE_RED_THRESHOLD) return "Needs work";
+  return "Poor";
+}
 function scoreColor(score: number): string {
   if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
   if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";

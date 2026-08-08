@@ -46,21 +46,11 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
 
 const COMMENT_TRUNCATION_LENGTH = 40;
 
-function simpleHash(s: string): string {
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) {
-    const char = s.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36);
-}
-
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
       artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      ...(line != null && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }
@@ -92,11 +82,15 @@ export function renderSarif(report: EngineReport): string {
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
-    const ruleId = `${f.category}:${simpleHash(f.comment)}`;
+    const ruleId = f.category;
+    const shortDescription =
+      f.comment.length > COMMENT_TRUNCATION_LENGTH
+        ? f.comment.slice(0, COMMENT_TRUNCATION_LENGTH) + "…"
+        : f.comment;
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
-        shortDescription: { text: f.comment },
+        shortDescription: { text: shortDescription },
       });
     }
     results.push({
