@@ -93,8 +93,16 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
     const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
     const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
-    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
-    const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
+    const flagTokens = new Set([fileIdx, fileIdx + 1]);
+    if (lineIdx >= 0) {
+      flagTokens.add(lineIdx);
+      flagTokens.add(lineIdx + 1);
+    }
+    if (ruleIdArgIdx >= 0) {
+      flagTokens.add(ruleIdArgIdx);
+      flagTokens.add(ruleIdArgIdx + 1);
+    }
+    const reason = dismissArgs.filter((_, i) => !flagTokens.has(i)).join(" ").trim() || "dismissed by user";
     return { reason, filePath, lineNum, ruleIdArg };
   }
 
@@ -151,6 +159,14 @@ export const WORKFLOW_CONTENT = [
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
+  "      - name: Get issue body (truncated)",
+  "        id: issue_body",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            const body = (context.payload.issue.body || '').slice(0, " + `${MAX_ISSUE_BODY_LENGTH}` + ");",
+  "            core.setOutput('body', body);",
+  "",
   "      - name: Run CodeSentinel plan",
   "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        env:",
@@ -158,7 +174,7 @@ export const WORKFLOW_CONTENT = [
   "        with:",
   "          mode: plan",
   "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+  "          issue_body: ${{ steps.issue_body.outputs.body }}",
   "          use_opencode_cli: \"false\"",
   "",
 "      - name: Update comment with plan",
@@ -653,6 +669,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     } else {
       try {
@@ -660,6 +677,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     }
     return;
