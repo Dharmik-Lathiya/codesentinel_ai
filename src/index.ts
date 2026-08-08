@@ -48,6 +48,46 @@ export interface DismissArgs {
   error?: string;
 }
 
+function parseDismissRuleArgs(dismissArgs: string[], ruleIdx: number): DismissArgs {
+  const ruleId = dismissArgs[ruleIdx + 1];
+  if (!ruleId || ruleId.startsWith("--")) {
+    return { reason: "dismissed by user", error: "Missing rule id for --rule." };
+  }
+  const reasonIdx = dismissArgs.indexOf("--reason");
+  if (reasonIdx >= 0) {
+    const reasonValue = dismissArgs[reasonIdx + 1];
+    if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
+      return { reason: reasonValue, ruleId };
+    }
+    return { reason: "dismissed by user", error: "Missing value for --reason." };
+  }
+  const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
+  const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
+  return { reason, ruleId };
+}
+
+function parseDismissFileArgs(dismissArgs: string[], fileIdx: number): DismissArgs {
+  const filePath = dismissArgs[fileIdx + 1];
+  if (!filePath || filePath.startsWith("--")) {
+    return { reason: "dismissed by user", error: "Missing file path for --file." };
+  }
+  const lineIdx = dismissArgs.indexOf("--line");
+  let lineNum: number | null = null;
+  if (lineIdx >= 0) {
+    const rawLine = dismissArgs[lineIdx + 1];
+    if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
+      return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
+    }
+    lineNum = parseInt(rawLine, PARSE_INT_RADIX);
+  }
+  const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
+  const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
+  const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
+  const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
+  const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
+  return { reason, filePath, lineNum, ruleIdArg };
+}
+
 export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
   const ruleIdx = dismissArgs.indexOf("--rule");
   const fileIdx = dismissArgs.indexOf("--file");
@@ -59,43 +99,11 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
   }
 
   if (hasRule) {
-    const ruleId = dismissArgs[ruleIdx + 1];
-    if (!ruleId || ruleId.startsWith("--")) {
-      return { reason: "dismissed by user", error: "Missing rule id for --rule." };
-    }
-    const reasonIdx = dismissArgs.indexOf("--reason");
-    if (reasonIdx >= 0) {
-      const reasonValue = dismissArgs[reasonIdx + 1];
-      if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
-        return { reason: reasonValue, ruleId };
-      }
-      return { reason: "dismissed by user", error: "Missing value for --reason." };
-    }
-    const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
-    const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
-    return { reason, ruleId };
+    return parseDismissRuleArgs(dismissArgs, ruleIdx);
   }
 
   if (hasFile) {
-    const filePath = dismissArgs[fileIdx + 1];
-    if (!filePath || filePath.startsWith("--")) {
-      return { reason: "dismissed by user", error: "Missing file path for --file." };
-    }
-    const lineIdx = dismissArgs.indexOf("--line");
-    let lineNum: number | null = null;
-    if (lineIdx >= 0) {
-      const rawLine = dismissArgs[lineIdx + 1];
-      if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
-        return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
-      }
-      lineNum = parseInt(rawLine, PARSE_INT_RADIX);
-    }
-    const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
-    const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
-    const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
-    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
-    const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
-    return { reason, filePath, lineNum, ruleIdArg };
+    return parseDismissFileArgs(dismissArgs, fileIdx);
   }
 
   return { reason: "dismissed by user", error: "Missing --rule or --file." };
@@ -436,25 +444,30 @@ export function runSetup(force: boolean): void {
     return;
   }
 
-  if (existsSync(workflowPath)) {
-    writeFileSync(`${workflowPath}.bak`, readFileSync(workflowPath), "utf8");
-    process.stdout.write("Backed up existing workflow to codesentinel.yml.bak\n");
-  }
   mkdirSync(workflowDir, { recursive: true });
+  backupIfExists(workflowPath, "Backed up existing workflow to codesentinel.yml.bak");
   writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
   process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
-
-  if (existsSync(buildWorkflowPath)) {
-    writeFileSync(`${buildWorkflowPath}.bak`, readFileSync(buildWorkflowPath), "utf8");
-    process.stdout.write("Backed up existing build-fix workflow to codesentinel-build.yml.bak\n");
-  }
+  backupIfExists(buildWorkflowPath, "Backed up existing build-fix workflow to codesentinel-build.yml.bak");
   writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
   process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
 
+  printSetupInfo();
+}
+
+function backupIfExists(filePath: string, backupLabel: string): void {
+  if (existsSync(filePath)) {
+    writeFileSync(`${filePath}.bak`, readFileSync(filePath), "utf8");
+    process.stdout.write(backupLabel + "\n");
+  }
+}
+
+function printSetupInfo(): void {
   process.stdout.write("Next steps:\n");
   process.stdout.write("  git add .github/workflows/\n");
   process.stdout.write('  git commit -m "Add CodeSentinel AI workflows"\n');
   process.stdout.write("  git push\n\n");
+
   process.stdout.write("Slash commands (on PR/issue comments):\n");
   process.stdout.write("  /review    — AI code review\n");
   process.stdout.write("  /fix       — propose fixes\n");
@@ -839,7 +852,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const report = await engine.run();
+  let report: Awaited<ReturnType<typeof engine.run>>;
+  try {
+    report = await engine.run();
+  } catch (err) {
+    process.stderr.write(`Run failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
 
   // JSON output mode
   if (values.json) {
