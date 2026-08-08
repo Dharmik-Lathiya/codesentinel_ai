@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Engine } from "./engine/index.js";
+import { Engine, type EngineReport } from "./engine/index.js";
 import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 import type { CodeSentinelConfig, Mode, ModelConfig, Provider, RuntimeSecrets } from "./config/types.js";
 import { logger, type LogLevel } from "./utils/logger.js";
@@ -59,46 +59,54 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
   }
 
   if (hasRule) {
-    const ruleId = dismissArgs[ruleIdx + 1];
-    if (!ruleId || ruleId.startsWith("--")) {
-      return { reason: "dismissed by user", error: "Missing rule id for --rule." };
-    }
-    const reasonIdx = dismissArgs.indexOf("--reason");
-    if (reasonIdx >= 0) {
-      const reasonValue = dismissArgs[reasonIdx + 1];
-      if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
-        return { reason: reasonValue, ruleId };
-      }
-      return { reason: "dismissed by user", error: "Missing value for --reason." };
-    }
-    const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
-    const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
-    return { reason, ruleId };
+    return parseRuleDismissArgs(dismissArgs, ruleIdx);
   }
 
   if (hasFile) {
-    const filePath = dismissArgs[fileIdx + 1];
-    if (!filePath || filePath.startsWith("--")) {
-      return { reason: "dismissed by user", error: "Missing file path for --file." };
-    }
-    const lineIdx = dismissArgs.indexOf("--line");
-    let lineNum: number | null = null;
-    if (lineIdx >= 0) {
-      const rawLine = dismissArgs[lineIdx + 1];
-      if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
-        return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
-      }
-      lineNum = parseInt(rawLine, PARSE_INT_RADIX);
-    }
-    const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
-    const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
-    const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
-    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
-    const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
-    return { reason, filePath, lineNum, ruleIdArg };
+    return parseFileDismissArgs(dismissArgs, fileIdx);
   }
 
   return { reason: "dismissed by user", error: "Missing --rule or --file." };
+}
+
+function parseRuleDismissArgs(dismissArgs: string[], ruleIdx: number): DismissArgs {
+  const ruleId = dismissArgs[ruleIdx + 1];
+  if (!ruleId || ruleId.startsWith("--")) {
+    return { reason: "dismissed by user", error: "Missing rule id for --rule." };
+  }
+  const reasonIdx = dismissArgs.indexOf("--reason");
+  if (reasonIdx >= 0) {
+    const reasonValue = dismissArgs[reasonIdx + 1];
+    if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
+      return { reason: reasonValue, ruleId };
+    }
+    return { reason: "dismissed by user", error: "Missing value for --reason." };
+  }
+  const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
+  const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
+  return { reason, ruleId };
+}
+
+function parseFileDismissArgs(dismissArgs: string[], fileIdx: number): DismissArgs {
+  const filePath = dismissArgs[fileIdx + 1];
+  if (!filePath || filePath.startsWith("--")) {
+    return { reason: "dismissed by user", error: "Missing file path for --file." };
+  }
+  const lineIdx = dismissArgs.indexOf("--line");
+  let lineNum: number | null = null;
+  if (lineIdx >= 0) {
+    const rawLine = dismissArgs[lineIdx + 1];
+    if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
+      return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
+    }
+    lineNum = parseInt(rawLine, PARSE_INT_RADIX);
+  }
+  const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
+  const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
+  const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
+  const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
+  const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
+  return { reason, filePath, lineNum, ruleIdArg };
 }
 
 export const WORKFLOW_CONTENT = [
@@ -436,21 +444,26 @@ export function runSetup(force: boolean): void {
     return;
   }
 
-  if (existsSync(workflowPath)) {
-    writeFileSync(`${workflowPath}.bak`, readFileSync(workflowPath), "utf8");
-    process.stdout.write("Backed up existing workflow to codesentinel.yml.bak\n");
-  }
+  backupExistingWorkflow(workflowPath, "codesentinel.yml");
   mkdirSync(workflowDir, { recursive: true });
   writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
   process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
 
-  if (existsSync(buildWorkflowPath)) {
-    writeFileSync(`${buildWorkflowPath}.bak`, readFileSync(buildWorkflowPath), "utf8");
-    process.stdout.write("Backed up existing build-fix workflow to codesentinel-build.yml.bak\n");
-  }
+  backupExistingWorkflow(buildWorkflowPath, "codesentinel-build.yml");
   writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
   process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
 
+  printSetupFinishHelp();
+}
+
+function backupExistingWorkflow(workflowPath: string, label: string): void {
+  if (existsSync(workflowPath)) {
+    writeFileSync(`${workflowPath}.bak`, readFileSync(workflowPath), "utf8");
+    process.stdout.write(`Backed up existing workflow to ${label}.bak\n`);
+  }
+}
+
+function printSetupFinishHelp(): void {
   process.stdout.write("Next steps:\n");
   process.stdout.write("  git add .github/workflows/\n");
   process.stdout.write('  git commit -m "Add CodeSentinel AI workflows"\n');
@@ -481,16 +494,22 @@ export function runSetup(force: boolean): void {
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
 }
 
-function showHelp(): void {
-  let pkg;
+function readPackageVersion(): { version: string } {
   try {
-    pkg = JSON.parse(
+    return JSON.parse(
       readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
+    ) as { version: string };
   } catch {
-    pkg = { version: "unknown" };
+    return { version: "unknown" };
   }
-  process.stdout.write(`CodeSentinel AI v${pkg.version}
+}
+
+function showHelp(): void {
+  process.stdout.write(buildHelpText(readPackageVersion()));
+}
+
+function buildHelpText(pkg: { version: string }): string {
+  return `CodeSentinel AI v${pkg.version}
 AI-powered code review, fix, audit, scoring, and test generation.
 
 Usage:
@@ -562,19 +581,11 @@ Examples:
   codesentinel dashboard
   codesentinel deadcode
   codesentinel describe
-`);
+`;
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
-  process.stdout.write(`${pkg.version}\n`);
+  process.stdout.write(`${readPackageVersion().version}\n`);
 }
 
 /**
@@ -624,44 +635,81 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dismiss") {
-    if (args.includes("--help") || args.includes("-h")) {
-      showHelp();
-      return;
-    }
-    if (args.includes("--version")) {
-      showVersion();
-      return;
-    }
-    const parsed = parseDismissArgs(args.slice(1));
-    if (parsed.error) {
-      process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
-      if (parsed.error.startsWith("Options")) {
-        process.stderr.write("Options --rule and --file are mutually exclusive.\n");
-      }
-      process.exitCode = 1;
-      return;
-    }
-
-    const engine = Engine.fromInputs({ secrets: loadSecrets() });
-    if (parsed.ruleId !== undefined) {
-      try {
-        await engine.dismissByRule(parsed.ruleId, parsed.reason);
-        process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
-      } catch (err) {
-        process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
-      }
-    } else {
-      try {
-        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
-        process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
-      } catch (err) {
-        process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
-      }
-    }
+    await handleDismissCommand(args);
     return;
   }
 
+  const { values, positionals } = parseCommandLine();
+
+  // Use positional arg as mode if --mode not provided
+  const modeArg = values.mode || positionals[0];
+
+  if (values.help) {
+    showHelp();
+    return;
+  }
+  if (values.version) {
+    showVersion();
+    return;
+  }
+
+  if (modeArg && !VALID_MODES.has(modeArg)) {
+    process.stderr.write(`Unknown mode: '${modeArg}'\n`);
+    showHelp();
+    return;
+  }
+
+  const invalidNumeric = checkInvalidNumericFlag(values);
+  if (invalidNumeric) {
+    process.stderr.write(`Invalid value for ${invalidNumeric.name}: '${invalidNumeric.value}' (expected a non-negative number)\n`);
+    showHelp();
+    return;
+  }
+
+  if (values["log-level"]) {
+    logger.level = values["log-level"] as LogLevel;
+  }
+  if (values.json) {
+    logger.setJsonMode(true);
+  }
+
+  const secrets = loadSecrets();
+
+  const overrides = buildOverrides(values, modeArg);
+
+  const engine = Engine.fromInputs({
+    configPath: values.config,
+    overrides,
+    secrets,
+  });
+
+  const runMode = modeArg ?? engine.config.mode;
+  process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+
+  if (values["ask"] && (modeArg === "chat" || !modeArg)) {
+    await runChatCommand(engine, values["ask"]);
+    return;
+  }
+
+  // Special handling for deadcode mode — run in-process without AI
+  if (modeArg === "deadcode") {
+    await handleDeadcodeCommand(engine);
+    return;
+  }
+
+  let report: EngineReport;
+  try {
+    report = await engine.run();
+  } catch (err) {
+    process.stderr.write(`Engine run failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  writeReportOutput(report, values);
+}
+
+function parseCommandLine() {
   const { values, positionals } = parseArgs({
     options: {
       mode: { type: "string", short: "m" },
@@ -682,8 +730,8 @@ async function main(): Promise<void> {
       "max-high": { type: "string" },
       help: { type: "boolean", default: false },
       version: { type: "boolean", default: false },
-      "jsonl": { type: "boolean", default: false },
-      "mcp": { type: "boolean", default: false },
+      jsonl: { type: "boolean", default: false },
+      mcp: { type: "boolean", default: false },
       "learning-db": { type: "string" },
       "yaml-config": { type: "boolean", default: false },
       "improve-type": { type: "string" },
@@ -692,25 +740,12 @@ async function main(): Promise<void> {
     args: process.argv.slice(2),
     allowPositionals: true,
   });
+  return { values, positionals };
+}
 
-  // Use positional arg as mode if --mode not provided
-  const modeArg = values.mode || positionals[0];
+type CliValues = ReturnType<typeof parseCommandLine>["values"];
 
-  if (values.help) {
-    showHelp();
-    return;
-  }
-  if (values.version) {
-    showVersion();
-    return;
-  }
-
-  if (modeArg && !VALID_MODES.has(modeArg)) {
-    process.stderr.write(`Unknown mode: '${modeArg}'\n`);
-    showHelp();
-    return;
-  }
-
+function checkInvalidNumericFlag(values: CliValues): { name: string; value: string } | null {
   const numericFlags: Array<[string | undefined, string]> = [
     [values["max-iterations"], "--max-iterations"],
     [values["min-score"], "--min-score"],
@@ -719,21 +754,13 @@ async function main(): Promise<void> {
   ];
   for (const [value, name] of numericFlags) {
     if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
-      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
-      showHelp();
-      return;
+      return { name, value };
     }
   }
+  return null;
+}
 
-  if (values["log-level"]) {
-    logger.level = values["log-level"] as LogLevel;
-  }
-  if (values.json) {
-    logger.setJsonMode(true);
-  }
-
-  const secrets = loadSecrets();
-
+function buildOverrides(values: CliValues, modeArg?: string): Partial<CodeSentinelConfig> {
   const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
@@ -790,57 +817,84 @@ async function main(): Promise<void> {
       }
     }
   }
+  return overrides;
+}
 
-  const engine = Engine.fromInputs({
-    configPath: values.config,
-    overrides,
-    secrets,
-  });
+async function runChatCommand(engine: Engine, question: string): Promise<void> {
+  try {
+    const answer = await engine.ask(question);
+    process.stdout.write(answer + "\n");
+  } catch (err) {
+    process.stderr.write(`Chat query failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+  }
+}
 
-  const runMode = modeArg ?? engine.config.mode;
-  process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+async function handleDeadcodeCommand(engine: Engine): Promise<void> {
+  const root = process.cwd();
+  const rels = collectFiles(root, engine.config.include, engine.config.exclude);
+  const files = rels.map((path) => ({
+    path,
+    content: readText(resolve(root, path)),
+  }));
+  let findings: Awaited<ReturnType<typeof engine.runDeadCode>>;
+  try {
+    findings = await engine.runDeadCode(files);
+  } catch (err) {
+    process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (findings.length === 0) {
+    process.stdout.write("✅ No unused exports detected.\n");
+    return;
+  }
+  process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
+  process.stdout.write(`Unused exports (${findings.length}):\n`);
+  for (const f of findings) {
+    process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
+  }
+}
 
-  if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    try {
-      const answer = await engine.ask(values["ask"]);
-      process.stdout.write(answer + "\n");
-    } catch (err) {
-      process.stderr.write(`Chat query failed: ${err instanceof Error ? err.message : String(err)}\n`);
-      process.exitCode = 1;
+async function handleDismissCommand(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    showHelp();
+    return;
+  }
+  if (args.includes("--version")) {
+    showVersion();
+    return;
+  }
+  const parsed = parseDismissArgs(args.slice(1));
+  if (parsed.error) {
+    process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+    process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+    if (parsed.error.startsWith("Options")) {
+      process.stderr.write("Options --rule and --file are mutually exclusive.\n");
     }
+    process.exitCode = 1;
     return;
   }
 
-  // Special handling for deadcode mode — run in-process without AI
-  if (modeArg === "deadcode") {
-    const root = process.cwd();
-    const rels = collectFiles(root, engine.config.include, engine.config.exclude);
-    const files = rels.map((path) => ({
-      path,
-      content: readText(resolve(root, path)),
-    }));
-    let findings: Awaited<ReturnType<typeof engine.runDeadCode>>;
+  const engine = Engine.fromInputs({ secrets: loadSecrets() });
+  if (parsed.ruleId !== undefined) {
     try {
-      findings = await engine.runDeadCode(files);
+      await engine.dismissByRule(parsed.ruleId, parsed.reason);
+      process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
     } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
-      process.exitCode = 1;
-      return;
+      process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
     }
-    if (findings.length === 0) {
-      process.stdout.write("✅ No unused exports detected.\n");
-    } else {
-      process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
-      process.stdout.write(`Unused exports (${findings.length}):\n`);
-      for (const f of findings) {
-        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
-      }
+  } else {
+    try {
+      await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+      process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
+    } catch (err) {
+      process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
     }
-    return;
   }
+}
 
-  const report = await engine.run();
-
+function writeReportOutput(report: EngineReport, values: CliValues): void {
   // JSON output mode
   if (values.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
