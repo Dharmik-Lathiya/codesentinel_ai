@@ -3,6 +3,9 @@ import { readFile, writeFile, rename, readdir, unlink, mkdir } from "node:fs/pro
 import { join } from "node:path";
 import { logger } from "../utils/logger.js";
 
+const CACHE_KEY_LENGTH = 16;
+const LOCK_TIMEOUT_MS = 30_000;
+
 export interface Lesson {
   pattern: string;
   filePattern: string;
@@ -29,7 +32,7 @@ export function buildCacheKey(filePath: string, pattern: string): string {
   return createHash("sha256")
     .update(filePath + "::" + pattern)
     .digest("hex")
-    .slice(0, 16);
+    .slice(0, CACHE_KEY_LENGTH);
 }
 
 class FileSystemBackend implements CacheBackend {
@@ -53,7 +56,11 @@ class FileSystemBackend implements CacheBackend {
   }
 
   async set(key: string, entry: CacheEntry): Promise<void> {
-    await this.ensureDir();
+    try {
+      await this.ensureDir();
+    } catch (err) {
+      logger.warn(`Failed to ensure cache directory:`, err);
+    }
     const target = this.filePath(key);
     const tmp = target + ".tmp." + process.pid;
     try {
@@ -66,7 +73,11 @@ class FileSystemBackend implements CacheBackend {
   }
 
   async list(): Promise<string[]> {
-    await this.ensureDir();
+    try {
+      await this.ensureDir();
+    } catch (err) {
+      logger.warn(`Failed to ensure cache directory:`, err);
+    }
     try {
       return (await readdir(this.cacheDir)).filter((f) => f.endsWith(".json"));
     } catch {
@@ -86,7 +97,7 @@ class FileSystemBackend implements CacheBackend {
 export class LearningCache {
   private backend: CacheBackend;
   private locks = new Map<string, Promise<unknown>>();
-  private static LOCK_TIMEOUT = 30000;
+  private static LOCK_TIMEOUT = LOCK_TIMEOUT_MS;
 
   constructor(backendOrDir?: CacheBackend | string) {
     if (!backendOrDir || typeof backendOrDir === "string") {
@@ -114,7 +125,13 @@ export class LearningCache {
   }
 
   async get(key: string): Promise<Lesson[]> {
-    const entry = await this.backend.get(key);
+    let entry: CacheEntry | null = null;
+    try {
+      entry = await this.backend.get(key);
+    } catch (err) {
+      logger.warn(`Failed to read cache entry ${key}:`, err);
+      return [];
+    }
     if (!entry) return [];
     entry.lessons.forEach((l) => l.hitCount++);
     await this.backend.set(key, entry);
