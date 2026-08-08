@@ -10,7 +10,8 @@ const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 const MAX_SAFE_INTEGER_BITS = 53;
 const DECIMAL_FRACTION = 25;
-const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
+const DECIMAL_SCALE = 100;
+const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / DECIMAL_SCALE);
 
 /**
  * Scales the input by a fixed multiplier.
