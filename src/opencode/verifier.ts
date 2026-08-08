@@ -1,5 +1,6 @@
 import type { Issue } from "./jsonl-parser.js";
 import type { AIHub } from "../ai/index.js";
+import { logger } from "../utils/logger.js";
 
 const EXCLUDED_DIR_PREFIXES = ["node_modules/", ".git/", "dist/"];
 
@@ -99,7 +100,8 @@ async function aiVerify(
       [{ role: "user", content: prompt }],
       { maxTokens: 1024 },
     );
-  } catch {
+  } catch (err) {
+    logger.warn("AI verification skipped", err);
     return afterRules;
   }
 
