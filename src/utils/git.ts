@@ -152,7 +152,13 @@ async function readContent(full: string): Promise<string> {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
+  let text: string;
+  try {
+    text = await readFile(full, { encoding: "utf8" });
+  } catch (err) {
+    logger.debug(`Could not read file content: ${full}`, err);
+    return "";
+  }
   if (text.includes("\0")) {
     logger.debug(`Skipping binary file content: ${full}`);
     return "";
@@ -161,21 +167,57 @@ async function readContent(full: string): Promise<string> {
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
+/** Determine a sensible base ref (main/master/develop or upstream merge-base). */
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
+    try {
+      // A shallow actions/checkout may not have the PR base branch locally;
+      // fetch it so the diff can still be resolved against the PR base.
+      await ensureRemoteRef(remoteBase, cwd);
       if (await refExists(remoteBase, cwd)) return remoteBase;
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
+    } catch (err) {
+      logger.debug(
+        `Could not resolve base refs for GITHUB_BASE_REF=${githubBaseRef}:`,
+        err,
+      );
+    }
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
   for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    try {
+      if (await refExists(ref, cwd)) return ref;
+    } catch (err) {
+      logger.debug(`Could not check ref ${ref}:`, err);
+    }
   }
   // No base ref found: fall back to a plain working-tree diff.
   return undefined;
+}
+
+/**
+ * Fetch a remote ref from origin when it is not already available locally,
+ * so base refs still resolve under a shallow actions/checkout.
+ */
+async function ensureRemoteRef(ref: string, cwd: string): Promise<void> {
+  try {
+    if (await refExists(ref, cwd)) return;
+  } catch (err) {
+    logger.debug(`Could not check ref ${ref}:`, err);
+  }
+  try {
+    await git(
+      ["fetch", "--quiet", "origin", ref.replace(/^origin\//, "")],
+      cwd,
+      { quiet: true },
+    );
+  } catch (err) {
+    logger.debug(`Could not fetch ref ${ref} from origin:`, err);
+  }
 }
 
 async function refExists(ref: string, cwd: string): Promise<boolean> {
