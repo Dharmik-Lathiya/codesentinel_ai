@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -114,7 +114,7 @@ export async function collectDiff(
     if (status !== "deleted") {
       const full = resolve(workspaceRoot, path);
       const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      if (rel.startsWith("..")) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -187,7 +187,11 @@ async function listUntrackedFiles(cwd: string): Promise<string[]> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
+  const fileStat = await lstat(full);
+  if (fileStat.isSymbolicLink()) {
+    logger.debug(`Skipping symlink content: ${full}`);
+    return "";
+  }
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
@@ -224,7 +228,7 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
     }
   }
 
-  const candidates = ["origin/main", "origin/master", "main", "master"];
+  const candidates = ["origin/main", "origin/master", "origin/develop", "main", "master", "develop"];
   for (const ref of candidates) {
     try {
       if (await refExists(ref, cwd)) return ref;
