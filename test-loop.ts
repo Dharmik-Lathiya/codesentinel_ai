@@ -7,6 +7,7 @@ const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
+const NEGATIVE_DECIMAL_VALUE = -7.25;
 const SAMPLE_VALUE = 42;
 
 /**
@@ -82,7 +83,7 @@ describe("processData", () => {
   });
 
   test('negative and decimal values are preserved', () => {
-    expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
+    expect(processData('{"value":' + NEGATIVE_DECIMAL_VALUE + '}')).toEqual({ value: NEGATIVE_DECIMAL_VALUE });
   });
 
   test('whitespace-padded JSON is parsed', () => {
