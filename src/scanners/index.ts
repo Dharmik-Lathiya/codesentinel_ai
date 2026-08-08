@@ -17,21 +17,57 @@ const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
 const SNIPPET_MAX_CHAR_LENGTH = 80;
 const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
 
-function parseTrufflehogLine(line: string): Finding | null {
+const TRUFFLEHOG_HIGH_CONFIDENCE = [
+  "AWS",
+  "Azure",
+  "GCP",
+  "Postgres",
+  "MsSQL",
+  "MySQL",
+  "Stripe",
+  "GitHub",
+  "Gitlab",
+  "JWT",
+];
+
+function trufflehogSeverity(detectorName: string): "low" | "medium" | "high" {
+  if (TRUFFLEHOG_HIGH_CONFIDENCE.some((d) => detectorName.includes(d))) {
+    return "high";
+  }
+  return "medium";
+}
+
+export function parseTrufflehogLine(line: string): Finding | null {
   try {
     const r = JSON.parse(line);
+    const lineNumber = Number(r.SourceMetadata?.Data?.Filesystem?.line);
+    const fsFile = r.SourceMetadata?.Data?.Filesystem?.file;
+    if (typeof fsFile !== "string") {
+      logger.debug("trufflehog line missing filesystem metadata, skipping");
+      return null;
+    }
+    const detectorName = String(r.DetectorName ?? "secret");
     return {
-      file: r.SourceMetadata?.Data?.Filesystem?.file ?? "unknown",
-      line: r.SourceMetadata?.Data?.Filesystem?.line ?? null,
-      severity: "high" as const,
+      file: fsFile,
+      line: Number.isFinite(lineNumber) ? lineNumber : null,
+      severity: trufflehogSeverity(detectorName),
       category: "security" as const,
-      comment: `[trufflehog] ${r.DetectorName ?? "secret"}: ${r.Description ?? ""}`,
+      comment: `[trufflehog] ${detectorName}: ${r.Description ?? ""}`,
       suggestion: `Matched: ${(r.Raw || "").slice(0, SNIPPET_LENGTH)}`,
       source: "scanner" as const,
-    } as Finding;
+    };
   } catch {
     logger.warn("Failed to parse trufflehog JSON line");
     return null;
+  }
+}
+
+function trufflehogIsV3(): boolean {
+  try {
+    const version = execSync("trufflehog --version", { encoding: "utf8" }).trim();
+    return /^v3\./.test(version);
+  } catch {
+    return true;
   }
 }
 
