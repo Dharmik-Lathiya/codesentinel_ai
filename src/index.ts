@@ -540,7 +540,11 @@ Options:
   --ask <question>            Ask a question (activates chat mode)
   --context <text>            Free-form project context for prompts
   --dry-run                   Show what would be fixed without writing (fix mode)
+  --json                      Output report as machine-readable JSON
   --jsonl                     Output AI review results in JSONL format
+  --sarif                     Output report in SARIF format
+  --use-opencode-cli          Use the opencode CLI as AI backend
+  --improve-type <type>       improve output type: test | util | doc
   --mcp                       Enable MCP server integration for library docs
   --learning-db <path>        Enable self-learning store at path
   --yaml-config               Enable YAML config file discovery (.opencode-reviewer.yml)
@@ -573,7 +577,7 @@ Examples:
   codesentinel init-hook --type post-commit
   codesentinel dashboard
   codesentinel deadcode
-  codesentinel describe
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
 `);
 }
 
