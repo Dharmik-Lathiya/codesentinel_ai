@@ -547,7 +547,7 @@ Examples:
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
    codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
-  codesentinel init-hook
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook --type post-commit
   codesentinel dashboard
   codesentinel deadcode
@@ -606,8 +606,9 @@ async function main(): Promise<void> {
     process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
     process.stdout.write("Press Ctrl+C to stop.\n");
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
-      process.on(signal, () => {
+      process.once(signal, () => {
         dash.stop();
+        process.exit(0);
       });
     }
     return;
@@ -707,10 +708,16 @@ async function main(): Promise<void> {
     [values["max-high"], "--max-high"],
   ];
   for (const [value, name] of numericFlags) {
-    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
-      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
-      showHelp();
-      return;
+    if (value !== undefined) {
+      const num = Number(value);
+      const valid = Number.isFinite(num) && num >= 0 && (name !== "--min-score" || num <= MAX_SCORE);
+      if (!valid) {
+        process.stderr.write(
+          `Invalid value for ${name}: '${value}' (expected ${name === "--min-score" ? `a number between 0 and ${MAX_SCORE}` : "a non-negative number"})\n`,
+        );
+        showHelp();
+        return;
+      }
     }
   }
 
@@ -803,16 +810,16 @@ async function main(): Promise<void> {
   // Special handling for deadcode mode — run in-process without AI
   if (modeArg === "deadcode") {
     const root = process.cwd();
-    const rels = collectFiles(root, engine.config.include, engine.config.exclude);
-    const files = rels.map((path) => ({
-      path,
-      content: readText(resolve(root, path)),
-    }));
     let findings: Awaited<ReturnType<typeof engine.runDeadCode>>;
     try {
+      const rels = collectFiles(root, engine.config.include, engine.config.exclude);
+      const files = rels.map((path) => ({
+        path,
+        content: readText(resolve(root, path)),
+      }));
       findings = await engine.runDeadCode(files);
     } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exitCode = 1;
       return;
     }

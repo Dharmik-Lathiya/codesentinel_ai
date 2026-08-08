@@ -152,27 +152,37 @@ async function readContent(full: string): Promise<string> {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  const text = await readFile(full, { encoding: "utf8" });
-  if (text.includes("\0")) {
-    logger.debug(`Skipping binary file content: ${full}`);
-    return "";
-  }
-  return text;
+let text: string;
+try {
+  text = await readFile(full, { encoding: "utf8" });
+} catch {
+  logger.debug(`Skipping unreadable file content: ${full}`);
+  return "";
+}
+if (text.includes("\0")) {
+  logger.debug(`Skipping binary file content: ${full}`);
+  return "";
+}
+return text;
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
-  // In GitHub Actions, use the PR base branch
-  const githubBaseRef = process.env.GITHUB_BASE_REF;
-  if (githubBaseRef) {
-    const remoteBase = `origin/${githubBaseRef}`;
+  try {
+    // In GitHub Actions, use the PR base branch
+    const githubBaseRef = process.env.GITHUB_BASE_REF;
+    if (githubBaseRef) {
+      const remoteBase = `origin/${githubBaseRef}`;
       if (await refExists(remoteBase, cwd)) return remoteBase;
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
-  }
+    }
 
-  const candidates = ["origin/main", "origin/master", "main", "master"];
-  for (const ref of candidates) {
-    if (await refExists(ref, cwd)) return ref;
+    const candidates = ["origin/main", "origin/master", "main", "master"];
+    for (const ref of candidates) {
+      if (await refExists(ref, cwd)) return ref;
+    }
+  } catch (err) {
+    logger.warn(`Failed to determine base ref:`, err);
   }
   // No base ref found: fall back to a plain working-tree diff.
   return undefined;
@@ -191,7 +201,7 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code === "M") return "modified";
+  if (code === "M" || code === "T" || code === "U") return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
