@@ -7,6 +7,14 @@ const SEVERITY_COLORS: Record<string, string> = {
   low: "#2563eb",
   info: "#6b7280",
 };
+const SEVERITY_ORDER: readonly string[] = ["critical", "high", "medium", "low", "info"];
+
+function sortedSeverityCounts(counts: Record<string, number>): [string, number][] {
+  return Object.entries(counts).sort(
+    ([a], [b]) => SEVERITY_ORDER.indexOf(a) - SEVERITY_ORDER.indexOf(b),
+  );
+}
+
 
 const BOLD_FONT_WEIGHT = "700";
 const H2_COLOR = "#334155";
@@ -30,7 +38,7 @@ const REPORT_STYLES = `  <style>
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
     .score-ring { width: 80px; height: 80px; border-radius: ${SCORE_RING_RADIUS_PERCENT}; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: ${BOLD_FONT_WEIGHT}; color: #fff; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
@@ -86,7 +94,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    sortedSeverityCounts(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -131,7 +139,7 @@ function renderSummaryCards(report: EngineReport, severityCounts: Record<string,
     <div class="card">
       <div class="label">Findings</div>
       <div class="value">${report.findings.length}</div>
-      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
+      <div class="sub">${sortedSeverityCounts(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
     </div>
     ${renderScoreCard(report.score)}
     <div class="card">
@@ -146,7 +154,7 @@ function renderSummaryCards(report: EngineReport, severityCounts: Record<string,
   </div>`;
 }
 
-function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): string {
+function renderScoreCard(score: EngineReport["score"]): string {
   if (!score) return "";
   return `
     <div class="card" style="display:flex;align-items:center;gap:1rem">
