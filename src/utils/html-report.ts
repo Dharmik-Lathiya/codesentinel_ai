@@ -153,7 +153,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+<div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
