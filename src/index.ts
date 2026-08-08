@@ -522,15 +522,19 @@ Options:
   --provider <name>           AI provider (openai | anthropic | gemini | opencode)
                               Overrides all task models at once
   --max-iterations <n>        Max fix iterations (default: 5)
-  --auto-fix                  Apply fixes automatically
+  --auto-bf                   Apply fixes automatically
   --scoring / --no-scoring    Enable/disable scoring (default: enabled)
   --test-gen                  Enable test generation
+  --improve-type <type>       Improve type: test | util | doc
   --ask <question>            Ask a question (activates chat mode)
   --context <text>            Free-form project context for prompts
   --dry-run                   Show what would be fixed without writing (fix mode)
+  --json                      Output the full AI report as JSON
   --jsonl                     Output AI review results in JSONL format
+  --sarif                     Output findings in SARIF format
   --mcp                       Enable MCP server integration for library docs
   --learning-db <path>        Enable self-learning store at path
+  --use-opencode-cli          Use the opencode run CLI for AI calls
   --yaml-config               Enable YAML config file discovery (.opencode-reviewer.yml)
   --log-level <level>         Log level: debug | info | warn | error
   --min-score <n>             Minimum score to pass gate (0-${MAX_SCORE})
@@ -556,7 +560,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -616,8 +620,8 @@ async function main(): Promise<void> {
     process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
     process.stdout.write("Press Ctrl+C to stop.\n");
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
-      process.on(signal, () => {
-        dash.stop();
+      process.on(signal, async () => {
+        await dash.stop();
       });
     }
     return;
@@ -651,9 +655,9 @@ async function main(): Promise<void> {
       } catch (err) {
         process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
       }
-    } else {
+    } else if (parsed.filePath !== undefined && parsed.ruleIdArg !== undefined) {
       try {
-        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+        await engine.dismissByFinding(parsed.filePath, parsed.lineNum ?? null, parsed.ruleIdArg, parsed.reason);
         process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -823,7 +827,7 @@ async function main(): Promise<void> {
     try {
       findings = await engine.runDeadCode(files);
     } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.stderr.write(`Old code analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exitCode = 1;
       return;
     }
@@ -876,7 +880,7 @@ async function main(): Promise<void> {
         `coverage ${report.score.test_coverage})\n`,
     );
   }
-  if (report.findings.length && (report.mode !== "review" && report.mode !== "fix")) {
+  if (report.findings.length) {
     process.stdout.write(`\nFindings (${report.findings.length}):\n`);
     for (const f of report.findings) {
       process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${stripAnsi(f.comment)}\n`);
