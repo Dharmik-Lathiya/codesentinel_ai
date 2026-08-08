@@ -50,6 +50,8 @@ export class Scorer {
   /**
    * Build a baseline score from static findings + simple code metrics.
    * This works fully offline and is deterministic.
+   * Only 'security', 'smell', and 'style' findings affect the baseline;
+   * 'bug' and 'performance' findings are intentionally ignored here.
    */
   scoreStatic(
     files: { path: string; content: string }[],
@@ -155,8 +157,8 @@ export class Scorer {
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const score = clamp(100 - longLines * 2 + commentRatio * 20);
+      total += score;
     }
     return fileCount ? total / fileCount : 100;
   }
@@ -175,7 +177,7 @@ export class Scorer {
     let covered = 0;
     for (const f of sourceFiles) {
       const base = f.path.replace(/\.[^.]+$/, "");
-      if ([...testPaths].some((t) => t.startsWith(base))) covered++;
+      if ([...testPaths].some((t) => t.startsWith(base + ".") || t.startsWith(base + "/"))) covered++;
     }
     return (covered / sourceFiles.length) * 100;
   }
