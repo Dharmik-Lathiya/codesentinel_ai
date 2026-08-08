@@ -8,7 +8,8 @@ const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
-const DECIMAL_SAMPLE_VALUE = -7.25;
+const DECIMAL_PLACE_VALUE = 25;
+const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_PLACE_VALUE / 100);
 
 /**
  * Scales the input by a fixed multiplier.
@@ -20,8 +21,7 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-function isValueObject(v: unknown): v is { value?: number } {
-function isValueObject(v: unknown): v is { value?: number } {
+function isValueObject(v: unknown): v is { value?: unknown } {
   return typeof v === "object" && v !== null && "value" in v;
 }
 export type ProcessDataResult =
@@ -56,23 +56,27 @@ describe("calculate", () => {
     [-Infinity, -Infinity],
   ])('boundary value %i', (input, expected) => {
     expect(calculate(input)).toBe(expected);
+  const PRECISION_BITS = 53;
+  test('inputs above 2^' + PRECISION_BITS + ' lose integer precision (documented limitation)', () => {
+    const input = 2 ** PRECISION_BITS + 1;
+    expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
+    expect(Number.isSafeInteger(calculate(input))).toBe(false);
+  });
   });
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
+  test('valid zero value is preserved (returns { value: 0 }, which is also the documented error sentinel - this collision is intentional)', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
+  });
   });
 
-  test('inputs above 2^53 lose integer precision (documented limitation)', () => {
-    const input = 2 ** 53 + 1;
-    expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
-    expect(Number.isSafeInteger(calculate(input))).toBe(false);
-  });
   test.each([
     ["not-json"],
     ["[1,2,3]"],
-    ['{"value":"42"}'],
+    ['{"value":"' + SAMPLE_VALUE + '"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
