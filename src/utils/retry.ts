@@ -66,9 +66,9 @@ export async function retry<T>(
   opts: RetryOptions = {},
 ): Promise<T> {
   const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
-  const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+  const baseDelayMs = Math.max(1, opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS);
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
-  const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, 5);
+  const maxDelayMs = Math.min(Math.max(baseDelayMs, opts.maxDelayMs ?? baseDelayMs * Math.pow(2, 5)));
 
   for (let attempt = 1; ; attempt++) {
     try {
