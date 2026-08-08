@@ -97,7 +97,7 @@ async function aiVerify(
     result = await aiHub.complete(
       "review",
       [{ role: "user", content: prompt }],
-      { maxTokens: 1024 },
+		{ maxTokens: 1024, responseFormat: "json_object" },
     );
   } catch {
     return afterRules;
