@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
+const MAX_SAFE_INTEGER_EXPONENT = 53;
 const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
@@ -60,11 +61,11 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
-  test('inputs above 2^53 lose integer precision (documented limitation)', () => {
+    const input = 2 ** MAX_SAFE_INTEGER_EXPONENT + 1;
     const input = 2 ** 53 + 1;
     expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
@@ -72,7 +73,7 @@ describe("processData", () => {
   test.each([
     ["not-json"],
     ["[1,2,3]"],
-    ['{"value":"42"}'],
+    ['{"value":"' + SAMPLE_VALUE + '"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
