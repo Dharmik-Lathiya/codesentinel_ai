@@ -104,13 +104,28 @@ export async function collectDiff(
 
   const files: DiffFile[] = [];
   const nameStatusEntries = nameStatus.split("\0");
+  const changed: Array<{
+    path: string;
+    status: DiffFile["status"];
+    diff: string;
+    full?: string;
+  }> = [];
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
-    let content = "";
+    const diff = diffByPath.get(path) ?? "";
+    if (!diff && status !== "deleted") {
+      logger.warn(`Could not collect diff for ${path}`);
+    }
+    const entry: {
+      path: string;
+      status: DiffFile["status"];
+      diff: string;
+      full?: string;
+    } = { path, status, diff };
     if (status !== "deleted") {
       const full = resolve(workspaceRoot, path);
       const rel = relative(workspaceRoot, full);
@@ -118,19 +133,22 @@ export async function collectDiff(
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
+      entry.full = full;
     }
-    const diff = diffByPath.get(path) ?? "";
-    if (!diff && status !== "deleted") {
-      logger.warn(`Could not collect diff for ${path}`);
-    }
+    changed.push(entry);
+  }
+
+  const contents = await readContentsConcurrent(
+    changed.map((entry) => entry.full ?? ""),
+  );
+  for (let i = 0; i < changed.length; i++) {
+    const { path, status, diff } = changed[i];
+    files.push({ path, status, content: contents[i] ?? "", diff });
+  }
 
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
+    const entries: Array<{ path: string; full?: string }> = [];
     for (const path of untracked) {
       const full = resolve(workspaceRoot, path);
       const rel = relative(workspaceRoot, full);
@@ -138,16 +156,19 @@ export async function collectDiff(
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
-      let content = "";
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
-      files.push({ path, status: "added", content, diff: "" });
+      entries.push({ path, full });
     }
-  }
-    files.push({ path, status, content, diff });
+    const untrackedContents = await readContentsConcurrent(
+      entries.map((entry) => entry.full ?? ""),
+    );
+    for (let i = 0; i < entries.length; i++) {
+      files.push({
+        path: entries[i].path,
+        status: "added",
+        content: untrackedContents[i] ?? "",
+        diff: "",
+      });
+    }
   }
   return files;
 }
@@ -186,24 +207,46 @@ async function listUntrackedFiles(cwd: string): Promise<string[]> {
   }
 }
 
+async function readContentsConcurrent(fulls: readonly string[]): Promise<string[]> {
+  const contents = new Array<string>(fulls.length).fill("");
+  const concurrency = 4;
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, fulls.length) },
+    async () => {
+      while (next < fulls.length) {
+        const index = next;
+        next += 1;
+        const full = fulls[index];
+        if (full) contents[index] = await readContent(full);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return contents;
+}
+
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
+  const fileStat = await stat(full).catch(() => null);
+  if (fileStat === null) {
+    logger.debug(`Failed to stat content of: ${full}`);
+    return "";
+  }
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  let text: string;
   try {
-    text = await readFile(full, { encoding: "utf8" });
+    const text = await readFile(full, { encoding: "utf8" });
+    if (text.includes("\0")) {
+      logger.debug(`Skipping binary file content: ${full}`);
+      return "";
+    }
+    return text;
   } catch {
     logger.debug(`Failed to read content of: ${full}`);
     return "";
   }
-  if (text.includes("\0")) {
-    logger.debug(`Skipping binary file content: ${full}`);
-    return "";
-  }
-  return text;
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
