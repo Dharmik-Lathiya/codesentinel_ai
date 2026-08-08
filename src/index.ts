@@ -552,7 +552,7 @@ Options:
   --jsonl                     Output AI review results in JSONL format
   --mcp                       Enable MCP server integration for library docs
   --learning-db <path>        Enable self-learning store at path
-  --yaml-config               Enable YAML config file discovery (.opencode-reviewer.yml)
+  --jsonl                     Instruct AI to emit JSONL findings (parsed into report)
   --log-level <level>         Log level: debug | info | warn | error
   --min-score <n>             Minimum score to pass gate (0-${MAX_SCORE})
   --max-critical <n>          Max critical findings allowed in gate
@@ -616,7 +616,13 @@ async function main(): Promise<void> {
   if (args[0] === "init-hook") {
     const root = process.cwd();
     const typeIdx = args.indexOf("--type");
-    const hookType = typeIdx >= 0 && args[typeIdx + 1] === "post-commit" ? "post-commit" : "pre-commit";
+    const requestedType = typeIdx >= 0 ? args[typeIdx + 1] : undefined;
+    if (requestedType !== undefined && requestedType !== "pre-commit" && requestedType !== "post-commit") {
+      process.stderr.write(`Invalid --type value: '${requestedType}'. Expected 'pre-commit' or 'post-commit'.\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const hookType = requestedType ?? "pre-commit";
     const hookPath = installHook(root, hookType);
     process.stdout.write(`✅ ${hookType} hook installed at ${hookPath}\n`);
     if (hookType === "post-commit") {
