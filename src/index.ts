@@ -93,6 +93,14 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
     const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
     const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
+    const reasonIdx = dismissArgs.indexOf("--reason");
+    if (reasonIdx >= 0) {
+      const reasonValue = dismissArgs[reasonIdx + 1];
+      if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
+        return { reason: reasonValue, filePath, lineNum, ruleIdArg };
+      }
+      return { reason: "dismissed by user", error: "Missing value for --reason." };
+    }
     const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
     const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
     return { reason, filePath, lineNum, ruleIdArg };
@@ -311,7 +319,7 @@ export const BUILD_WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  build-fix:",
-  "    if: ${{ github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
+  "    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (vars.CODESENTINEL_BOT_ACTOR == '' || github.actor != vars.CODESENTINEL_BOT_ACTOR) && !contains(github.event.head_commit.message, '[skip ci]') }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
   "        with:",
@@ -374,21 +382,24 @@ export const BUILD_WORKFLOW_CONTENT = [
   "",
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
+  "            git commit -m \"chore: apply CodeSentinel auto-fix [skip ci]\"",
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
   "            git pull --rebase --autostash origin ${{ github.ref_name }} 2>&1 || true",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  "            if [ $? -ne 0 ]; then",
+  "            PUSH_STATUS=$?",
+  "            if [ $PUSH_STATUS -ne 0 ]; then",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
   "              git fetch origin ${{ github.ref_name }} 2>&1",
   "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
   "              git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
-  "            else",
-  '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
+  "              PUSH_STATUS=$?",
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            if [ $PUSH_STATUS -ne 0 ]; then",
+  '              echo "❌ Push failed after rebase — aborting fix loop"',
+  "              echo \"::endgroup::\"",
+  "              exit 1",
+  "            fi",
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
@@ -475,7 +486,7 @@ export function runSetup(force: boolean): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
