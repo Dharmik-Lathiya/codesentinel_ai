@@ -79,6 +79,7 @@ export async function retry<T>(
       }
       const backoff = baseDelayMs * Math.pow(2, attempt - 1);
       const capped = Math.min(maxDelayMs, backoff);
+      // 0.5 floor keeps delays in [0.5*capped, capped], avoiding near-zero sleeps.
       const delay = capped * (0.5 + Math.random() * 0.5);
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
