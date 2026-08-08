@@ -62,7 +62,7 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([[SAMPLE_VALUE]])('valid JSON value %s returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
@@ -75,7 +75,6 @@ describe("processData", () => {
   test.each([
     ["not-json"],
     ["[1,2,3]"],
-    ['{"value":"' + SAMPLE_VALUE + '"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
@@ -93,5 +92,8 @@ describe("processData", () => {
 
   test('empty string input is handled', () => {
     expect(processData("")).toEqual({ value: 0 });
+  });
+  test('valid {"value":0} yields the same sentinel as a parse failure (documented ambiguity)', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
   });
 });
