@@ -22,7 +22,7 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-function isValueObject(v: unknown): v is { value?: number } {
+function isValueObject(v: unknown): v is { value: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
 /**
@@ -65,6 +65,16 @@ describe("processData", () => {
   test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
+  test('null, "null" and nested-object inputs fall back to the sentinel', () => {
+    expect(processData(null as unknown as string)).toEqual({ value: 0 });
+    expect(processData("null")).toEqual({ value: 0 });
+    expect(processData('{"value":{"nested":1}}')).toEqual({ value: 0 });
+  });
+
+  test('zero value stays distinguishable as the documented sentinel', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
+    expect(processData('{"value": 0}')).toEqual({ value: 0 });
+  });
 
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
     const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
@@ -76,7 +86,7 @@ describe("processData", () => {
     ["not-json"],
     ["[1,2,3]"],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
-    ['{"value":"' + SAMPLE_VALUE + '"}'],
+    ['{"value":true}'],
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
