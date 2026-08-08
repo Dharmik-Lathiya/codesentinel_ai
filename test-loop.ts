@@ -3,10 +3,11 @@ import { describe, expect, test } from "vitest";
 export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
-const BELOW_THRESHOLD_INPUT = 4999;
-const MODERATE_INPUT = 5000;
-const HIGH_INPUT = 6000;
-const BELOW_EXTREME_INPUT = 9999;
+const MODERATE_STEP = EXTREME_THRESHOLD / 10; // 1000: gap between moderate and high inputs
+const MODERATE_INPUT = EXTREME_THRESHOLD / 2; // 5000
+const BELOW_THRESHOLD_INPUT = MODERATE_INPUT - 1; // 4999
+const HIGH_INPUT = MODERATE_INPUT + MODERATE_STEP; // 6000
+const BELOW_EXTREME_INPUT = EXTREME_THRESHOLD - 1; // 9999
 const SAMPLE_VALUE = 42;
 const DECIMAL_SAMPLE_VALUE = -7.25;
 
@@ -77,7 +78,6 @@ describe("processData", () => {
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
-  test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
   });
@@ -85,7 +85,6 @@ describe("processData", () => {
   test('negative and decimal values are preserved', () => {
     expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
   });
-    expect(processData('{\"value\":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
   test('whitespace-padded JSON is parsed', () => {
     expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
   });
