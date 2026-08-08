@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -103,6 +103,10 @@ export async function collectDiff(
   const diffByPath = splitDiffByPath(diffText);
 
   const files: DiffFile[] = [];
+  // name-status and the full diff are read in two separate git invocations,
+  // so concurrent writes or generator hooks may briefly disagree. Tolerate
+  // the mismatch: paths from either snapshot are included.
+  const seen = new Set<string>();
   const nameStatusEntries = nameStatus.split("\0");
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
@@ -110,11 +114,11 @@ export async function collectDiff(
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
+    seen.add(path);
     let content = "";
     if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      const full = await safeWorkspacePath(path, workspaceRoot);
+      if (full === null) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -128,13 +132,32 @@ export async function collectDiff(
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
+    files.push({ path, status, content, diff });
+  }
+
+  // Paths seen only in the diff snapshot (missed by name-status because of
+  // the two separate invocations) are included instead of being dropped.
+  for (const [path, diff] of diffByPath) {
+    if (seen.has(path)) continue;
+    const full = await safeWorkspacePath(path, workspaceRoot);
+    if (full === null) {
+      logger.warn(`Skipping path outside workspace: ${path}`);
+      continue;
+    }
+    let content = "";
+    try {
+      content = await readContent(full);
+    } catch {
+      logger.debug(`Could not read content for ${path}`);
+    }
+    files.push({ path, status: "modified", content, diff });
+  }
 
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
     for (const path of untracked) {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      const full = await safeWorkspacePath(path, workspaceRoot);
+      if (full === null) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -146,8 +169,6 @@ export async function collectDiff(
       }
       files.push({ path, status: "added", content, diff: "" });
     }
-  }
-    files.push({ path, status, content, diff });
   }
   return files;
 }
@@ -163,6 +184,30 @@ function splitDiffByPath(diffText: string): Map<string, string> {
     byPath.set(path, part);
   }
   return byPath;
+}
+
+/**
+ * Resolve a git-relative path inside the workspace, rejecting any path that
+ * escapes the workspace root (including via symlinks, using realpath).
+ */
+async function safeWorkspacePath(
+  path: string,
+  workspaceRoot: string,
+): Promise<string | null> {
+  const full = resolve(workspaceRoot, path);
+  const rel = relative(workspaceRoot, full);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+  try {
+    const realFull = await realpath(full);
+    const realRel = relative(workspaceRoot, realFull);
+    if (realRel === "" || realRel.startsWith("..") || isAbsolute(realRel)) {
+      logger.warn(`Skipping symlinked path escaping workspace: ${path}`);
+      return null;
+    }
+  } catch {
+    // File may not exist yet; readContent handles the failure.
+  }
+  return full;
 }
 
 async function listUntrackedFiles(cwd: string): Promise<string[]> {

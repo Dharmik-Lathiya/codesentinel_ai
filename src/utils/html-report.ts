@@ -1,11 +1,20 @@
 import type { EngineReport } from "../engine/index.js";
 
+const COLORS = {
+  success: "#16a34a",
+  warning: "#d97706",
+  dangerStrong: "#ea580c",
+  danger: "#dc2626",
+  muted: "#6b7280",
+  info: "#2563eb",
+};
+
 const SEVERITY_COLORS: Record<string, string> = {
-  critical: "#dc2626",
-  high: "#ea580c",
-  medium: "#d97706",
-  low: "#2563eb",
-  info: "#6b7280",
+  critical: COLORS.danger,
+  high: COLORS.dangerStrong,
+  medium: COLORS.warning,
+  low: COLORS.info,
+  info: COLORS.muted,
 };
 
 const BOLD_FONT_WEIGHT = "700";
@@ -70,7 +79,7 @@ export function renderHtmlReport(report: EngineReport): string {
   const fixRows = report.fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
+      const statusColor = a.fixed ? (a.verified ? COLORS.success : COLORS.warning) : COLORS.muted;
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
@@ -153,7 +162,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-<div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -209,12 +218,12 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-.replace(/'/g, APOSTROPHE_ENTITY);
+    .replace(/'/g, APOSTROPHE_ENTITY);
 }
 
 function scoreColor(score: number): string {
-  if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
-  if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
-  if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
-  return "#dc2626";
+  if (score >= SCORE_GREEN_THRESHOLD) return COLORS.success;
+  if (score >= SCORE_ORANGE_THRESHOLD) return COLORS.warning;
+  if (score >= SCORE_RED_THRESHOLD) return COLORS.dangerStrong;
+  return COLORS.danger;
 }
