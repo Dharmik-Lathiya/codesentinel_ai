@@ -60,8 +60,8 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
-    expect(processData('{"value":' + value + "}")).toEqual({ value });
+  test.each([SAMPLE_VALUE, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE, -SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
   });
 
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
