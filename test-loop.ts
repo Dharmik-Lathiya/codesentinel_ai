@@ -14,11 +14,12 @@ const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
 
 /**
  * Scales the input by a fixed multiplier.
+ * Threshold semantics: inputs at or below EXTREME_THRESHOLD (10000) are scaled by
+ * MULTIPLIER (4096x); inputs above it switch to EXTREME_MULTIPLIER (2x MULTIPLIER = 8192x).
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
  * Results above Number.MAX_SAFE_INTEGER lose integer precision.
  */
 export function calculate(x: number): number {
-  const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
   return x * multiplier;
 }
 
@@ -29,19 +30,31 @@ function isValueObject(v: unknown): v is { value?: number } {
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparsable JSON, missing/non-numeric value, NaN/Infinity).
  * NOTE: 0 is an overloaded sentinel — a legitimate {"value":0} is indistinguishable
- * from a parse failure; callers needing error detection should use a discriminated result.
+ * from a parse failure; callers needing error detection should use `processDataSafe`.
  */
 export function processData(input: string): { value: number } {
+  const result = processDataSafe(input);
+  return result.ok ? { value: result.value } : { value: 0 };
+}
+
+/**
+ * Returns a discriminated result: { ok: true, value } for a successfully parsed
+ * numeric value, or { ok: false } for every failure (unparsable JSON, missing or
+ * non-numeric value, null, NaN, Infinity). A legitimate {"value":0} is never
+ * mistaken for an error.
+ */
+export function processDataSafe(input: string): ProcessDataResult {
   try {
     const parsed = JSON.parse(input) as unknown;
     if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
-      return { value: parsed.value };
+      return { ok: true, value: parsed.value };
     }
-    return { value: 0 };
+    return { ok: false };
   } catch {
-    return { value: 0 };
+    return { ok: false };
   }
 }
+export type ProcessDataResult = { ok: true; value: number } | { ok: false };
 
 describe("calculate", () => {
   test.each([
