@@ -8,7 +8,8 @@ const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
-const DECIMAL_SAMPLE_VALUE = -7.25;
+const DECIMAL_FRACTION_HUNDREDTHS = 25;
+const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION_HUNDREDTHS / 100);
 
 /**
  * Scales the input by a fixed multiplier.
@@ -60,12 +61,12 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+  test.each([SAMPLE_VALUE, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
-  test('inputs above 2^53 lose integer precision (documented limitation)', () => {
-    const input = 2 ** 53 + 1;
+  test('inputs above Number.MAX_SAFE_INTEGER lose integer precision (documented limitation)', () => {
+    const input = Number.MAX_SAFE_INTEGER + 2;
     const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
     expect(BigInt(calculate(input))).not.toBe(expected);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
@@ -73,7 +74,7 @@ describe("processData", () => {
   test.each([
     ["not-json"],
     ["[1,2,3]"],
-    ['{"value":"42"}'],
+    ['{"value":"' + SAMPLE_VALUE + '"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
