@@ -86,344 +86,351 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
     if (lineIdx >= 0) {
       const rawLine = dismissArgs[lineIdx + 1];
       if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
-        return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
+        return { reason: "dismissed by user", error: "Invalid value for --line; expected a positive integer." };
       }
       lineNum = parseInt(rawLine, PARSE_INT_RADIX);
+      if (lineNum === 0) {
+        return { reason: "dismissed by user", error: "Invalid value for --line; expected a positive integer (1-based)." };
+      }
     }
     const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
     const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
     const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
-    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
-    const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
+    const reasonIdx = dismissArgs.indexOf("--reason");
+    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0, reasonIdx >= 0 ? reasonIdx + 2 : 0);
+    let reason: string;
+    if (reasonIdx >= 0) {
+      const reasonValue = dismissArgs[reasonIdx + 1];
+      if (reasonValue === undefined || reasonValue.startsWith("--")) {
+        return { reason: "dismissed by user", error: "Missing value for --reason." };
+      }
+      reason = reasonValue;
+    } else {
+      reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
+    }
     return { reason, filePath, lineNum, ruleIdArg };
   }
 
   return { reason: "dismissed by user", error: "Missing --rule or --file." };
 }
 
-export const WORKFLOW_CONTENT = [
-  "# CodeSentinel AI — Optimized workflow",
-  "# Uses pre-built composite action (no TypeScript compilation needed)",
-  "# Setup time: ~30s vs ~5min for npm install + tsc build",
-  "",
-  "name: CodeSentinel AI",
-  "",
-  "on:",
-  "  issues:",
-  "    types: [opened]",
-  "  issue_comment:",
-  "    types: [created]",
-  "",
-  "permissions:",
-  "  contents: read",
-  "  pull-requests: write",
-  "  issues: write",
-  "",
-  "env:",
-  "  # Pin to latest published version for fast composite action setup",
-  "  CODESENTINEL_VERSION: v0.8.0",
-  "",
-  "jobs:",
-  "  plan-on-issue:",
-  "    if: github.event_name === 'issues' && github.event.action === 'opened'",
-  "    runs-on: ubuntu-latest",
-  "    steps:",
-  "      - name: Checkout repository",
-  "        uses: actions/checkout@v4",
-  "        with:",
-  "          fetch-depth: 1",
-  "",
-"      - name: Generate implementation plan",
-"        id: loading",
-"        uses: actions/github-script@v7",
-"        with:",
-"          script: |",
-"            try {",
-"              const { data: comment } = await github.rest.issues.createComment({",
-"                owner: context.repo.owner, repo: context.repo.repo,",
-"                issue_number: context.issue.number,",
-"                body: '\u{1F504} **CodeSentinel** is analyzing this issue and generating an implementation plan...'",
-"              });",
-"              core.setOutput('comment_id', comment.id);",
-"            } catch (err) {",
-"              core.setFailed(err.message);",
-"            }",
-  "",
-  "      # Uses pre-built composite action — no npm install + tsc build",
-  "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
-  "      - name: Run CodeSentinel plan",
-  "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
-  "        env:",
-  "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
-  "        with:",
-  "          mode: plan",
-  "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
-  "          use_opencode_cli: \"false\"",
-  "",
-"      - name: Update comment with plan",
-"        uses: actions/github-script@v7",
-"        with:",
-"          script: |",
-"            const fs = require('fs');",
-"            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
-  "            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }",
-"            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
-"            try {",
-"              await github.rest.issues.updateComment({",
-"                owner: context.repo.owner, repo: context.repo.repo,",
-"                comment_id: ${{ steps.loading.outputs.comment_id }},",
-"                body: body",
-"              });",
-"            } catch (err) {",
-"              core.setFailed(err.message);",
-"            }",
-  "",
-  "  slash-command:",
-  "    if: github.event_name === 'issue_comment' && github.event.action === 'created'",
-  "    runs-on: ubuntu-latest",
-  "    steps:",
-  "      - name: Is PR comment?",
-  "        id: is_pr",
-  "        uses: actions/github-script@v7",
-  "        with:",
-  "          script: |",
-  "            core.setOutput('value', String(!!context.payload.issue?.pull_request));",
-  "",
-  "      - name: Extract command",
-  "        id: cmd",
-  "        uses: actions/github-script@v7",
-  "        with:",
-  "          script: |",
-  "            const body = context.payload.comment.body.trim();",
-"            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|improve|ask)\\b/i);",
-"            if (!match) { core.setFailed('No valid command'); return; }",
-"            const cmd = match[1].toLowerCase();",
-"            const mode = cmd === 'ask' ? 'chat' : cmd;",
-"            const question = cmd === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
-"            core.setOutput('mode', mode);",
-"            core.setOutput('question', question);",
-  "",
-  "      - name: Get PR info (PR comments only)",
-  "        id: pr",
-  "        if: steps.is_pr.outputs.value === 'true'",
-  "        uses: actions/github-script@v7",
-  "        with:",
-  "          script: |",
-  "            try {",
-  "              const { data: pr } = await github.rest.pulls.get({",
-  "                owner: context.repo.owner, repo: context.repo.repo,",
-  "                pull_number: context.issue.number",
-  "              });",
-  "              core.setOutput('base_ref', pr.base.ref);",
-  "              core.setOutput('head_sha', pr.head.sha);",
-  "            } catch (err) { core.setFailed(err.message); }",
-  "",
-  "      - name: Checkout PR (PR comments only)",
-  "        if: steps.is_pr.outputs.value === 'true'",
-  "        uses: actions/checkout@v4",
-  "        with:",
-  "          ref: ${{ steps.pr.outputs.head_sha }}",
-  "          fetch-depth: 0",
-  "",
-  "      - name: Checkout default branch (issue comments)",
-  "        if: steps.is_pr.outputs.value != 'true'",
-  "        uses: actions/checkout@v4",
-  "        with:",
-  "          fetch-depth: 1",
-  "",
-  "      - name: Loading comment",
-  "        id: loading",
-  "        uses: actions/github-script@v7",
-  "        with:",
-  "          script: |",
-  "            try {",
-  "              const { data: comment } = await github.rest.issues.createComment({",
-  "                owner: context.repo.owner, repo: context.repo.repo,",
-  "                issue_number: context.issue.number,",
-  "                body: '\u{1F504} **CodeSentinel** is processing... please wait.'",
-  "              });",
-  "              core.setOutput('comment_id', comment.id);",
-  "            } catch (err) { core.setFailed(err.message); }",
-  "",
-  "      - name: Get issue info (for plan/fix commands)",
-  "        id: issue_info",
-  "        uses: actions/github-script@v7",
-  "        with:",
-  "          script: |",
-  "            try {",
-  "              const { data: issue } = await github.rest.issues.get({",
-  "                owner: context.repo.owner, repo: context.repo.repo,",
-  "                issue_number: context.issue.number",
-  "              });",
-  "              core.setOutput('title', issue.title);",
-  "              core.setOutput('body', (issue.body || '').slice(0, " + `${MAX_ISSUE_BODY_LENGTH}` + "));",
-  "            } catch (err) { core.setFailed(err.message); }",
-  "",
-  "      # Uses pre-built composite action — no npm install + tsc build",
-  "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
-  "      - name: Run CodeSentinel",
-  "        id: cs",
-  "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
-  "        env:",
-  "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
-  "        with:",
-  "          mode: ${{ steps.cmd.outputs.mode }}",
-  "          issue_title: ${{ steps.issue_info.outputs.title }}",
-  "          issue_body: ${{ steps.issue_info.outputs.body }}",
-  "          ask: ${{ steps.cmd.outputs.question }}",
-  "          use_opencode_cli: \"false\"",
-  "",
-  "      - name: Update comment",
-  "        uses: actions/github-script@v7",
-  "        with:",
-  "          script: |",
-  "            const fs = require('fs');",
-  "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
-  "            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }",
-  "            const mode = '${{ steps.cmd.outputs.mode }}';",
-  "            const planSuffix = mode === 'plan' ? '\\n\\nReply with `/fix` to start implementation.' : '';",
-  "            const body = '### CodeSentinel \\u2014 ' + mode + '\\n\\n```\\n' + out + '\\n```' + planSuffix;",
-  "            try {",
-  "              await github.rest.issues.updateComment({",
-  "                owner: context.repo.owner, repo: context.repo.repo,",
-  "                comment_id: ${{ steps.loading.outputs.comment_id }},",
-  "                body: body",
-  "              });",
-  "            } catch (err) { core.setFailed(err.message); }",
-].join("\n");
+export const WORKFLOW_CONTENT = `# CodeSentinel AI — Optimized workflow
+# Uses pre-built composite action (no TypeScript compilation needed)
+# Setup time: ~30s vs ~5min for npm install + tsc build
 
-export const BUILD_WORKFLOW_CONTENT = [
-  "name: CodeSentinel Build Fix",
-  "",
-  "on:",
-  "  push:",
-  "    branches: [main, master, develop]",
-  "  workflow_dispatch:",
-  "",
-  "permissions:",
-  "  contents: write",
-  "  pull-requests: write",
-  "",
-  "env:",
-  "  # Pin CodeSentinel CLI to a release tag, not the default branch",
-  "  CODESENTINEL_VERSION: v0.8.0",
-  "",
-  "jobs:",
-  "  build-fix:",
-  "    if: ${{ github.event_name === 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
-  "    steps:",
-  "      - uses: actions/checkout@v4",
-  "        with:",
-  "          fetch-depth: 0",
-  "          # Use custom PAT if provided (allows pushing to protected branches / triggering workflows)",
-  "          token: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
-  "",
-  "      - uses: actions/setup-node@v4",
-  "        with:",
-`          node-version: ${NODE_VERSION}`,
-  "",
-  "      - name: Checkout CodeSentinel CLI (pinned tag)",
-  "        uses: actions/checkout@v4",
-  "        with:",
-  "          repository: Dharmik-Lathiya/CodeSentinel_AI",
-  "          ref: ${{ env.CODESENTINEL_VERSION }}",
-  "          path: ${{ runner.temp }}/codesentinel",
-  "          fetch-depth: 1",
-  "",
-  "      - name: Install CodeSentinel CLI dependencies",
-  "        run: npm ci --prefix \"${{ runner.temp }}/codesentinel\" --omit=dev --ignore-scripts --no-audit --no-fund",
-  "      - name: Install dependencies (includes devDeps for tsc/build)",
-  "        run: npm ci --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --ignore-scripts --no-audit --no-fund",
-  "",
-  "      - name: Build and auto-fix loop",
-  "        env:",
-  '          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}',
-  '          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}',
-  '          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}',
-'          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}',
-'          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}',
-'          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
-'          CODESENTINEL_GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN }}',
-  "        run: |",
-  "          MAX_ITER=${MAX_ITERATIONS:-5}",
-  '          echo "::group::Build-Fix Loop"',
-  "          for i in $(seq 1 $MAX_ITER); do",
-  '            echo "=== Iteration $i/$MAX_ITER ==="',
-  "",
-  "            FAILED=0",
-  "            npm run build 2>&1 || FAILED=1",
-  "            npm run typecheck 2>&1 || FAILED=1",
-  "",
-  "            if [ $FAILED -eq 0 ]; then",
-  '              echo "✅ Build succeeded on iteration $i"',
-  "              echo \"::endgroup::\"",
-  "              exit 0",
-  "            fi",
-  "",
-  '            echo "❌ Build failed. Running auto-fix..."',
-  "",
-  '            node "${RUNNER_TEMP}/codesentinel/dist/index.js" fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
-  "",
-  "            grep -qxF \"node_modules/\" .gitignore 2>/dev/null || echo \"node_modules/\" >> .gitignore",
-  "            git add -A",
-  "            if git diff --cached --quiet; then",
-  '              echo "⚠️ No changes produced by fix — continuing"',
-  "              continue",
-  "            fi",
-  "",
-  '            git config user.email "bot@codesentinel.ai"',
-  '            git config user.name "CodeSentinel Bot"',
-  "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git pull --rebase --autostash origin ${{ github.ref_name }} 2>&1 || true",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  "            if [ $? -ne 0 ]; then",
-  '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
-  "              git fetch origin ${{ github.ref_name }} 2>&1",
-  "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
-  "              git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
-  "            else",
-  '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
-  "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
-  "          done",
-  "",
-  '          echo "❌ Build failed after $MAX_ITER iterations"',
-  "          echo \"::endgroup::\"",
-  "          exit 1",
-  "",
-  "      - name: Notify failure",
-  "        if: failure()",
-  "        uses: actions/github-script@v7",
-  "        with:",
-  "          script: |",
-  "            try {",
-  "              let prs;",
-  "              try {",
-  "                const { data } = await github.rest.pulls.list({",
-  "                  owner: context.repo.owner,",
-  "                  repo: context.repo.repo,",
-  '                  state: "open",',
-  "                  head: context.ref.replace('refs/heads/', ''),",
-  "                });",
-  "                prs = data;",
-  "              } catch (err) { core.setFailed(err.message); return; }",
-  "              if (prs.length > 0) {",
-  "                try {",
-  "                  await github.rest.issues.createComment({",
-  "                    owner: context.repo.owner,",
-  "                    repo: context.repo.repo,",
-  "                    issue_number: prs[0].number,",
-  '                body: "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."',
-  "                  });",
-  "                } catch (err) { core.setFailed(err.message); return; }",
-  "              }",
-  "            } catch (err) { core.setFailed(err.message); }",
-].join("\n");
+name: CodeSentinel AI
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+env:
+  # Pin to latest published version for fast composite action setup
+  CODESENTINEL_VERSION: v0.8.0
+
+jobs:
+  plan-on-issue:
+    if: github.event_name == 'issues' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Generate implementation plan
+        id: loading
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const { data: comment } = await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: '🔄 **CodeSentinel** is analyzing this issue and generating an implementation plan...'
+              });
+              core.setOutput('comment_id', comment.id);
+            } catch (err) {
+              core.setFailed(err.message);
+            }
+
+      # Uses pre-built composite action — no npm install + tsc build
+      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)
+      - name: Run CodeSentinel plan
+        uses: Dharmik-Lathiya/CodeSentinel_AI@\${{ env.CODESENTINEL_VERSION }}
+        env:
+          GITHUB_TOKEN: \${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        with:
+          mode: plan
+          issue_title: \${{ github.event.issue.title }}
+          issue_body: \${{ github.event.issue.body }}
+          use_opencode_cli: "false"
+
+      - name: Update comment with plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}
+            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }
+            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n\`\`\`\\n' + out + '\\n\`\`\`\\n\\nReply with \`/fix\` to start implementation.';
+            try {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: \${{ steps.loading.outputs.comment_id }},
+                body: body
+              });
+            } catch (err) {
+              core.setFailed(err.message);
+            }
+
+  slash-command:
+    if: github.event_name == 'issue_comment' && github.event.action == 'created'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Is PR comment?
+        id: is_pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.setOutput('value', String(!!context.payload.issue?.pull_request));
+
+      - name: Extract command
+        id: cmd
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.comment.body.trim();
+            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|improve|ask)\\b/i);
+            if (!match) { core.setFailed('No valid command'); return; }
+            const cmd = match[1].toLowerCase();
+            const mode = cmd === 'ask' ? 'chat' : cmd;
+            const question = cmd === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';
+            core.setOutput('mode', mode);
+            core.setOutput('question', question);
+
+      - name: Get PR info (PR comments only)
+        id: pr
+        if: steps.is_pr.outputs.value == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner, repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
+              core.setOutput('base_ref', pr.base.ref);
+              core.setOutput('head_sha', pr.head.sha);
+            } catch (err) { core.setFailed(err.message); }
+
+      - name: Checkout PR (PR comments only)
+        if: steps.is_pr.outputs.value == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: \${{ steps.pr.outputs.head_sha }}
+          fetch-depth: 0
+
+      - name: Checkout default branch (issue comments)
+        if: steps.is_pr.outputs.value != 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Loading comment
+        id: loading
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const { data: comment } = await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: '🔄 **CodeSentinel** is processing... please wait.'
+              });
+              core.setOutput('comment_id', comment.id);
+            } catch (err) { core.setFailed(err.message); }
+
+      - name: Get issue info (for plan/fix commands)
+        id: issue_info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const { data: issue } = await github.rest.issues.get({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number
+              });
+              core.setOutput('title', issue.title);
+              core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));
+            } catch (err) { core.setFailed(err.message); }
+
+      # Uses pre-built composite action — no npm install + tsc build
+      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)
+      - name: Run CodeSentinel
+        id: cs
+        uses: Dharmik-Lathiya/CodeSentinel_AI@\${{ env.CODESENTINEL_VERSION }}
+        env:
+          GITHUB_TOKEN: \${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        with:
+          mode: \${{ steps.cmd.outputs.mode }}
+          issue_title: \${{ steps.issue_info.outputs.title }}
+          issue_body: \${{ steps.issue_info.outputs.body }}
+          ask: \${{ steps.cmd.outputs.question }}
+          use_opencode_cli: "false"
+
+      - name: Update comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}
+            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }
+            const mode = '\${{ steps.cmd.outputs.mode }}';
+            const planSuffix = mode === 'plan' ? '\\n\\nReply with \`/fix\` to start implementation.' : '';
+            const body = '### CodeSentinel \\u2014 ' + mode + '\\n\\n\`\`\`\\n' + out + '\\n\`\`\`' + planSuffix;
+            try {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: \${{ steps.loading.outputs.comment_id }},
+                body: body
+              });
+            } catch (err) { core.setFailed(err.message); }`;
+
+export const BUILD_WORKFLOW_CONTENT = `name: CodeSentinel Build Fix
+
+on:
+  push:
+    branches: [main, master, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  # Pin CodeSentinel CLI to a release tag, not the default branch
+  CODESENTINEL_VERSION: v0.8.0
+
+jobs:
+  build-fix:
+    if: \${{ github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use custom PAT if provided (allows pushing to protected branches / triggering workflows)
+          token: \${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${NODE_VERSION}
+
+      - name: Checkout CodeSentinel CLI (pinned tag)
+        uses: actions/checkout@v4
+        with:
+          repository: Dharmik-Lathiya/CodeSentinel_AI
+          ref: \${{ env.CODESENTINEL_VERSION }}
+          path: \${{ runner.temp }}/codesentinel
+          fetch-depth: 1
+
+      - name: Install CodeSentinel CLI dependencies
+        run: npm ci --prefix "\${{ runner.temp }}/codesentinel" --omit=dev --ignore-scripts --no-audit --no-fund
+      - name: Install dependencies (includes devDeps for tsc/build)
+        run: npm ci --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Build and auto-fix loop
+        env:
+          OPENAI_API_KEY: \${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: \${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: \${{ secrets.GEMINI_API_KEY }}
+          OPENCODE_API_KEY: \${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_BASE_URL: \${{ secrets.OPENCODE_BASE_URL }}
+          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          CODESENTINEL_GITHUB_TOKEN: \${{ secrets.CODESENTINEL_GITHUB_TOKEN }}
+        run: |
+          MAX_ITER=\${MAX_ITERATIONS:-5}
+          echo "::group::Build-Fix Loop"
+          for i in $(seq 1 $MAX_ITER); do
+            echo "=== Iteration $i/$MAX_ITER ==="
+
+            FAILED=0
+            npm run build 2>&1 || FAILED=1
+            npm run typecheck 2>&1 || FAILED=1
+
+            if [ $FAILED -eq 0 ]; then
+              echo "✅ Build succeeded on iteration $i"
+              echo "::endgroup::"
+              exit 0
+            fi
+
+            echo "❌ Build failed. Running auto-fix..."
+
+            node "\${RUNNER_TEMP}/codesentinel/dist/index.js" fix --auto-fix 2>&1 || echo "Fix step completed with warnings"
+
+            grep -qxF "node_modules/" .gitignore 2>/dev/null || echo "node_modules/" >> .gitignore
+            git add -A
+            if git diff --cached --quiet; then
+              echo "⚠️ No changes produced by fix — continuing"
+              continue
+            fi
+
+            git config user.email "bot@codesentinel.ai"
+            git config user.name "CodeSentinel Bot"
+            git commit -m "CodeSentinel: auto-fix build errors [skip ci]" 2>&1 || { echo "Warning: commit failed - continuing"; continue; }
+            GIT_PUSH_TOKEN="\${CODESENTINEL_GITHUB_TOKEN:-\${GITHUB_TOKEN}}"
+            git remote set-url origin "https://x-access-token:\${GIT_PUSH_TOKEN}@github.com/\${{ github.repository }}.git" 2>&1
+            git pull --rebase --autostash origin \${{ github.ref_name }} 2>&1 || true
+            git push origin HEAD:\${{ github.ref_name }} 2>&1
+            if [ $? -ne 0 ]; then
+              echo "⚠️ Push failed, fetching latest and rebasing to recover..."
+              git fetch origin \${{ github.ref_name }} 2>&1
+              git rebase origin/\${{ github.ref_name }} 2>&1 || { echo "❌ Rebase conflict — aborting fix loop"; git rebase --abort 2>/dev/null || true; echo "::endgroup::"; exit 1; }
+              git push origin HEAD:\${{ github.ref_name }} 2>&1
+              echo "✅ Fix pushed to \${{ github.ref_name }}"
+            else
+              echo "✅ Fix pushed to \${{ github.ref_name }}"
+            fi
+          done
+
+          echo "❌ Build failed after $MAX_ITER iterations"
+          echo "::endgroup::"
+          exit 1
+
+      - name: Notify failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              let prs;
+              try {
+                const { data } = await github.rest.pulls.list({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  state: "open",
+                  head: context.ref.replace('refs/heads/', ''),
+                });
+                prs = data;
+              } catch (err) { core.setFailed(err.message); return; }
+              if (prs.length > 0) {
+                try {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prs[0].number,
+                body: "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](\${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }})."
+                  });
+                } catch (err) { core.setFailed(err.message); return; }
+              }
+            } catch (err) { core.setFailed(err.message); }`;
 
 export function runSetup(force: boolean): void {
   const cwd = process.cwd();
@@ -475,7 +482,7 @@ export function runSetup(force: boolean): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
