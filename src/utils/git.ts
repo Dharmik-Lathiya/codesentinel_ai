@@ -159,7 +159,7 @@ function splitDiffByPath(diffText: string): Map<string, string> {
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
     const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
     if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const path = match[2];
     byPath.set(path, part);
   }
   return byPath;
@@ -206,7 +206,7 @@ async function readContent(full: string): Promise<string> {
   return text;
 }
 
-/** Determine a sensible base ref (main/master/develop or upstream merge-base). */
+/** Determine a sensible base ref (PR base branch or origin/main/master). */
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
@@ -249,7 +249,11 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code === "M") return "modified";
+  if (code === "M" || code === "T") return "modified";
+  if (code === "U" || code === "C") {
+    logger.warn(`Skipping unmerged/copy path (status ${code}); set --no-renames to avoid copies`);
+    return null;
+  }
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
