@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -62,7 +62,8 @@ export async function collectDiff(
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
   const baseRef = base ?? (await defaultBaseRef(cwd));
-  const rangeArgs = baseRef ? [baseRef + "..."] : ["HEAD"];
+  const hasHead = await refExists("HEAD", cwd);
+  const rangeArgs = baseRef ? [baseRef + "..."] : hasHead ? ["HEAD"] : [];
   let nameStatus: string;
   try {
     nameStatus = await git(
@@ -86,6 +87,12 @@ export async function collectDiff(
   }
 
   const workspaceRoot = resolve(cwd);
+  const nameStatusEntries = nameStatus.split("\0");
+  const knownPaths: string[] = [];
+  for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
+    const p = nameStatusEntries[i + 1];
+    if (p) knownPaths.push(p);
+  }
 
   let diffText: string;
   try {
@@ -100,10 +107,9 @@ export async function collectDiff(
     );
     throw err;
   }
-  const diffByPath = splitDiffByPath(diffText);
+  const diffByPath = splitDiffByPath(diffText, knownPaths);
 
   const files: DiffFile[] = [];
-  const nameStatusEntries = nameStatus.split("\0");
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
@@ -112,9 +118,8 @@ export async function collectDiff(
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      const full = await resolveWorktreePath(workspaceRoot, path);
+      if (!full) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -128,13 +133,14 @@ export async function collectDiff(
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
+    files.push({ path, status, content, diff });
+  }
 
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
     for (const path of untracked) {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      const full = await resolveWorktreePath(workspaceRoot, path);
+      if (!full) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -147,20 +153,46 @@ export async function collectDiff(
       files.push({ path, status: "added", content, diff: "" });
     }
   }
-    files.push({ path, status, content, diff });
-  }
   return files;
 }
 
-function splitDiffByPath(diffText: string): Map<string, string> {
+async function resolveWorktreePath(
+  workspaceRoot: string,
+  path: string,
+): Promise<string | null> {
+  const full = resolve(workspaceRoot, path);
+  const rel = relative(workspaceRoot, full);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+  try {
+    const canonical = await realpath(full);
+    const canonicalRel = relative(workspaceRoot, canonical);
+    if (
+      canonicalRel === "" ||
+      canonicalRel.startsWith("..") ||
+      isAbsolute(canonicalRel)
+    ) {
+      return null;
+    }
+    return canonical;
+  } catch {
+    return full;
+  }
+}
+
+function splitDiffByPath(
+  diffText: string,
+  knownPaths: string[],
+): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
-    byPath.set(path, part);
+    for (const path of knownPaths) {
+      if (firstLine === `a/${path} b/${path}`) {
+        byPath.set(path, part);
+        break;
+      }
+    }
   }
   return byPath;
 }
