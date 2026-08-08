@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { promisify } from "node:util";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
@@ -10,6 +10,14 @@ const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER = 64 * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
+const READ_LIMIT = 8;
+
+function isMaxBufferError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err as { code?: string }).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+  );
+}
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -28,14 +36,19 @@ export async function git(
   } catch (err) {
     const timedOut =
       err instanceof Error && (err as { killed?: boolean }).killed === true;
+    const oversized = isMaxBufferError(err);
     const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
-      logger.error(
-        timedOut
-          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-          : `git command failed: ${command}`,
-        err,
-      );
+      if (timedOut) {
+        logger.error(
+          `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`,
+          err,
+        );
+      } else if (oversized) {
+        logger.error(`git command output exceeds maxBuffer size: ${command}`, err);
+      } else {
+        logger.error(`git command failed: ${command}`, err);
+      }
     }
     throw err;
   }
@@ -52,6 +65,22 @@ export interface DiffFile {
   status: "added" | "modified" | "deleted";
 }
 
+function parseNameStatus(
+  nameStatus: string,
+): Array<{ path: string; status: DiffFile["status"] }> {
+  const entries: Array<{ path: string; status: DiffFile["status"] }> = [];
+  const parts = nameStatus.split("\0");
+  for (let i = 0; i < parts.length - 1; i += 2) {
+    const statusCode = parts[i];
+    const path = parts[i + 1];
+    if (!statusCode || !path) continue;
+    const status = mapStatus(statusCode);
+    if (!status) continue;
+    entries.push({ path, status });
+  }
+  return entries;
+}
+
 /**
  * Collect the changed files for the current PR/branch relative to a base ref.
  * Falls back to the working tree diff when no base ref is supplied and no
@@ -62,7 +91,9 @@ export async function collectDiff(
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
   const baseRef = base ?? (await defaultBaseRef(cwd));
-  const rangeArgs = baseRef ? [baseRef + "..."] : [];
+  const workspaceRoot = resolve(cwd);
+  let range = baseRef ? `${baseRef}...` : "";
+
   let nameStatus: string;
   try {
     nameStatus = await git(
@@ -73,7 +104,7 @@ export async function collectDiff(
         "--name-status",
         "-z",
         "--no-renames",
-        ...rangeArgs,
+        ...(range ? [range] : []),
       ],
       cwd,
     );
@@ -85,50 +116,124 @@ export async function collectDiff(
     throw err;
   }
 
-  const workspaceRoot = resolve(cwd);
+  let entries = parseNameStatus(nameStatus);
+  if (entries.length === 0 && baseRef) {
+    // A triple-dot range can be empty when HEAD is already merged into the
+    // base ref, silently producing a valid run with zero files.
+    logger.warn(
+      `No changes in "${baseRef}..."; retrying with a two-dot range "${baseRef}..".`,
+    );
+    range = `${baseRef}..`;
+    try {
+      nameStatus = await git(
+        [
+          "-c",
+          "core.quotepath=false",
+          "diff",
+          "--name-status",
+          "-z",
+          "--no-renames",
+          range,
+        ],
+        cwd,
+      );
+    } catch (err) {
+      logger.warn(`Failed to collect two-dot diff against "${baseRef}":`, err);
+      throw err;
+    }
+    if (entries.length === 0) {
+      logger.warn(
+        `No differences found between the checkout and "${baseRef}".`,
+      );
+    }
+  }
 
-  let diffText: string;
+  let diffByPath = new Map<string, string>();
+  let perFileDiff = false;
   try {
-    diffText = await git(
-      ["-c", "core.quotepath=false", "diff", "--no-renames", ...rangeArgs],
+    const diffText = await git(
+      [
+        "-c",
+        "core.quotepath=false",
+        "diff",
+        "--no-renames",
+        ...(range ? [range] : []),
+      ],
       cwd,
     );
+    diffByPath = splitDiffByPath(diffText);
   } catch (err) {
-    logger.warn(
-      `Failed to collect diff output against "${baseRef ?? "working tree"}":`,
-      err,
-    );
-    throw err;
+    if (!isMaxBufferError(err)) {
+      logger.warn(
+        `Failed to collect diff output against "${baseRef ?? "working tree"}":`,
+        err,
+      );
+      throw err;
+    }
+    // Diff output exceeded the eager buffer limit: fall back to per-file diffs.
+    perFileDiff = true;
   }
-  const diffByPath = splitDiffByPath(diffText);
+
+  const results: Array<DiffFile | undefined> = new Array(entries.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      if (i >= entries.length) break;
+      const { status, path } = entries[i];
+      let diff = diffByPath.get(path) ?? "";
+      if (!diff && perFileDiff) {
+        try {
+          diff = await git(
+            [
+              "-c",
+              "core.quotepath=false",
+              "diff",
+              "--no-renames",
+              ...(range ? [range] : []),
+              "--",
+              path,
+            ],
+            cwd,
+          );
+        } catch (err) {
+          logger.warn(`Could not collect per-file diff for ${path}:`, err);
+        }
+      }
+      if (!diff && status !== "deleted") {
+        logger.warn(`Could not collect diff for ${path}`);
+      }
+      let content = "";
+      if (status !== "deleted") {
+        const full = resolve(workspaceRoot, path);
+        const rel = relative(workspaceRoot, full);
+        if (
+          rel === "" ||
+          rel === ".." ||
+          rel.startsWith(`..${sep}`) ||
+          isAbsolute(rel)
+        ) {
+          logger.warn(`Skipping path outside workspace: ${path}`);
+          continue;
+        }
+        try {
+          content = await readContent(full);
+        } catch {
+          logger.debug(`Could not read content for ${path}`);
+        }
+      }
+      results[i] = { path, status, content, diff };
+    }
+  };
+  const workers = Array.from(
+    { length: Math.min(READ_LIMIT, entries.length) },
+    () => worker(),
+  );
+  await Promise.all(workers);
 
   const files: DiffFile[] = [];
-  const nameStatusEntries = nameStatus.split("\0");
-  for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
-    const statusCode = nameStatusEntries[i];
-    const path = nameStatusEntries[i + 1];
-    if (!statusCode || !path) continue;
-    const status = mapStatus(statusCode);
-    if (!status) continue;
-    let content = "";
-    if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
-        continue;
-      }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
-    }
-    const diff = diffByPath.get(path) ?? "";
-    if (!diff && status !== "deleted") {
-      logger.warn(`Could not collect diff for ${path}`);
-    }
-    files.push({ path, status, content, diff });
+  for (const result of results) {
+    if (result) files.push(result);
   }
   return files;
 }
