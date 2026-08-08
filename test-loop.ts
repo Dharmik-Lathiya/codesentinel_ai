@@ -21,13 +21,13 @@ export function calculate(x: number): number {
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
-function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
-export type ProcessDataResult =
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
- * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
+ * input (unparsable JSON, missing/non-numeric value, NaN/Infinity).
+ * NOTE: 0 is an overloaded sentinel — a legitimate {"value":0} is indistinguishable
+ * from a parse failure; callers needing error detection should use a discriminated result.
  */
 export function processData(input: string): { value: number } {
   try {
@@ -66,7 +66,8 @@ describe("processData", () => {
 
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
     const input = 2 ** 53 + 1;
-    expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
+    const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
+    expect(BigInt(calculate(input))).not.toBe(expected);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
@@ -77,15 +78,13 @@ describe("processData", () => {
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
-  test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
   });
 
   test('negative and decimal values are preserved', () => {
-    expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
+    expect(processData('{"value":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
   });
-    expect(processData('{\"value\":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
   test('whitespace-padded JSON is parsed', () => {
     expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
   });
