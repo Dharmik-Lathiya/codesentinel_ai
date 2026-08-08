@@ -63,9 +63,13 @@ describe("calculate", () => {
 
 describe("processData", () => {
   test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
-    expect(processData('{"value":' + value + "}")).toEqual({ value });
+  test(`valid JSON value ${SAMPLE_VALUE} returns the parsed value`, () => {
+    expect(processData('{"value":' + SAMPLE_VALUE + "}")).toEqual({ value: SAMPLE_VALUE });
   });
 
+  test('valid JSON value 0 is preserved (overloaded sentinel)', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
+  });
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
     const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
     const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
