@@ -20,6 +20,7 @@ const MAX_ISSUE_BODY_LENGTH = 8000;
 const NODE_VERSION = 20;
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 const VALID_MODES = new Set<string>(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"]);
+const VALID_PROVIDERS = new Set<Provider>(["openai", "anthropic", "gemini", "opencode", "opencode-cli"]);
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
@@ -48,56 +49,61 @@ export interface DismissArgs {
   error?: string;
 }
 
+function parseDismissReason(dismissArgs: string[], start: number): string {
+  const endIdx = dismissArgs.findIndex((arg, i) => i > start && arg.startsWith("--"));
+  return dismissArgs.slice(start, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
+}
+
+function parseRuleArgs(dismissArgs: string[], ruleIdx: number): DismissArgs {
+  const ruleId = dismissArgs[ruleIdx + 1];
+  if (!ruleId || ruleId.startsWith("--")) {
+    return { reason: "dismissed by user", error: "Missing rule id for --rule." };
+  }
+  const reasonIdx = dismissArgs.indexOf("--reason");
+  if (reasonIdx >= 0) {
+    const reasonValue = dismissArgs[reasonIdx + 1];
+    if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
+      return { reason: reasonValue, ruleId };
+    }
+    return { reason: "dismissed by user", error: "Missing value for --reason." };
+  }
+  return { reason: parseDismissReason(dismissArgs, ruleIdx + 2), ruleId };
+}
+
+function parseFileArgs(dismissArgs: string[], fileIdx: number): DismissArgs {
+  const filePath = dismissArgs[fileIdx + 1];
+  if (!filePath || filePath.startsWith("--")) {
+    return { reason: "dismissed by user", error: "Missing file path for --file." };
+  }
+  const lineIdx = dismissArgs.indexOf("--line");
+  let lineNum: number | null = null;
+  if (lineIdx >= 0) {
+    const rawLine = dismissArgs[lineIdx + 1];
+    if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
+      return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
+    }
+    lineNum = parseInt(rawLine, PARSE_INT_RADIX);
+  }
+  const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
+  const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
+  const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
+  const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
+  return { reason: parseDismissReason(dismissArgs, consumed), filePath, lineNum, ruleIdArg };
+}
+
 export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
   const ruleIdx = dismissArgs.indexOf("--rule");
   const fileIdx = dismissArgs.indexOf("--file");
-  const hasRule = ruleIdx >= 0;
-  const hasFile = fileIdx >= 0;
 
-  if (hasRule && hasFile) {
+  if (ruleIdx >= 0 && fileIdx >= 0) {
     return { reason: "dismissed by user", error: "Options --rule and --file are mutually exclusive." };
   }
-
-  if (hasRule) {
-    const ruleId = dismissArgs[ruleIdx + 1];
-    if (!ruleId || ruleId.startsWith("--")) {
-      return { reason: "dismissed by user", error: "Missing rule id for --rule." };
-    }
-    const reasonIdx = dismissArgs.indexOf("--reason");
-    if (reasonIdx >= 0) {
-      const reasonValue = dismissArgs[reasonIdx + 1];
-      if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
-        return { reason: reasonValue, ruleId };
-      }
-      return { reason: "dismissed by user", error: "Missing value for --reason." };
-    }
-    const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
-    const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
-    return { reason, ruleId };
+  if (ruleIdx >= 0) {
+    return parseRuleArgs(dismissArgs, ruleIdx);
   }
-
-  if (hasFile) {
-    const filePath = dismissArgs[fileIdx + 1];
-    if (!filePath || filePath.startsWith("--")) {
-      return { reason: "dismissed by user", error: "Missing file path for --file." };
-    }
-    const lineIdx = dismissArgs.indexOf("--line");
-    let lineNum: number | null = null;
-    if (lineIdx >= 0) {
-      const rawLine = dismissArgs[lineIdx + 1];
-      if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
-        return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
-      }
-      lineNum = parseInt(rawLine, PARSE_INT_RADIX);
-    }
-    const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
-    const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
-    const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
-    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
-    const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
-    return { reason, filePath, lineNum, ruleIdArg };
+  if (fileIdx >= 0) {
+    return parseFileArgs(dismissArgs, fileIdx);
   }
-
   return { reason: "dismissed by user", error: "Missing --rule or --file." };
 }
 
@@ -425,32 +431,13 @@ export const BUILD_WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
-export function runSetup(force: boolean): void {
-  const cwd = process.cwd();
-  const workflowDir = join(cwd, ".github", "workflows");
-  const workflowPath = join(workflowDir, "codesentinel.yml");
-  const buildWorkflowPath = join(workflowDir, "codesentinel-build.yml");
+function backupExistingFile(path: string, message: string): void {
+  if (!existsSync(path)) return;
+  writeFileSync(`${path}.bak`, readFileSync(path), "utf8");
+  process.stdout.write(`Backed up existing ${message}\n`);
+}
 
-  if (!force && (existsSync(workflowPath) || existsSync(buildWorkflowPath))) {
-    process.stdout.write("Existing workflow(s) found. Re-run with --force to overwrite (existing files are backed up to .bak).\n");
-    return;
-  }
-
-  if (existsSync(workflowPath)) {
-    writeFileSync(`${workflowPath}.bak`, readFileSync(workflowPath), "utf8");
-    process.stdout.write("Backed up existing workflow to codesentinel.yml.bak\n");
-  }
-  mkdirSync(workflowDir, { recursive: true });
-  writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
-  process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
-
-  if (existsSync(buildWorkflowPath)) {
-    writeFileSync(`${buildWorkflowPath}.bak`, readFileSync(buildWorkflowPath), "utf8");
-    process.stdout.write("Backed up existing build-fix workflow to codesentinel-build.yml.bak\n");
-  }
-  writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
-  process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
-
+function printSetupGuide(): void {
   process.stdout.write("Next steps:\n");
   process.stdout.write("  git add .github/workflows/\n");
   process.stdout.write('  git commit -m "Add CodeSentinel AI workflows"\n');
@@ -479,6 +466,29 @@ export function runSetup(force: boolean): void {
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
+}
+
+export function runSetup(force: boolean): void {
+  const cwd = process.cwd();
+  const workflowDir = join(cwd, ".github", "workflows");
+  const workflowPath = join(workflowDir, "codesentinel.yml");
+  const buildWorkflowPath = join(workflowDir, "codesentinel-build.yml");
+
+  if (!force && (existsSync(workflowPath) || existsSync(buildWorkflowPath))) {
+    process.stdout.write("Existing workflow(s) found. Re-run with --force to overwrite (existing files are backed up to .bak).\n");
+    return;
+  }
+
+  mkdirSync(workflowDir, { recursive: true });
+  backupExistingFile(workflowPath, "workflow to codesentinel.yml.bak");
+  writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
+  process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
+
+  backupExistingFile(buildWorkflowPath, "build-fix workflow to codesentinel-build.yml.bak");
+  writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
+  process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
+
+  printSetupGuide();
 }
 
 function showHelp(): void {
@@ -650,6 +660,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     } else {
       try {
@@ -657,6 +668,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     }
     return;
@@ -711,18 +723,30 @@ async function main(): Promise<void> {
     return;
   }
 
-  const numericFlags: Array<[string | undefined, string]> = [
-    [values["max-iterations"], "--max-iterations"],
-    [values["min-score"], "--min-score"],
-    [values["max-critical"], "--max-critical"],
-    [values["max-high"], "--max-high"],
+  const numericFlags: Array<{ value: string | undefined; name: string; re: RegExp; min: number; max: number | null; expected: string }> = [
+    { value: values["max-iterations"], name: "--max-iterations", re: /^[1-9]\d*$/, min: 1, max: null, expected: "a positive integer (>= 1)" },
+    { value: values["min-score"], name: "--min-score", re: /^\d+$/, min: 0, max: MAX_SCORE, expected: `an integer between 0 and ${MAX_SCORE}` },
+    { value: values["max-critical"], name: "--max-critical", re: /^\d+$/, min: 0, max: null, expected: "a non-negative integer" },
+    { value: values["max-high"], name: "--max-high", re: /^\d+$/, min: 0, max: null, expected: "a non-negative integer" },
   ];
-  for (const [value, name] of numericFlags) {
-    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
-      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
+  for (const flag of numericFlags) {
+    if (flag.value === undefined) continue;
+    const num = Number(flag.value);
+    if (!flag.re.test(flag.value.trim()) || num < flag.min || (flag.max !== null && num > flag.max)) {
+      process.stderr.write(`Invalid value for ${flag.name}: '${flag.value}' (expected ${flag.expected})\n`);
       showHelp();
       return;
     }
+  }
+
+  if (values.provider && !VALID_PROVIDERS.has(values.provider as Provider)) {
+    process.stderr.write(`Unknown provider: '${values.provider}' (expected one of: ${[...VALID_PROVIDERS].join(", ")})\n`);
+    showHelp();
+    return;
+  }
+
+  if (values.ask && modeArg && modeArg !== "chat") {
+    process.stderr.write(`Warning: --ask was provided but mode '${modeArg}' was requested; ignoring --ask and running '${modeArg}'.\n`);
   }
 
   if (values["log-level"]) {
@@ -839,7 +863,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const report = await engine.run();
+  let report: Awaited<ReturnType<typeof engine.run>>;
+  try {
+    report = await engine.run();
+  } catch (err) {
+    process.stderr.write(`Analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
 
   // JSON output mode
   if (values.json) {
