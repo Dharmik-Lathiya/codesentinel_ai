@@ -5,7 +5,7 @@ export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
-const HIGH_INPUT = 6000;
+const HIGHER_NORMAL_INPUT = 6000; // still below EXTREME_THRESHOLD — named to avoid implying it straddles it
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 
@@ -23,21 +23,22 @@ function isValueObject(v: unknown): v is { value?: number } {
 function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
-export type ProcessDataResult =
 /**
- * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
- * input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
+ * Returns `{ ok: true, value }` on a valid numeric value, or `{ ok: false }` for
+ * every invalid input (unparseable JSON, missing/non-numeric value, NaN/Infinity).
+ * A real `value: 0` is therefore distinguishable from a parse/validation failure.
  */
-export function processData(input: string): { value: number } {
+export function processData(input: string): { ok: true; value: number } | { ok: false } {
   try {
     const parsed = JSON.parse(input) as unknown;
     if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
-      return { value: parsed.value };
+      return { ok: true, value: parsed.value };
     }
-    return { value: 0 };
+    return { ok: false };
   } catch {
-    return { value: 0 };
+    return { ok: false };
   }
+}
 }
 
 describe("calculate", () => {
@@ -45,7 +46,7 @@ describe("calculate", () => {
     [0, 0],
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
+    [HIGHER_NORMAL_INPUT, HIGHER_NORMAL_INPUT * MULTIPLIER],
     [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
@@ -58,38 +59,39 @@ describe("calculate", () => {
   });
 });
 
-describe("processData", () => {
-  test.each([42, SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
-    expect(processData('{"value":' + value + "}")).toEqual({ value });
+  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
+    expect(processData('{"value":' + value + "}")).toEqual({ ok: true, value });
+  });
   });
 
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
     const input = 2 ** 53 + 1;
     expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
-  });
   test.each([
     ["not-json"],
     ["[1,2,3]"],
     ['{"value":"42"}'],
-    ['{"value":"' + SAMPLE_VALUE + '"}'],
+    ['{"value":true}'],
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
-  test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
   ])('invalid input %s returns the default result', (input) => {
+    expect(processData(input)).toEqual({ ok: false });
+  });
     expect(processData(input)).toEqual({ value: 0 });
+  test.each([17, -7])('valid JSON value %s returns the parsed value', (value) => {
+    expect(processData('{"value":' + value + '}')).toEqual({ ok: true, value });
   });
-
-  test('negative and decimal values are preserved', () => {
     expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
+  test('negative and decimal values are preserved', () => {
+    expect(processData('{"value":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ ok: true, value: DECIMAL_SAMPLE_VALUE });
   });
-
-  test('whitespace-padded JSON is parsed', () => {
     expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
+  test('whitespace-padded JSON is parsed', () => {
+    expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ ok: true, value: SAMPLE_VALUE });
   });
-
-  test('empty string input is handled', () => {
     expect(processData("")).toEqual({ value: 0 });
+  test('empty string input is handled', () => {
+    expect(processData("")).toEqual({ ok: false });
   });
-});
