@@ -7,7 +7,8 @@ import { logger } from "./logger.js";
 const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const BUFFER_SIZE_MEGABYTES = 64;
+const MAX_BUFFER = BUFFER_SIZE_MEGABYTES * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
 
@@ -30,15 +31,15 @@ export async function git(
       err instanceof Error && (err as { killed?: boolean }).killed === true;
     const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
-      logger.error(
-        timedOut
-          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-          : `git command failed: ${command}`,
-        err,
-      );
+      logger.error(formatGitError(timedOut, command), err);
     }
     throw err;
   }
+}
+function formatGitError(timedOut: boolean, command: string): string {
+  return timedOut
+    ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
+    : `git command failed: ${command}`;
 }
 
 export interface DiffFile {
@@ -61,7 +62,16 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  const baseRef = base ?? (await defaultBaseRef(cwd));
+  let baseRef = base;
+  if (baseRef === undefined) {
+    try {
+      baseRef = await defaultBaseRef(cwd);
+    } catch {
+      logger.warn(
+        "Failed to resolve default base ref, falling back to working tree diff",
+      );
+    }
+  }
   const rangeArgs = baseRef ? [baseRef + "..."] : ["HEAD"];
   let nameStatus: string;
   try {
@@ -130,7 +140,12 @@ export async function collectDiff(
     }
 
   if (baseRef === undefined) {
-    const untracked = await listUntrackedFiles(cwd);
+    let untracked: string[] = [];
+    try {
+      untracked = await listUntrackedFiles(cwd);
+    } catch {
+      logger.debug("Failed to list untracked files");
+    }
     for (const path of untracked) {
       const full = resolve(workspaceRoot, path);
       const rel = relative(workspaceRoot, full);
