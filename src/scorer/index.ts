@@ -171,10 +171,13 @@ export class Scorer {
     );
     const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
     if (sourceFiles.length === 0) return 100;
+    const testedBases = new Set(
+      [...testPaths].map((t) => t.replace(/\.(test|spec)\.[jt]sx?$/, "")),
+    );
     let covered = 0;
     for (const f of sourceFiles) {
       const base = f.path.replace(/\.[^.]+$/, "");
-      if ([...testPaths].some((t) => t.startsWith(base))) covered++;
+      if (testedBases.has(base)) covered++;
     }
     return (covered / sourceFiles.length) * 100;
   }
