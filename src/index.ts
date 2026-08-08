@@ -48,6 +48,46 @@ export interface DismissArgs {
   error?: string;
 }
 
+function parseRuleDismiss(dismissArgs: string[], ruleIdx: number): DismissArgs {
+  const ruleId = dismissArgs[ruleIdx + 1];
+  if (!ruleId || ruleId.startsWith("--")) {
+    return { reason: "dismissed by user", error: "Missing rule id for --rule." };
+  }
+  const reasonIdx = dismissArgs.indexOf("--reason");
+  if (reasonIdx >= 0) {
+    const reasonValue = dismissArgs[reasonIdx + 1];
+    if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
+      return { reason: reasonValue, ruleId };
+    }
+    return { reason: "dismissed by user", error: "Missing value for --reason." };
+  }
+  const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
+  const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
+  return { reason, ruleId };
+}
+
+function parseFileDismiss(dismissArgs: string[], fileIdx: number): DismissArgs {
+  const filePath = dismissArgs[fileIdx + 1];
+  if (!filePath || filePath.startsWith("--")) {
+    return { reason: "dismissed by user", error: "Missing file path for --file." };
+  }
+  const lineIdx = dismissArgs.indexOf("--line");
+  let lineNum: number | null = null;
+  if (lineIdx >= 0) {
+    const rawLine = dismissArgs[lineIdx + 1];
+    if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
+      return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
+    }
+    lineNum = parseInt(rawLine, PARSE_INT_RADIX);
+  }
+  const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
+  const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
+  const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
+  const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
+  const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
+  return { reason, filePath, lineNum, ruleIdArg };
+}
+
 export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
   const ruleIdx = dismissArgs.indexOf("--rule");
   const fileIdx = dismissArgs.indexOf("--file");
@@ -59,43 +99,11 @@ export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
   }
 
   if (hasRule) {
-    const ruleId = dismissArgs[ruleIdx + 1];
-    if (!ruleId || ruleId.startsWith("--")) {
-      return { reason: "dismissed by user", error: "Missing rule id for --rule." };
-    }
-    const reasonIdx = dismissArgs.indexOf("--reason");
-    if (reasonIdx >= 0) {
-      const reasonValue = dismissArgs[reasonIdx + 1];
-      if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
-        return { reason: reasonValue, ruleId };
-      }
-      return { reason: "dismissed by user", error: "Missing value for --reason." };
-    }
-    const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
-    const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
-    return { reason, ruleId };
+    return parseRuleDismiss(dismissArgs, ruleIdx);
   }
 
   if (hasFile) {
-    const filePath = dismissArgs[fileIdx + 1];
-    if (!filePath || filePath.startsWith("--")) {
-      return { reason: "dismissed by user", error: "Missing file path for --file." };
-    }
-    const lineIdx = dismissArgs.indexOf("--line");
-    let lineNum: number | null = null;
-    if (lineIdx >= 0) {
-      const rawLine = dismissArgs[lineIdx + 1];
-      if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
-        return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
-      }
-      lineNum = parseInt(rawLine, PARSE_INT_RADIX);
-    }
-    const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
-    const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
-    const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
-    const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
-    const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
-    return { reason, filePath, lineNum, ruleIdArg };
+    return parseFileDismiss(dismissArgs, fileIdx);
   }
 
   return { reason: "dismissed by user", error: "Missing --rule or --file." };
@@ -125,7 +133,7 @@ export const WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  plan-on-issue:",
-  "    if: github.event_name == 'issues' && github.event.action == 'opened'",
+  "    if: github.event_name === 'issues' && github.event.action === 'opened'",
   "    runs-on: ubuntu-latest",
   "    steps:",
   "      - name: Checkout repository",
@@ -180,7 +188,7 @@ export const WORKFLOW_CONTENT = [
 "            }",
   "",
   "  slash-command:",
-  "    if: github.event_name == 'issue_comment' && github.event.action == 'created'",
+  "    if: github.event_name === 'issue_comment' && github.event.action === 'created'",
   "    runs-on: ubuntu-latest",
   "    steps:",
   "      - name: Is PR comment?",
@@ -311,7 +319,7 @@ export const BUILD_WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  build-fix:",
-  "    if: ${{ github.event_name == 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
+  "    if: ${{ github.event_name === 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
   "        with:",
@@ -425,32 +433,15 @@ export const BUILD_WORKFLOW_CONTENT = [
   "            } catch (err) { core.setFailed(err.message); }",
 ].join("\n");
 
-export function runSetup(force: boolean): void {
-  const cwd = process.cwd();
-  const workflowDir = join(cwd, ".github", "workflows");
-  const workflowPath = join(workflowDir, "codesentinel.yml");
-  const buildWorkflowPath = join(workflowDir, "codesentinel-build.yml");
-
-  if (!force && (existsSync(workflowPath) || existsSync(buildWorkflowPath))) {
-    process.stdout.write("Existing workflow(s) found. Re-run with --force to overwrite (existing files are backed up to .bak).\n");
-    return;
+function writeWorkflowFile(path: string, content: string, backupMessage: string): void {
+  if (existsSync(path)) {
+    writeFileSync(`${path}.bak`, readFileSync(path), "utf8");
+    process.stdout.write(backupMessage);
   }
+  writeFileSync(path, content, "utf8");
+}
 
-  if (existsSync(workflowPath)) {
-    writeFileSync(`${workflowPath}.bak`, readFileSync(workflowPath), "utf8");
-    process.stdout.write("Backed up existing workflow to codesentinel.yml.bak\n");
-  }
-  mkdirSync(workflowDir, { recursive: true });
-  writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
-  process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
-
-  if (existsSync(buildWorkflowPath)) {
-    writeFileSync(`${buildWorkflowPath}.bak`, readFileSync(buildWorkflowPath), "utf8");
-    process.stdout.write("Backed up existing build-fix workflow to codesentinel-build.yml.bak\n");
-  }
-  writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
-  process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
-
+function printSetupGuide(): void {
   process.stdout.write("Next steps:\n");
   process.stdout.write("  git add .github/workflows/\n");
   process.stdout.write('  git commit -m "Add CodeSentinel AI workflows"\n');
@@ -481,29 +472,38 @@ export function runSetup(force: boolean): void {
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
 }
 
-function showHelp(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
+export function runSetup(force: boolean): void {
+  const cwd = process.cwd();
+  const workflowDir = join(cwd, ".github", "workflows");
+  const workflowPath = join(workflowDir, "codesentinel.yml");
+  const buildWorkflowPath = join(workflowDir, "codesentinel-build.yml");
+
+  if (!force && (existsSync(workflowPath) || existsSync(buildWorkflowPath))) {
+    process.stdout.write("Existing workflow(s) found. Re-run with --force to overwrite (existing files are backed up to .bak).\n");
+    return;
   }
-  process.stdout.write(`CodeSentinel AI v${pkg.version}
-AI-powered code review, fix, audit, scoring, and test generation.
 
-Usage:
-  codesentinel [mode] [options]
-  codesentinel setup
+  mkdirSync(workflowDir, { recursive: true });
+  writeWorkflowFile(workflowPath, WORKFLOW_CONTENT, "Backed up existing workflow to codesentinel.yml.bak\n");
+  process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
 
-Commands:
-  setup [--force]     Create GitHub Actions workflow (--force overwrites existing files)
-  init-hook           Install git hook (add --type post-commit for build-fix loop)
-  dashboard           Start web dashboard
-  dismiss <finding>   Dismiss a false positive finding
+  writeWorkflowFile(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "Backed up existing build-fix workflow to codesentinel-build.yml.bak\n");
+  process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
 
-Modes:
+  printSetupGuide();
+}
+
+function readPackageVersion(): string {
+  try {
+    return JSON.parse(
+      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
+    ).version;
+  } catch {
+    return "unknown";
+  }
+}
+
+const HELP_MODES = `Modes:
   review      Analyze code for bugs, security, performance, smells (default)
   fix         Auto-fix issues with verification loop
   audit       Full repo security/performance/architecture audit
@@ -516,7 +516,9 @@ Modes:
   improve     Auto-improve code (generate tests, utilities, docs)
   plan        Generate an implementation plan from an issue
 
-Options:
+`;
+
+const HELP_OPTIONS = `Options:
   -m, --mode <mode>           Operational mode
   -c, --config <path>         Path to codesentinel.config.json
   --provider <name>           AI provider (openai | anthropic | gemini | opencode)
@@ -539,7 +541,9 @@ Options:
   --version                   Show version number
   --help                      Show this help message
 
-Environment Variables:
+`;
+
+const HELP_ENV = `Environment Variables:
   GITHUB_TOKEN                GitHub token for PR comments / issues
   CODESENTINEL_GITHUB_TOKEN   GitHub PAT for git push (higher permissions, overrides GITHUB_TOKEN)
   OPENAI_API_KEY              OpenAI API key
@@ -549,7 +553,9 @@ Environment Variables:
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
   OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
 
-Examples:
+`;
+
+const HELP_EXAMPLES = `Examples:
   codesentinel setup
   codesentinel review --config ./codesentinel.config.json
   codesentinel fix --auto-fix --dry-run
@@ -562,19 +568,27 @@ Examples:
   codesentinel dashboard
   codesentinel deadcode
   codesentinel describe
-`);
+`;
+
+function showHelp(): void {
+  process.stdout.write(`CodeSentinel AI v${readPackageVersion()}
+AI-powered code review, fix, audit, scoring, and test generation.
+
+Usage:
+  codesentinel [mode] [options]
+  codesentinel setup
+
+Commands:
+  setup [--force]     Create GitHub Actions workflow (--force overwrites existing files)
+  init-hook           Install git hook (add --type post-commit for build-fix loop)
+  dashboard           Start web dashboard
+  dismiss <finding>   Dismiss a false positive finding
+
+${HELP_MODES}${HELP_OPTIONS}${HELP_ENV}${HELP_EXAMPLES}`);
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
-  process.stdout.write(`${pkg.version}\n`);
+  process.stdout.write(`${readPackageVersion()}\n`);
 }
 
 /**
@@ -583,13 +597,50 @@ function showVersion(): void {
  *   codesentinel score --provider opencode
  *   codesentinel chat --ask "How does auth work?"
  */
-async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+type CliValues = Record<string, string | boolean | undefined>;
 
-  // Handle top-level commands
+async function handleDismissCommand(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    showHelp();
+    return;
+  }
+  if (args.includes("--version")) {
+    showVersion();
+    return;
+  }
+  const parsed = parseDismissArgs(args.slice(1));
+  if (parsed.error) {
+    process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+    process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+    if (parsed.error.startsWith("Options")) {
+      process.stderr.write("Options --rule and --file are mutually exclusive.\n");
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  const engine = Engine.fromInputs({ secrets: loadSecrets() });
+  if (parsed.ruleId !== undefined) {
+    try {
+      await engine.dismissByRule(parsed.ruleId, parsed.reason);
+      process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
+    } catch (err) {
+      process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  } else {
+    try {
+      await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+      process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
+    } catch (err) {
+      process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
+}
+
+async function handleTopLevelCommand(args: string[]): Promise<boolean> {
   if (args[0] === "setup") {
     runSetup(args.includes("--force"));
-    return;
+    return true;
   }
 
   if (args[0] === "init-hook") {
@@ -601,7 +652,7 @@ async function main(): Promise<void> {
     if (hookType === "post-commit") {
       process.stdout.write("This hook will run build + typecheck after every commit and auto-fix failures.\n");
     }
-    return;
+    return true;
   }
 
   if (args[0] === "dashboard") {
@@ -610,7 +661,7 @@ async function main(): Promise<void> {
     if (!dash) {
       process.stderr.write("Dashboard is not available.\n");
       process.exitCode = 1;
-      return;
+      return true;
     }
     dash.start();
     process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
@@ -620,127 +671,42 @@ async function main(): Promise<void> {
         dash.stop();
       });
     }
-    return;
+    return true;
   }
 
   if (args[0] === "dismiss") {
-    if (args.includes("--help") || args.includes("-h")) {
-      showHelp();
-      return;
-    }
-    if (args.includes("--version")) {
-      showVersion();
-      return;
-    }
-    const parsed = parseDismissArgs(args.slice(1));
-    if (parsed.error) {
-      process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
-      if (parsed.error.startsWith("Options")) {
-        process.stderr.write("Options --rule and --file are mutually exclusive.\n");
-      }
-      process.exitCode = 1;
-      return;
-    }
-
-    const engine = Engine.fromInputs({ secrets: loadSecrets() });
-    if (parsed.ruleId !== undefined) {
-      try {
-        await engine.dismissByRule(parsed.ruleId, parsed.reason);
-        process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
-      } catch (err) {
-        process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
-      }
-    } else {
-      try {
-        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
-        process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
-      } catch (err) {
-        process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
-      }
-    }
-    return;
+    await handleDismissCommand(args);
+    return true;
   }
 
-  const { values, positionals } = parseArgs({
-    options: {
-      mode: { type: "string", short: "m" },
-      config: { type: "string", short: "c" },
-      "max-iterations": { type: "string" },
-      "auto-fix": { type: "boolean", default: false },
-      scoring: { type: "boolean", default: true },
-      "test-gen": { type: "boolean", default: false },
-      provider: { type: "string" },
-      ask: { type: "string" },
-      context: { type: "string" },
-      "log-level": { type: "string" },
-      "dry-run": { type: "boolean", default: false },
-      json: { type: "boolean", default: false },
-      sarif: { type: "boolean", default: false },
-      "min-score": { type: "string" },
-      "max-critical": { type: "string" },
-      "max-high": { type: "string" },
-      help: { type: "boolean", default: false },
-      version: { type: "boolean", default: false },
-      "jsonl": { type: "boolean", default: false },
-      "mcp": { type: "boolean", default: false },
-      "learning-db": { type: "string" },
-      "yaml-config": { type: "boolean", default: false },
-      "improve-type": { type: "string" },
-      "use-opencode-cli": { type: "boolean", default: false },
-    },
-    args: process.argv.slice(2),
-    allowPositionals: true,
-  });
+  return false;
+}
 
-  // Use positional arg as mode if --mode not provided
-  const modeArg = values.mode || positionals[0];
-
-  if (values.help) {
-    showHelp();
-    return;
-  }
-  if (values.version) {
-    showVersion();
-    return;
-  }
-
-  if (modeArg && !VALID_MODES.has(modeArg)) {
-    process.stderr.write(`Unknown mode: '${modeArg}'\n`);
-    showHelp();
-    return;
-  }
-
+function validateNumericFlags(values: CliValues): boolean {
   const numericFlags: Array<[string | undefined, string]> = [
-    [values["max-iterations"], "--max-iterations"],
-    [values["min-score"], "--min-score"],
-    [values["max-critical"], "--max-critical"],
-    [values["max-high"], "--max-high"],
+    [values["max-iterations"] as string | undefined, "--max-iterations"],
+    [values["min-score"] as string | undefined, "--min-score"],
+    [values["max-critical"] as string | undefined, "--max-critical"],
+    [values["max-high"] as string | undefined, "--max-high"],
   ];
   for (const [value, name] of numericFlags) {
     if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
       process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
       showHelp();
-      return;
+      return false;
     }
   }
+  return true;
+}
 
-  if (values["log-level"]) {
-    logger.level = values["log-level"] as LogLevel;
-  }
-  if (values.json) {
-    logger.setJsonMode(true);
-  }
-
-  const secrets = loadSecrets();
-
+function buildOverrides(values: CliValues, modeArg: string | undefined): Partial<CodeSentinelConfig> {
   const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
-  if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
+  if (values.scoring !== undefined) overrides.enable_scoring = Boolean(values.scoring);
   if (values["test-gen"]) overrides.enable_test_generation = true;
-  if (values.context) overrides.project_context = values.context;
+  if (values.context) overrides.project_context = values.context as string;
   if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
@@ -776,7 +742,7 @@ async function main(): Promise<void> {
   if (values.jsonl) overrides.jsonl_output = true;
   if (values.mcp) overrides.mcp = mergeOverride(overrides.mcp, { enabled: true });
   if (values["learning-db"]) {
-    overrides.learning = mergeOverride(overrides.learning, { enabled: true, dbPath: values["learning-db"] });
+    overrides.learning = mergeOverride(overrides.learning, { enabled: true, dbPath: values["learning-db"] as string });
   }
   if (values["use-opencode-cli"]) {
     overrides.use_opencode_cli = true;
@@ -790,59 +756,60 @@ async function main(): Promise<void> {
       }
     }
   }
+  return overrides;
+}
 
-  const engine = Engine.fromInputs({
-    configPath: values.config,
-    overrides,
-    secrets,
-  });
+async function handleChatQuery(question: string, engine: Engine): Promise<void> {
+  try {
+    const answer = await engine.ask(question);
+    process.stdout.write(answer + "\n");
+  } catch (err) {
+    process.stderr.write(`Chat query failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+  }
+}
 
-  const runMode = modeArg ?? engine.config.mode;
-  process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
-
-  if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    try {
-      const answer = await engine.ask(values["ask"]);
-      process.stdout.write(answer + "\n");
-    } catch (err) {
-      process.stderr.write(`Chat query failed: ${err instanceof Error ? err.message : String(err)}\n`);
-      process.exitCode = 1;
-    }
+async function runDeadcodeMode(engine: Engine): Promise<void> {
+  const root = process.cwd();
+  const rels = collectFiles(root, engine.config.include, engine.config.exclude);
+  const files = rels.map((path) => ({
+    path,
+    content: readText(resolve(root, path)),
+  }));
+  let findings: Awaited<ReturnType<typeof engine.runDeadCode>>;
+  try {
+    findings = await engine.runDeadCode(files);
+  } catch (err) {
+    process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
     return;
   }
-
-  // Special handling for deadcode mode — run in-process without AI
-  if (modeArg === "deadcode") {
-    const root = process.cwd();
-    const rels = collectFiles(root, engine.config.include, engine.config.exclude);
-    const files = rels.map((path) => ({
-      path,
-      content: readText(resolve(root, path)),
-    }));
-    let findings: Awaited<ReturnType<typeof engine.runDeadCode>>;
-    try {
-      findings = await engine.runDeadCode(files);
-    } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
-      process.exitCode = 1;
-      return;
+  if (findings.length === 0) {
+    process.stdout.write("✅ No unused exports detected.\n");
+  } else {
+    process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
+    process.stdout.write(`Unused exports (${findings.length}):\n`);
+    for (const f of findings) {
+      process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
     }
-    if (findings.length === 0) {
-      process.stdout.write("✅ No unused exports detected.\n");
-    } else {
-      process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
-      process.stdout.write(`Unused exports (${findings.length}):\n`);
-      for (const f of findings) {
-        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
-      }
-    }
-    return;
   }
+}
 
-  const report = await engine.run();
+type RunResult = Awaited<ReturnType<Engine["run"]>>;
 
+async function runEngine(engine: Engine): Promise<RunResult | null> {
+  try {
+    return await engine.run();
+  } catch (err) {
+    process.stderr.write(`Run failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return null;
+  }
+}
+
+function printReport(report: RunResult, flags: CliValues): void {
   // JSON output mode
-  if (values.json) {
+  if (flags.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
       process.stderr.write("Gate check failed\n");
@@ -852,7 +819,7 @@ async function main(): Promise<void> {
   }
 
   // SARIF output mode
-  if (values.sarif) {
+  if (flags.sarif) {
     process.stdout.write(renderSarif(report) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
       process.stderr.write("Gate check failed\n");
@@ -863,7 +830,7 @@ async function main(): Promise<void> {
 
   // Human-readable console output.
   process.stdout.write(`\n=== CodeSentinel [${report.mode}] ===\n`);
-  if (values["dry-run"] && report.mode === "fix") {
+  if (flags["dry-run"] && report.mode === "fix") {
     process.stdout.write("[DRY RUN] No files were modified.\n");
   }
   process.stdout.write(report.summary + "\n");
@@ -895,6 +862,106 @@ async function main(): Promise<void> {
     process.stderr.write("Gate check failed\n");
     process.exitCode = 1;
   }
+}
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+
+  // Handle top-level commands
+  if (await handleTopLevelCommand(args)) {
+    return;
+  }
+
+  const { values, positionals } = parseArgs({
+    options: {
+      mode: { type: "string", short: "m" },
+      config: { type: "string", short: "c" },
+      "max-iterations": { type: "string" },
+      "auto-fix": { type: "boolean", default: false },
+      scoring: { type: "boolean", default: true },
+      "test-gen": { type: "boolean", default: false },
+      provider: { type: "string" },
+      ask: { type: "string" },
+      context: { type: "string" },
+      "log-level": { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+      sarif: { type: "boolean", default: false },
+      "min-score": { type: "string" },
+      "max-critical": { type: "string" },
+      "max-high": { type: "string" },
+      help: { type: "boolean", default: false },
+      version: { type: "boolean", default: false },
+      "jsonl": { type: "boolean", default: false },
+      "mcp": { type: "boolean", default: false },
+      "learning-db": { type: "string" },
+      "yaml-config": { type: "boolean", default: false },
+      "improve-type": { type: "string" },
+      "use-opencode-cli": { type: "boolean", default: false },
+    },
+    args: process.argv.slice(2),
+    allowPositionals: true,
+  });
+  const flags = values as unknown as CliValues;
+
+  // Use positional arg as mode if --mode not provided
+  const modeArg = (flags.mode as string | undefined) || positionals[0];
+
+  if (flags.help) {
+    showHelp();
+    return;
+  }
+  if (flags.version) {
+    showVersion();
+    return;
+  }
+
+  if (modeArg && !VALID_MODES.has(modeArg)) {
+    process.stderr.write(`Unknown mode: '${modeArg}'\n`);
+    showHelp();
+    return;
+  }
+
+  if (!validateNumericFlags(flags)) {
+    return;
+  }
+
+  if (flags["log-level"]) {
+    logger.level = flags["log-level"] as LogLevel;
+  }
+  if (flags.json) {
+    logger.setJsonMode(true);
+  }
+
+  const secrets = loadSecrets();
+  const overrides = buildOverrides(flags, modeArg);
+
+  const engine = Engine.fromInputs({
+    configPath: flags.config as string | undefined,
+    overrides,
+    secrets,
+  });
+
+  const runMode = modeArg ?? engine.config.mode;
+  process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+
+  if (flags.ask && (modeArg === "chat" || !modeArg)) {
+    await handleChatQuery(flags.ask as string, engine);
+    return;
+  }
+
+  // Special handling for deadcode mode — run in-process without AI
+  if (modeArg === "deadcode") {
+    await runDeadcodeMode(engine);
+    return;
+  }
+
+  const report = await runEngine(engine);
+  if (!report) {
+    return;
+  }
+
+  printReport(report, flags);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
