@@ -494,15 +494,18 @@ export function runSetup(force: boolean): void {
   printSetupNextSteps();
 }
 
-function showHelp(): void {
-  let pkg;
+function getPackage(): { version: string } {
   try {
-    pkg = JSON.parse(
+    return JSON.parse(
       readFileSync(join(__dirname, "..", "package.json"), "utf8"),
     );
   } catch {
-    pkg = { version: "unknown" };
+    return { version: "unknown" };
   }
+}
+
+function showHelp(): void {
+  const pkg = getPackage();
   process.stdout.write(`CodeSentinel AI v${pkg.version}
 AI-powered code review, fix, audit, scoring, and test generation.
 
@@ -567,7 +570,7 @@ Examples:
   codesentinel review --config ./codesentinel.config.json
   codesentinel fix --auto-fix --dry-run
   codesentinel score --provider opencode
-  codesentinel chat --ask "How does auth work?"
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel audit --context "Node.js REST API"
    codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
@@ -579,15 +582,7 @@ Examples:
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
-  process.stdout.write(`${pkg.version}\n`);
+  process.stdout.write(`${getPackage().version}\n`);
 }
 
 /**
@@ -738,6 +733,12 @@ async function main(): Promise<void> {
     }
   }
 
+  if (values["improve-type"] && !["test", "util", "doc"].includes(values["improve-type"])) {
+    process.stderr.write(`Invalid value for --improve-type: '${values["improve-type"]}' (supported values: test, util, doc)\n`);
+    showHelp();
+    return;
+  }
+
   if (values["log-level"]) {
     logger.level = values["log-level"] as LogLevel;
   }
@@ -836,7 +837,7 @@ async function main(): Promise<void> {
     try {
       findings = await engine.runDeadCode(files);
     } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exitCode = 1;
       return;
     }

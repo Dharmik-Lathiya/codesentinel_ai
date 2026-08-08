@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
+import { retry } from "./retry.js";
 
 const exec = promisify(execFile);
 const KILOBYTE = 1024;
@@ -11,6 +12,25 @@ const MAX_BUFFER = 64 * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
 
+/** Matches transient git failures (lock contention, transient fs errors) that can be retried. */
+function isRetryableGitError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  // A killed process means the command timed out; never mask that as retryable.
+  if ((err as { killed?: boolean }).killed === true) return false;
+  const message = err.message.toLowerCase();
+  return (
+    message.includes("index.lock") ||
+    message.includes("cannot lock") ||
+    message.includes("unable to lock") ||
+    message.includes("another git process") ||
+    message.includes("failed to lock") ||
+    message.includes("eagain") ||
+    message.includes("eintr") ||
+    message.includes("econnreset") ||
+    message.includes("temporarily unavailable")
+  );
+}
+
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
   args: string[],
@@ -18,12 +38,16 @@ export async function git(
   options: { quiet?: boolean } = {},
 ): Promise<string> {
   try {
-    const { stdout } = await exec("git", args, {
-      cwd,
-      maxBuffer: MAX_BUFFER,
-      timeout: GIT_TIMEOUT_MS,
-      killSignal: "SIGTERM",
-    });
+    const { stdout } = await retry(
+      () =>
+        exec("git", args, {
+          cwd,
+          maxBuffer: MAX_BUFFER,
+          timeout: GIT_TIMEOUT_MS,
+          killSignal: "SIGTERM",
+        }),
+      { shouldRetry: isRetryableGitError },
+    );
     return stdout;
   } catch (err) {
     const timedOut =
@@ -128,10 +152,14 @@ export async function collectDiff(
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
+    files.push({ path, status, content, diff });
+  }
 
   if (baseRef === undefined) {
+    const trackedPaths = new Set(files.map((f) => f.path));
     const untracked = await listUntrackedFiles(cwd);
     for (const path of untracked) {
+      if (trackedPaths.has(path)) continue;
       const full = resolve(workspaceRoot, path);
       const rel = relative(workspaceRoot, full);
       if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
@@ -147,8 +175,6 @@ export async function collectDiff(
       files.push({ path, status: "added", content, diff: "" });
     }
   }
-    files.push({ path, status, content, diff });
-  }
   return files;
 }
 
@@ -157,12 +183,59 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const parsed = parseDiffHeaderPaths(firstLine);
+    if (!parsed) continue;
+    const path = parsed.b === "dev/null" ? parsed.a : parsed.b;
     byPath.set(path, part);
   }
   return byPath;
+}
+
+/**
+ * Parse `a/old-path b/new-path` (or git-quoted forms like
+ * `"a/foo bar.ts" "b/foo bar.ts"`) from a diff header line.
+ */
+function parseDiffHeaderPaths(header: string): { a: string; b: string } | null {
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < header.length) {
+    while (i < header.length && header[i] === " ") i++;
+    if (i >= header.length) break;
+    if (header[i] === '"') {
+      let token = "";
+      for (i++; i < header.length && header[i] !== '"'; ) {
+        if (header[i] === "\\") {
+          const next = header[i + 1];
+          if (next === "n") { token += "\n"; i += 2; }
+          else if (next === "t") { token += "\t"; i += 2; }
+          else if (next === "r") { token += "\r"; i += 2; }
+          else if (next !== undefined && next >= "0" && next <= "7") {
+            const oct = header.slice(i + 1, i + 4);
+            if (oct.length === 3 && /^[0-7]{3}$/.test(oct)) {
+              token += String.fromCharCode(parseInt(oct, 8));
+              i += 4;
+              continue;
+            }
+          }
+          token += next ?? "";
+          i += 2;
+        } else {
+          token += header[i];
+          i++;
+        }
+      }
+      i++;
+      tokens.push(token);
+    } else {
+      const start = i;
+      while (i < header.length && header[i] !== " ") i++;
+      tokens.push(header.slice(start, i));
+    }
+  }
+  if (tokens.length < 2) return null;
+  const a = tokens[0].startsWith("a/") ? tokens[0].slice(2) : tokens[0];
+  const b = tokens[1].startsWith("b/") ? tokens[1].slice(2) : tokens[1];
+  return { a, b };
 }
 
 async function listUntrackedFiles(cwd: string): Promise<string[]> {
@@ -187,23 +260,33 @@ async function listUntrackedFiles(cwd: string): Promise<string[]> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
+  let fileStat: Awaited<ReturnType<typeof stat>>;
+  try {
+    fileStat = await stat(full);
+  } catch {
+    logger.debug(`Could not stat: ${full}`);
+    return "";
+  }
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
-  let text: string;
+  let buf: Buffer;
   try {
-    text = await readFile(full, { encoding: "utf8" });
+    buf = await readFile(full);
   } catch {
     logger.debug(`Failed to read content of: ${full}`);
     return "";
   }
-  if (text.includes("\0")) {
+  if (buf.byteLength > MAX_CONTENT_BYTES) {
+    logger.debug(`Skipping oversized file content: ${full}`);
+    return "";
+  }
+  if (buf.includes(0)) {
     logger.debug(`Skipping binary file content: ${full}`);
     return "";
   }
-  return text;
+  return buf.toString("utf8");
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
@@ -250,6 +333,8 @@ function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
   if (code === "M") return "modified";
+  // Type-change (T) entries carry a diff; include them as best-effort entries.
+  if (code.startsWith("T")) return "modified";
   logger.warn(`Unknown git status code: ${code}`);
   return null;
 }
