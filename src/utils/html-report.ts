@@ -12,9 +12,12 @@ const BOLD_FONT_WEIGHT = "700";
 const H2_COLOR = "#334155";
 const SHADOW_ALPHA = "0.08";
 const BAR_HEIGHT_PERCENT = 100;
-const SCORE_GREEN_THRESHOLD = 80;
-const SCORE_ORANGE_THRESHOLD = 60;
-const SCORE_RED_THRESHOLD = 40;
+const SCORE_COLORS: [number, string][] = [
+  [80, "#16a34a"],
+  [60, "#d97706"],
+  [40, "#ea580c"],
+  [0, "#dc2626"],
+];
 const APOSTROPHE_ENTITY = "&#39;";
 const REPORT_STYLES = `  <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -35,8 +38,8 @@ const REPORT_STYLES = `  <style>
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
-    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
-    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
+    .bar { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; flex: 1; height: 100%; }
+    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; flex-shrink: 0; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
   </style>`;
@@ -83,6 +86,17 @@ export function renderHtmlReport(report: EngineReport): string {
     .map((t) => `<tr><td>${escapeHtml(t.file)}</td><td>${escapeHtml(t.testFilePath)}</td></tr>`)
     .join("\n");
 
+  const commentRows = report.comments
+    .map((c) => {
+      const color = SEVERITY_COLORS[c.severity] ?? "#6b7280";
+      return `<tr>
+        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(c.severity)}</span></td>
+        <td>${escapeHtml(c.file)}${c.line != null ? `:${c.line}` : ""}</td>
+        <td>${escapeHtml(c.body)}</td>
+      </tr>`;
+    })
+    .join("\n");
+
   const severityChart = renderBarChart(
     "Severity Distribution",
     Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
@@ -105,6 +119,8 @@ export function renderHtmlReport(report: EngineReport): string {
   <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
   <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
 
+  ${report.summary ? `<p class="meta" style="white-space:pre-wrap;line-height:1.5">${escapeHtml(report.summary)}</p>` : ""}
+
   ${renderSummaryCards(report, severityCounts)}
 
   ${severityChart}
@@ -113,6 +129,8 @@ export function renderHtmlReport(report: EngineReport): string {
 
   <h2>Findings</h2>
   ${renderFindingsTable(report.findings.length, findingsRows)}
+
+  ${renderCommentsTable(report.comments.length, commentRows)}
 
   ${renderFixTable(report.fixAttempts.length, fixRows)}
 
@@ -152,7 +170,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Tests ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -180,6 +198,15 @@ function renderFindingsTable(count: number, rows: string): string {
   if (count === 0) return `<div class="empty">No findings detected.</div>`;
   return `<table>
     <thead><tr><th>Severity</th><th>Category</th><th>File</th><th>Comment</th><th>Suggestion</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderCommentsTable(count: number, rows: string): string {
+  if (count === 0) return "";
+  return `<h2>Review Comments</h2>
+  <table>
+    <thead><tr><th>Severity</th><th>File</th><th>Comment</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
@@ -212,8 +239,6 @@ function escapeHtml(s: string): string {
 }
 
 function scoreColor(score: number): string {
-  if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
-  if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
-  if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
-  return "#dc2626";
+  const match = SCORE_COLORS.find(([threshold]) => score >= threshold);
+  return match ? match[1] : "#dc2626";
 }
