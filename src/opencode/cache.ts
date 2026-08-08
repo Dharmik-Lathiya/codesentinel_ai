@@ -87,8 +87,13 @@ export class LearningCache {
   private backend: CacheBackend;
   private locks = new Map<string, Promise<unknown>>();
   private static LOCK_TIMEOUT = 30000;
+  private static DEFAULT_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 
-  constructor(backendOrDir?: CacheBackend | string) {
+  constructor(
+    backendOrDir?: CacheBackend | string,
+    private lockTimeoutMs = LearningCache.LOCK_TIMEOUT,
+    private maxAgeMs = LearningCache.DEFAULT_TTL_MS
+  ) {
     if (!backendOrDir || typeof backendOrDir === "string") {
       this.backend = new FileSystemBackend(backendOrDir ?? ".codesentinel-cache/learnings/");
     } else {
@@ -96,12 +101,18 @@ export class LearningCache {
     }
   }
 
+  private isStale(entry: CacheEntry | null): boolean {
+    if (!entry) return false;
+    const age = Date.now() - new Date(entry.updatedAt).getTime();
+    return age > this.maxAgeMs;
+  }
+
   private withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.locks.get(key) ?? Promise.resolve();
     const timedFn = () => {
       let timer: ReturnType<typeof setTimeout>;
       const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Lock timeout for key: ${key}`)), LearningCache.LOCK_TIMEOUT);
+        timer = setTimeout(() => reject(new Error(`Lock timeout for key: ${key}`)), this.lockTimeoutMs);
       });
       return Promise.race([fn(), timeout]).finally(() => clearTimeout(timer));
     };
@@ -109,7 +120,7 @@ export class LearningCache {
     this.locks.set(key, next);
     next.finally(() => {
       if (this.locks.get(key) === next) this.locks.delete(key);
-    });
+    }).catch(() => {});
     return next;
   }
 
@@ -152,7 +163,12 @@ export class LearningCache {
       files.map(async (file) => {
         const key = file.replace(/\.json$/, "");
         try {
-          return await this.backend.get(key);
+          const entry = await this.backend.get(key);
+          if (this.isStale(entry)) {
+            await this.backend.remove(key);
+            return null;
+          }
+          return entry;
         } catch {
           return null;
         }
@@ -179,7 +195,12 @@ export class LearningCache {
       files.map(async (file) => {
         const key = file.replace(/\.json$/, "");
         try {
-          return await this.backend.get(key);
+          const entry = await this.backend.get(key);
+          if (this.isStale(entry)) {
+            await this.backend.remove(key);
+            return null;
+          }
+          return entry;
         } catch {
           return null;
         }
