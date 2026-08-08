@@ -17,7 +17,7 @@ const DEFAULT_GATE_MIN_SCORE = 70;
 const PARSE_INT_RADIX = 10;
 const MAX_SCORE = 100;
 const MAX_ISSUE_BODY_LENGTH = 8000;
-const NODE_VERSION = 20;
+const NODE_VERSION = 0x14;
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 const VALID_MODES = new Set<string>(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"]);
 
@@ -169,8 +169,7 @@ export const WORKFLOW_CONTENT = [
 "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
   "            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }",
 "            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
-"            try {",
-"              await github.rest.issues.updateComment({",
+"            try { await github.rest.issues.updateComment({",
 "                owner: context.repo.owner, repo: context.repo.repo,",
 "                comment_id: ${{ steps.loading.outputs.comment_id }},",
 "                body: body",
@@ -210,8 +209,7 @@ export const WORKFLOW_CONTENT = [
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
-  "            try {",
-  "              const { data: pr } = await github.rest.pulls.get({",
+"            try { const { data: pr } = await github.rest.pulls.get({",
   "                owner: context.repo.owner, repo: context.repo.repo,",
   "                pull_number: context.issue.number",
   "              });",
@@ -237,8 +235,7 @@ export const WORKFLOW_CONTENT = [
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
-  "            try {",
-  "              const { data: comment } = await github.rest.issues.createComment({",
+"            try { const { data: comment } = await github.rest.issues.createComment({",
   "                owner: context.repo.owner, repo: context.repo.repo,",
   "                issue_number: context.issue.number,",
   "                body: '\u{1F504} **CodeSentinel** is processing... please wait.'",
@@ -251,8 +248,7 @@ export const WORKFLOW_CONTENT = [
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
-  "            try {",
-  "              const { data: issue } = await github.rest.issues.get({",
+"            try { const { data: issue } = await github.rest.issues.get({",
   "                owner: context.repo.owner, repo: context.repo.repo,",
   "                issue_number: context.issue.number",
   "              });",
