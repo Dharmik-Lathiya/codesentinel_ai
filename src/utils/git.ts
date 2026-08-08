@@ -56,6 +56,9 @@ export interface DiffFile {
  * Collect the changed files for the current PR/branch relative to a base ref.
  * Falls back to the working tree diff when no base ref is supplied and no
  * upstream branch is configured.
+ *
+ * File contents are read from the working tree. Keep the tree clean (no
+ * uncommitted edits) so content matches the committed status/diff.
  */
 export async function collectDiff(
   base?: string,
@@ -131,20 +134,20 @@ export async function collectDiff(
 
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
-    for (const path of untracked) {
-      const full = resolve(workspaceRoot, path);
+    for (const untrackedPath of untracked) {
+      const full = resolve(workspaceRoot, untrackedPath);
       const rel = relative(workspaceRoot, full);
       if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
+        logger.warn(`Skipping path outside workspace: ${untrackedPath}`);
         continue;
       }
       let content = "";
       try {
         content = await readContent(full);
       } catch {
-        logger.debug(`Could not read content for ${path}`);
+        logger.debug(`Could not read content for ${untrackedPath}`);
       }
-      files.push({ path, status: "added", content, diff: "" });
+      files.push({ path: untrackedPath, status: "added", content, diff: "" });
     }
   }
     files.push({ path, status, content, diff });
