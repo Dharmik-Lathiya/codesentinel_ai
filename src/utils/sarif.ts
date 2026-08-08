@@ -59,7 +59,7 @@ function simpleHash(s: string): string {
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
+      artifactLocation: { uri: file.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/") },
       ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
