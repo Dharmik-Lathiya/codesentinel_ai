@@ -1,4 +1,7 @@
 import { execSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Finding } from "../analyzer/index.js";
 import { logger } from "../utils/logger.js";
 
@@ -48,10 +51,20 @@ const gitleaks: ScannerTool = {
   },
   run(root: string): Finding[] {
     try {
-      const out = execSync(
-        "gitleaks detect --no-git --source . --report-format json --report-path /dev/stdout 2>/dev/null || true",
-        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
-      );
+      const tmpDir = mkdtempSync(join(tmpdir(), "codesentinel-gitleaks-"));
+      const reportPath = join(tmpDir, "report.json");
+      let out = "";
+      try {
+        execSync(
+          `gitleaks detect --no-git --source . --report-format json --report-path "${reportPath}"`,
+          { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER, stdio: "ignore" },
+        );
+        out = readFileSync(reportPath, "utf8");
+      } catch {
+        if (existsSync(reportPath)) out = readFileSync(reportPath, "utf8");
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
       if (!out.trim()) return [];
       let results: { File: string; StartLine: number; RuleID: string; Description: string; Match: string; Severity: string }[];
       try {
