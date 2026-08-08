@@ -34,17 +34,20 @@ function parseTrufflehogLine(line: string): Finding | null {
     return null;
   }
 }
+function detectBinary(name: string): boolean {
+  try {
+    execSync(`which ${name}`, { stdio: "ignore" });
+    return true;
+  } catch {
+    logger.debug(`${name} not found`);
+    return false;
+  }
+}
 
 const gitleaks: ScannerTool = {
   name: "gitleaks",
   detect(): boolean {
-    try {
-      execSync("which gitleaks", { stdio: "ignore" });
-      return true;
-    } catch {
-      logger.debug("gitleaks not found");
-      return false;
-    }
+    return detectBinary("gitleaks");
   },
   run(root: string): Finding[] {
     try {
@@ -79,13 +82,7 @@ const gitleaks: ScannerTool = {
 const trufflehog: ScannerTool = {
   name: "trufflehog",
   detect(): boolean {
-    try {
-      execSync("which trufflehog", { stdio: "ignore" });
-      return true;
-    } catch {
-      logger.debug("trufflehog not found");
-      return false;
-    }
+    return detectBinary("trufflehog");
   },
   run(root: string): Finding[] {
     try {
@@ -107,6 +104,7 @@ const scanners: Record<string, ScannerTool> = { gitleaks, trufflehog };
 
 export function runThirdPartySecrets(root: string): Finding[] {
   const findings: Finding[] = [];
+  const seen = new Set<string>();
   for (const [name, tool] of Object.entries(scanners)) {
     if (!tool.detect()) {
       logger.info(`Secret scanner "${name}" not found, skipping`);
@@ -116,7 +114,12 @@ export function runThirdPartySecrets(root: string): Finding[] {
     const start = Date.now();
     const result = tool.run(root);
     logger.info(`Secret scanner "${name}" finished: ${result.length} findings in ${Date.now() - start}ms`);
-    findings.push(...result);
+    for (const finding of result) {
+      const key = `${finding.file}:${finding.line ?? "?"}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      findings.push(finding);
+    }
   }
   return findings;
 }

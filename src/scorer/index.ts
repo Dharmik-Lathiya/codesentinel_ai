@@ -112,7 +112,7 @@ export class Scorer {
       default:
         // Keep the more conservative (lower) security number: static analysis
         // is more reliable for security, so we take the stricter assessment.
-        security = Math.min(ai.security ?? MAX_SCORE, baseline.security);
+        security = Math.min(ai.security ?? baseline.security, baseline.security);
         break;
     }
     const test_coverage = ai.test_coverage ?? baseline.test_coverage;
@@ -150,7 +150,7 @@ export class Scorer {
       fileCount++;
       const lines = content.split("\n");
       const commentLines = lines.filter(
-        (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
+        (l) => /^\s*(\/\/|\/\*|\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > 120).length;
@@ -170,7 +170,7 @@ export class Scorer {
         .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
     );
     const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
-    if (sourceFiles.length === 0) return 100;
+    if (sourceFiles.length === 0) return 0;
     let covered = 0;
     for (const f of sourceFiles) {
       const base = f.path.replace(/\.[^.]+$/, "");
