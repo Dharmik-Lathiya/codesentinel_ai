@@ -1,20 +1,32 @@
 import type { EngineReport } from "../engine/index.js";
 
-const SEVERITY_COLORS: Record<string, string> = {
+const COLORS = {
   critical: "#dc2626",
   high: "#ea580c",
   medium: "#d97706",
   low: "#2563eb",
   info: "#6b7280",
+  green: "#16a34a",
+  indigo: "#6366f1",
+  neutral: "#6b7280",
+};
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: COLORS.critical,
+  high: COLORS.high,
+  medium: COLORS.medium,
+  low: COLORS.low,
+  info: COLORS.info,
 };
 
 const BOLD_FONT_WEIGHT = "700";
 const H2_COLOR = "#334155";
 const SHADOW_ALPHA = "0.08";
-const BAR_HEIGHT_PERCENT = 100;
+const BAR_CHART_HEIGHT = 120;
+const SEMI_BOLD_FONT_WEIGHT = "600";
+const FULL_WIDTH_PERCENT = 100;
 const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
-const SCORE_RED_THRESHOLD = 40;
+const SCORE_ORANGE_RED_THRESHOLD = 40;
 const APOSTROPHE_ENTITY = "&#39;";
 const REPORT_STYLES = `  <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -29,16 +41,16 @@ const REPORT_STYLES = `  <style>
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
     .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    table { width: ${FULL_WIDTH_PERCENT}%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
-    .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
+    .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: ${BAR_CHART_HEIGHT}px; margin-top: 0.5rem; }
     .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
-    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
+    .bar-fill { width: ${FULL_WIDTH_PERCENT}%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
-    .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .bar-value { font-size: 0.75rem; font-weight: ${SEMI_BOLD_FONT_WEIGHT}; margin-bottom: 0.25rem; }
   </style>`;
 
 /**
@@ -46,52 +58,68 @@ const REPORT_STYLES = `  <style>
  * The HTML includes inline CSS and is fully portable (no external deps).
  */
 export function renderHtmlReport(report: EngineReport): string {
+  const { categoryCounts, severityCounts } = countFindings(report);
+  const findingsRows = report.findings.length === 0 ? "" : report.findings.map(renderFindingRow).join("\n");
+  const fixRows = report.fixAttempts.map(renderFixRow).join("\n");
+  const testRows = report.generatedTests.map(renderTestRow).join("\n");
+
+  const severityChart = renderBarChart(
+    "Severity Distribution",
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? COLORS.neutral })),
+  );
+  const categoryChart = renderBarChart(
+    "Category Breakdown",
+    Object.entries(categoryCounts).map(([c, n]) => ({ key: c, value: n, color: COLORS.indigo })),
+  );
+
+  return renderDocument(report, severityCounts, findingsRows, fixRows, testRows, severityChart, categoryChart);
+}
+
+function countFindings(report: EngineReport) {
   const categoryCounts: Record<string, number> = {};
   const severityCounts: Record<string, number> = {};
   for (const f of report.findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
     severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
   }
+  return { categoryCounts, severityCounts };
+}
 
-  const findingsRows = report.findings
-    .map((f) => {
-      const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
-      return `<tr>
-        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
-        <td>${escapeHtml(f.category)}</td>
-        <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
-        <td>${escapeHtml(f.comment)}</td>
-        <td>${f.suggestion ? escapeHtml(f.suggestion) : "—"}</td>
-      </tr>`;
-    })
-    .join("\n");
+function renderFindingRow(f: EngineReport["findings"][number]): string {
+  const color = SEVERITY_COLORS[f.severity] ?? COLORS.neutral;
+  return `<tr>
+    <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
+    <td>${escapeHtml(f.category)}</td>
+    <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
+    <td>${escapeHtml(f.comment)}</td>
+    <td>${f.suggestion ? escapeHtml(f.suggestion) : "—"}</td>
+  </tr>`;
+}
 
-  const fixRows = report.fixAttempts
-    .map((a) => {
-      const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
-      return `<tr>
-        <td>#${a.iteration}</td>
-        <td>${escapeHtml(a.file)}</td>
-        <td><span style="color:${statusColor};font-weight:${BOLD_FONT_WEIGHT}">${status}</span></td>
-        <td>${escapeHtml(a.explanation)}</td>
-      </tr>`;
-    })
-    .join("\n");
+function renderFixRow(a: EngineReport["fixAttempts"][number]): string {
+  const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
+  const statusColor = a.fixed ? (a.verified ? COLORS.green : COLORS.medium) : COLORS.neutral;
+  return `<tr>
+    <td>#${a.iteration}</td>
+    <td>${escapeHtml(a.file)}</td>
+    <td><span style="color:${statusColor};font-weight:${BOLD_FONT_WEIGHT}">${status}</span></td>
+    <td>${escapeHtml(a.explanation)}</td>
+  </tr>`;
+}
 
-  const testRows = report.generatedTests
-    .map((t) => `<tr><td>${escapeHtml(t.file)}</td><td>${escapeHtml(t.testFilePath)}</td></tr>`)
-    .join("\n");
+function renderTestRow(t: EngineReport["generatedTests"][number]): string {
+  return `<tr><td>${escapeHtml(t.file)}</td><td>${escapeHtml(t.testFilePath)}</td></tr>`;
+}
 
-  const severityChart = renderBarChart(
-    "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
-  );
-  const categoryChart = renderBarChart(
-    "Category Breakdown",
-    Object.entries(categoryCounts).map(([c, n]) => ({ key: c, value: n, color: "#6366f1" })),
-  );
-
+function renderDocument(
+  report: EngineReport,
+  severityCounts: Record<string, number>,
+  findingsRows: string,
+  fixRows: string,
+  testRows: string,
+  severityChart: string,
+  categoryChart: string,
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -165,10 +193,10 @@ function renderBarChart(title: string, items: { key: string; value: number; colo
   <div class="bar-chart">
     ${items
       .map((item) => {
-        const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
+        const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_CHART_HEIGHT) : 0;
         return `<div class="bar">
         <div class="bar-value">${item.value}</div>
-        <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
+        <div class="bar-fill" style="height:${height}px;background:${item.color}"></div>
         <div class="bar-label">${escapeHtml(item.key)}</div>
       </div>`;
       })
@@ -212,8 +240,8 @@ function escapeHtml(s: string): string {
 }
 
 function scoreColor(score: number): string {
-  if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
-  if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
-  if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
-  return "#dc2626";
+  if (score >= SCORE_GREEN_THRESHOLD) return COLORS.green;
+  if (score >= SCORE_ORANGE_THRESHOLD) return COLORS.medium;
+  if (score >= SCORE_ORANGE_RED_THRESHOLD) return COLORS.high;
+  return COLORS.critical;
 }

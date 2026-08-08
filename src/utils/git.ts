@@ -46,7 +46,11 @@ export interface DiffFile {
   path: string;
   /** Unified diff text for this file. */
   diff: string;
-  /** Full (post-change) content of the file, if it still exists. */
+  /**
+   * Full (post-change) content of the file, if it still exists. Empty string
+   * when the file is deleted, unreadable, binary, or larger than 1 MB
+   * (see MAX_CONTENT_BYTES).
+   */
   content: string;
   /** Status: added | modified | deleted. */
   status: "added" | "modified" | "deleted";
@@ -112,14 +116,12 @@ export async function collectDiff(
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      if (!isWithinWorkspace(workspaceRoot, path)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
       try {
-        content = await readContent(full);
+        content = await readContent(resolve(workspaceRoot, path));
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
@@ -128,26 +130,24 @@ export async function collectDiff(
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
+    files.push({ path, status, content, diff });
+  }
 
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
     for (const path of untracked) {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      if (!isWithinWorkspace(workspaceRoot, path)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
       let content = "";
       try {
-        content = await readContent(full);
+        content = await readContent(resolve(workspaceRoot, path));
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
       files.push({ path, status: "added", content, diff: "" });
     }
-  }
-    files.push({ path, status, content, diff });
   }
   return files;
 }
@@ -204,6 +204,13 @@ async function readContent(full: string): Promise<string> {
     return "";
   }
   return text;
+}
+
+/** Whether the given path resolves to a location within the workspace root. */
+function isWithinWorkspace(workspaceRoot: string, path: string): boolean {
+  const full = resolve(workspaceRoot, path);
+  const rel = relative(workspaceRoot, full);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
