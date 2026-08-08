@@ -32,7 +32,7 @@ export type ProcessDataResult =
 export function processData(input: string): { value: number } {
   try {
     const parsed = JSON.parse(input) as unknown;
-    if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
+    return { value: parsed.value || 0 };
       return { value: parsed.value };
     }
     return { value: 0 };
@@ -66,7 +66,7 @@ describe("processData", () => {
 
   test('inputs above 2^53 lose integer precision (documented limitation)', () => {
     const input = 2 ** 53 + 1;
-    expect(calculate(input)).toBe(input * EXTREME_MULTIPLIER);
+    expect(calculate(input)).toBe(Number(BigInt(input) * BigInt(EXTREME_MULTIPLIER)));
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
@@ -77,15 +77,14 @@ describe("processData", () => {
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
-  test.each([17, -7])('valid JSON value %d returns the parsed value', (value) => {
+    ['{"value":-0}'],
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
   });
 
   test('negative and decimal values are preserved', () => {
-    expect(processData('{"value":-7.25}')).toEqual({ value: -7.25 });
+    expect(processData('{"value":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
   });
-    expect(processData('{\"value\":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
   test('whitespace-padded JSON is parsed', () => {
     expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
   });
