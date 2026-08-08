@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Engine } from "./engine/index.js";
+import { Engine, type EngineReport } from "./engine/index.js";
 import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 import type { CodeSentinelConfig, Mode, ModelConfig, Provider, RuntimeSecrets } from "./config/types.js";
 import { logger, type LogLevel } from "./utils/logger.js";
@@ -481,7 +481,7 @@ export function runSetup(force: boolean): void {
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
 }
 
-function showHelp(): void {
+function readVersion(): string {
   let pkg;
   try {
     pkg = JSON.parse(
@@ -490,7 +490,11 @@ function showHelp(): void {
   } catch {
     pkg = { version: "unknown" };
   }
-  process.stdout.write(`CodeSentinel AI v${pkg.version}
+  return pkg.version;
+}
+
+function showHelp(): void {
+  process.stdout.write(`CodeSentinel AI v${readVersion()}
 AI-powered code review, fix, audit, scoring, and test generation.
 
 Usage:
@@ -529,9 +533,12 @@ Options:
   --context <text>            Free-form project context for prompts
   --dry-run                   Show what would be fixed without writing (fix mode)
   --jsonl                     Output AI review results in JSONL format
+  --json                      Output results in JSON format
+  --sarif                     Output results in SARIF format
   --mcp                       Enable MCP server integration for library docs
   --learning-db <path>        Enable self-learning store at path
   --yaml-config               Enable YAML config file discovery (.opencode-reviewer.yml)
+  --improve-type <type>       Improve type: test | util | doc
   --log-level <level>         Log level: debug | info | warn | error
   --min-score <n>             Minimum score to pass gate (0-${MAX_SCORE})
   --max-critical <n>          Max critical findings allowed in gate
@@ -556,7 +563,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -566,15 +573,7 @@ Examples:
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
-  process.stdout.write(`${pkg.version}\n`);
+  process.stdout.write(`${readVersion()}\n`);
 }
 
 /**
@@ -825,6 +824,31 @@ async function main(): Promise<void> {
     } catch (err) {
       process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
       process.exitCode = 1;
+      return;
+    }
+    const findingsBySeverity: Record<string, number> = {};
+    for (const f of findings) {
+      findingsBySeverity[f.severity] = (findingsBySeverity[f.severity] ?? 0) + 1;
+    }
+    const deadcodeReport: EngineReport = {
+      mode: "deadcode" as Mode,
+      summary:
+        findings.length === 0
+          ? "No unused exports detected."
+          : `Unused exports (${findings.length}):`,
+      findings,
+      score: null,
+      comments: [],
+      generatedTests: [],
+      fixAttempts: [],
+      metrics: { filesAnalyzed: files.length, findingsBySeverity, durationMs: 0 },
+    };
+    if (values.json) {
+      process.stdout.write(JSON.stringify(deadcodeReport, null, 2) + "\n");
+      return;
+    }
+    if (values.sarif) {
+      process.stdout.write(renderSarif(deadcodeReport) + "\n");
       return;
     }
     if (findings.length === 0) {
