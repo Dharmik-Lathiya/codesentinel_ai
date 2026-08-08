@@ -1,4 +1,7 @@
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { EngineReport } from "../engine/index.js";
 
 interface SarifResult {
@@ -29,10 +32,20 @@ interface ReportingDescriptor {
 }
 
 const PKG_VERSION = (() => {
+  const fallback = "0.0.0";
   try {
-    return (createRequire(import.meta.url)("../../package.json") as { version: string }).version ?? "0.0.0";
+    const require = createRequire(import.meta.url);
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 6; i++) {
+      const candidate = resolve(dir, "package.json");
+      if (existsSync(candidate)) {
+        return (require(candidate) as { version?: string }).version ?? fallback;
+      }
+      dir = resolve(dir, "..");
+    }
+    return fallback;
   } catch {
-    return "0.0.0";
+    return fallback;
   }
 })();
 
@@ -44,22 +57,10 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
-const COMMENT_TRUNCATION_LENGTH = 40;
-
-function simpleHash(s: string): string {
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) {
-    const char = s.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36);
-}
-
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
+      artifactLocation: { uri: file.replace(/\\/g, "/").split("/").map((seg) => encodeURIComponent(seg)).join("/") },
       ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
@@ -92,11 +93,11 @@ export function renderSarif(report: EngineReport): string {
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
-    const ruleId = `${f.category}:${simpleHash(f.comment)}`;
+    const ruleId = f.category;
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
-        shortDescription: { text: f.comment },
+        shortDescription: { text: f.category },
       });
     }
     results.push({
@@ -110,7 +111,7 @@ export function renderSarif(report: EngineReport): string {
   const sarif: SarifLog = {
     $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
     version: "2.1.0",
-    runs: [createSarifRun(rules, results)],
+    runs: results.length > 0 ? [createSarifRun(rules, results)] : [],
   };
 
   return JSON.stringify(sarif, null, 2);
