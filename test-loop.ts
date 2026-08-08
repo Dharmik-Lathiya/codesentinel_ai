@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
+export const EXTREME_THRESHOLD = 10000; // intentional: positive-only threshold — only inputs above +10000 use the hard 2x multiplier step; large-magnitude negative inputs still use MULTIPLIER
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
@@ -22,7 +22,7 @@ export function calculate(x: number): number {
   return x * multiplier;
 }
 
-function isValueObject(v: unknown): v is { value?: number } {
+function isValueObject(v: unknown): v is { value: unknown } {
   return typeof v === "object" && v !== null && "value" in v;
 }
 /**
@@ -53,6 +53,7 @@ describe("calculate", () => {
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    [-EXTREME_THRESHOLD - 1, (-EXTREME_THRESHOLD - 1) * MULTIPLIER],
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
