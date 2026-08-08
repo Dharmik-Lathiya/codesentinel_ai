@@ -36,13 +36,15 @@ const PKG_VERSION = (() => {
   }
 })();
 
-const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
+const SEVERITY_MAP = {
   critical: "error",
   high: "error",
   medium: "warning",
   low: "note",
   info: "note",
-};
+} as const;
+
+type Severity = keyof typeof SEVERITY_MAP;
 
 const COMMENT_TRUNCATION_LENGTH = 40;
 const HASH_RADIX = 36;
@@ -143,7 +145,7 @@ export function renderSarif(report: EngineReport): string {
     }
     results.push({
       ruleId,
-      level: SEVERITY_MAP[f.severity] ?? "note",
+      level: SEVERITY_MAP[f.severity],
       message: { text: f.comment },
       locations: [createSarifLocation(f.file, f.line ?? undefined)],
     });
