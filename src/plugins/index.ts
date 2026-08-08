@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { CodeSentinelConfig } from "../config/types.js";
 import type { Finding } from "../analyzer/index.js";
 import type { ScoreBreakdown } from "../scorer/index.js";
@@ -28,24 +29,38 @@ export interface CodeSentinelPlugin {
 }
 
 /**
- * PluginManager loads plugin modules (from config.plugins) and dispatches
- * lifecycle hooks. Modules must default-export a CodeSentinelPlugin.
+ * Loads plugin modules listed in config.plugins and dispatches lifecycle hooks.
+ * Modules must default-export a CodeSentinelPlugin.
+ *
+ * Security: config.plugins is a trust boundary. Paths are resolved against
+ * the project root; config must be repo-owned and root-controlled.
  */
 export class PluginManager {
   private plugins: CodeSentinelPlugin[] = [];
 
-  constructor(private ctx: PluginContext) {}
+  constructor(
+    private ctx: PluginContext,
+    private root = process.cwd(),
+  ) {}
 
-  /** Dynamically import and register plugins listed in config. */
+  /** Dynamically load and register plugins in parallel, preserving order. */
   async load(paths: string[]): Promise<void> {
-    for (const p of paths) {
-      try {
-        const plugin = await this.loadPlugin(p);
-        if (plugin) {
-          this.plugins.push(plugin);
-          await plugin.init?.(this.ctx);
-          this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
+    const entries = await Promise.all(
+      paths.map(async (p) => {
+        try {
+          return { p, plugin: await this.loadPlugin(p) };
+        } catch (err) {
+          this.ctx.logger.warn(`Failed to load plugin "${p}":`, err);
+          return { p, plugin: null };
         }
+      }),
+    );
+    for (const { p, plugin } of entries) {
+      if (!plugin) continue;
+      try {
+        this.plugins.push(plugin);
+        await plugin.init?.(this.ctx);
+        this.ctx.logger.info(`Loaded plugin: ${plugin.name}`);
       } catch (err) {
         this.ctx.logger.warn(`Failed to load plugin "${p}":`, err);
       }
@@ -53,8 +68,15 @@ export class PluginManager {
   }
 
   private async loadPlugin(path: string): Promise<CodeSentinelPlugin | null> {
+    // Resolve relative/absolute specs against the project root so untrusted
+    // config cannot point at files outside the repo. Bare module specifiers
+    // (e.g. npm packages) are left untouched.
+    const spec =
+      path.startsWith("/") || path.startsWith(".")
+        ? resolve(this.root, path)
+        : path;
     try {
-      const mod = (await import(path)) as { default?: CodeSentinelPlugin };
+      const mod = (await import(spec)) as { default?: CodeSentinelPlugin };
       const plugin = mod.default;
       if (!plugin) {
         this.ctx.logger.warn(
@@ -67,6 +89,14 @@ export class PluginManager {
           `Plugin "${path}" is missing a valid "name" property.`,
         );
         return null;
+      }
+      for (const hook of ["init", "analyze", "score"] as const) {
+        if (plugin[hook] != null && typeof plugin[hook] !== "function") {
+          this.ctx.logger.warn(
+            `Plugin "${path}" has a non-function "${hook}" hook; skipping it.`,
+          );
+          return null;
+        }
       }
       return plugin;
     } catch (err) {
@@ -87,7 +117,14 @@ export class PluginManager {
       const results = await Promise.all(
         this.plugins.map(async (p) => {
           try {
-            return (await p.analyze?.(files)) ?? [];
+            const raw = (await p.analyze?.(files)) ?? [];
+            if (!Array.isArray(raw)) {
+              this.ctx.logger.warn(
+                `Analyze hook for plugin "${p.name}" did not return an array; ignoring its findings.`,
+              );
+              return [];
+            }
+            return raw;
           } catch (err) {
             this.ctx.logger.warn(
               `Analyze hook failed for plugin "${p.name}":`,
@@ -112,7 +149,22 @@ export class PluginManager {
     let b = breakdown;
     for (const p of this.plugins) {
       try {
-        b = (await p.score?.(b, files)) ?? b;
+        const next = (await p.score?.(b, files)) ?? b;
+        if (
+          next &&
+          typeof next === "object" &&
+          typeof (next as ScoreBreakdown).readability === "number" &&
+          typeof (next as ScoreBreakdown).maintainability === "number" &&
+          typeof (next as ScoreBreakdown).security === "number" &&
+          typeof (next as ScoreBreakdown).test_coverage === "number" &&
+          typeof (next as ScoreBreakdown).overall === "number"
+        ) {
+          b = next;
+        } else {
+          this.ctx.logger.warn(
+            `Score hook for plugin "${p.name}" returned an invalid breakdown; keeping current score.`,
+          );
+        }
       } catch (err) {
         this.ctx.logger.warn(
           `Score hook failed for plugin "${p.name}":`,
