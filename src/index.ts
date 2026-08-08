@@ -387,9 +387,6 @@ export const BUILD_WORKFLOW_CONTENT = [
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
@@ -556,7 +553,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -725,7 +722,19 @@ async function main(): Promise<void> {
     }
   }
 
+  if (values["min-score"] !== undefined && Number(values["min-score"]) > MAX_SCORE) {
+    process.stderr.write(`Invalid value for --min-score: '${values["min-score"]}' (expected 0-${MAX_SCORE})\n`);
+    showHelp();
+    return;
+  }
+
+  const LOG_LEVELS: ReadonlySet<string> = new Set(["debug", "info", "warn", "error"]);
   if (values["log-level"]) {
+    if (!LOG_LEVELS.has(values["log-level"])) {
+      process.stderr.write(`Invalid value for --log-level: '${values["log-level"]}' (expected debug | info | warn | error)\n`);
+      showHelp();
+      return;
+    }
     logger.level = values["log-level"] as LogLevel;
   }
   if (values.json) {
@@ -753,10 +762,10 @@ async function main(): Promise<void> {
     overrides.gate = mergeOverride(overrides.gate, { minScore: Number(values["min-score"]) });
   }
   if (values["max-critical"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Number(values["max-critical"]) });
+    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Math.min(Number(values["max-critical"]), MAX_SCORE) });
   }
   if (values["max-high"]) {
-    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Number(values["max-high"]) });
+    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Math.min(Number(values["max-high"]), MAX_SCORE) });
   }
 
   if (values.provider) {
