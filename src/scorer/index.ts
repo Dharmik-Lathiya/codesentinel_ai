@@ -13,9 +13,10 @@ export interface ScoreBreakdown {
 }
 
 /** Weights used to combine the four dimensions into the overall score. */
-const READABILITY_WEIGHT = 0.25;
+const SPLIT_DIMENSION_WEIGHT = 0.25;
+const READABILITY_WEIGHT = SPLIT_DIMENSION_WEIGHT;
 const MAINTAINABILITY_WEIGHT = 0.3;
-const SECURITY_WEIGHT = 0.25;
+const SECURITY_WEIGHT = SPLIT_DIMENSION_WEIGHT;
 const TEST_COVERAGE_WEIGHT = 0.2;
 
 export const WEIGHTS = {
