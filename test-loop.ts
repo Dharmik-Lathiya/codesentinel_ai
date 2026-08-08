@@ -23,13 +23,16 @@ export function calculate(x: number): number {
 }
 
 function isValueObject(v: unknown): v is { value?: number } {
-  return typeof v === "object" && v !== null && "value" in v;
+  return typeof v === "object" && v !== null && Object.prototype.hasOwnProperty.call(v, "value");
+}
 }
 /**
  * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
  * input (unparsable JSON, missing/non-numeric value, NaN/Infinity).
  * NOTE: 0 is an overloaded sentinel — a legitimate {"value":0} is indistinguishable
  * from a parse failure; callers needing error detection should use a discriminated result.
+ * Callers that must distinguish failure from a real 0 should switch processData to
+ * a discriminated union { ok: true, value: number } | { ok: false }.
  */
 export function processData(input: string): { value: number } {
   try {
