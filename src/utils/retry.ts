@@ -26,11 +26,12 @@ export interface RetryOptions {
   maxDelayMs?: number;
   /**
    * Optional predicate: return true to retry on this error.
-   * Optional predicate: return true to retry on this error.
    * Note: the default predicate only matches `Error` instances; non-Error
    * throws (strings, plain objects) are never retried.
    */
   shouldRetry?: (err: unknown) => boolean;
+  /** Optional AbortSignal: aborting during a backoff cancels the retry loop and throws. */
+  signal?: AbortSignal;
 }
 
 const getErrorStatus = (err: unknown): number | undefined => {
@@ -60,6 +61,30 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
   return false;
 };
 
+const throwIfAborted = (signal?: AbortSignal): void => {
+  if (!signal?.aborted) return;
+  throw new DOMException("The operation was aborted.", "AbortError");
+};
+
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  return new Promise((resolve, reject) => {
+    throwIfAborted(signal);
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+    };
+    timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+};
+
 /**
  * Retry an async operation with exponential backoff. Only retries on transient
  * errors (rate limits, 5xx, timeouts). Throws the original error on permanent
@@ -72,7 +97,7 @@ export async function retry<T>(
   const maxAttempts = opts.maxAttempts ?? 3;
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
-  const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, maxAttempts - 1);
+  const maxDelayMs = opts.maxDelayMs ?? Infinity;
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -89,7 +114,7 @@ export async function retry<T>(
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
-      await new Promise((r) => setTimeout(r, delay));
+      await sleep(delay, opts.signal);
     }
   }
   throw lastError;
