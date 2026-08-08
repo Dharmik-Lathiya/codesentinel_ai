@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import type { EngineReport } from "../engine/index.js";
+import type { Severity } from "../config/types.js";
+import { logger } from "./logger.js";
 
 interface SarifResult {
   ruleId: string;
@@ -32,11 +35,14 @@ const PKG_VERSION = (() => {
   try {
     return (createRequire(import.meta.url)("../../package.json") as { version: string }).version ?? "0.0.0";
   } catch {
+    logger.warn('Could not resolve package.json version, defaulting to "0.0.0"');
     return "0.0.0";
   }
 })();
 
-const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
+type SarifLevel = "error" | "warning" | "note";
+
+const SEVERITY_MAP: Record<Severity, SarifLevel> = {
   critical: "error",
   high: "error",
   medium: "warning",
@@ -44,23 +50,26 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
+function sarifLevel(severity: Severity): SarifLevel {
+  const level: SarifLevel | undefined = SEVERITY_MAP[severity];
+  if (level == null) {
+    logger.warn(`Unhandled finding severity "${severity}", defaulting to "note"`);
+    return "note";
+  }
+  return level;
+}
+
 const COMMENT_TRUNCATION_LENGTH = 40;
 
-function simpleHash(s: string): string {
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) {
-    const char = s.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36);
+function ruleHash(comment: string): string {
+  return createHash("sha1").update(comment).digest("hex").slice(0, 12);
 }
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
       artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      ...(line != null && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }
@@ -92,7 +101,7 @@ export function renderSarif(report: EngineReport): string {
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
-    const ruleId = `${f.category}:${simpleHash(f.comment)}`;
+    const ruleId = `${f.category}:${ruleHash(f.comment)}`;
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
@@ -101,7 +110,7 @@ export function renderSarif(report: EngineReport): string {
     }
     results.push({
       ruleId,
-      level: SEVERITY_MAP[f.severity] ?? "note",
+      level: sarifLevel(f.severity),
       message: { text: f.comment },
       locations: [createSarifLocation(f.file, f.line ?? undefined)],
     });
