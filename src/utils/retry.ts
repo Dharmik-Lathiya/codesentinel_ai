@@ -5,7 +5,11 @@ const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
 const HTTP_STATUS_RATE_LIMIT = "429";
 const HTTP_STATUS_SERVICE_UNAVAILABLE = "503";
 const HTTP_STATUS_BAD_GATEWAY = "502";
-const RETRYABLE_STATUS_CODES = new Set([429, 502, 503]);
+const RETRYABLE_STATUS_CODES = new Set([
+  Number(HTTP_STATUS_RATE_LIMIT),
+  Number(HTTP_STATUS_BAD_GATEWAY),
+  Number(HTTP_STATUS_SERVICE_UNAVAILABLE),
+]);
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */

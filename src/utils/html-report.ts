@@ -36,6 +36,7 @@ const REPORT_STYLES = `  <style>
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
     .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .bar-fill-container { flex: 1; width: 100%; display: flex; align-items: flex-end; }
     .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
@@ -152,23 +153,26 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Tests ${score.test_coverage}</div>
 
       </div>
     </div>`;
 }
 
 function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
-  if (items.length === 0) return "";
-  const maxCount = Math.max(...items.map((item) => item.value));
+  const visibleItems = items.filter((item) => item.value > 0);
+  if (visibleItems.length === 0) return "";
+  const maxCount = Math.max(...visibleItems.map((item) => item.value));
   return `<h2>${escapeHtml(title)}</h2>
   <div class="bar-chart">
-    ${items
+    ${visibleItems
       .map((item) => {
         const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
         return `<div class="bar">
         <div class="bar-value">${item.value}</div>
+        <div class="bar-fill-container">
         <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
+        </div>
         <div class="bar-label">${escapeHtml(item.key)}</div>
       </div>`;
       })
@@ -208,7 +212,7 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-.replace(/'/g, APOSTROPHE_ENTITY);
+    .replace(/'/g, APOSTROPHE_ENTITY);
 }
 
 function scoreColor(score: number): string {
