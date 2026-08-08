@@ -693,7 +693,7 @@ async function runDeadCodeMode(engine: Engine): Promise<void> {
   try {
     findings = await engine.runDeadCode(files);
   } catch (err) {
-    process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;
     return;
   }
@@ -853,7 +853,7 @@ async function main(): Promise<void> {
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
   const issueTitle = process.env.INPUT_ISSUE_TITLE;
-  const issueBody = process.env.INPUT_ISSUE_BODY;
+  const issueBody = (process.env.INPUT_ISSUE_BODY || "").slice(0, MAX_ISSUE_BODY_LENGTH);
   if (issueTitle) overrides.issue_title = issueTitle;
   if (issueBody) overrides.issue_body = issueBody;
 

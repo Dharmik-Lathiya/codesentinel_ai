@@ -206,25 +206,25 @@ async function readContent(full: string): Promise<string> {
   return text;
 }
 
-/** Determine a sensible base ref (main/master/develop or upstream merge-base). */
+/** Determine a sensible base ref (main/master/develop). */
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
-    const remoteBase = `origin/${githubBaseRef}`;
-    try {
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-    } catch {
-      logger.debug(`Failed to resolve base ref: ${remoteBase}`);
+    for (const ref of [`origin/${githubBaseRef}`, githubBaseRef]) {
+      try {
+        if (await refExists(ref, cwd)) return ref;
+      } catch {
+        logger.debug(`Failed to resolve base ref: ${ref}`);
+      }
     }
-    try {
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
-    } catch {
-      logger.debug(`Failed to resolve base ref: ${githubBaseRef}`);
-    }
+    logger.warn(
+      `GITHUB_BASE_REF set (${githubBaseRef}) but branch not found; falling back to working-tree diff`,
+    );
+    return undefined;
   }
 
-  const candidates = ["origin/main", "origin/master", "main", "master"];
+  const candidates = ["origin/main", "origin/master", "main", "master", "origin/develop", "develop"];
   for (const ref of candidates) {
     try {
       if (await refExists(ref, cwd)) return ref;
