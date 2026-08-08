@@ -12,6 +12,7 @@ const BOLD_FONT_WEIGHT = "700";
 const H2_COLOR = "#334155";
 const SHADOW_ALPHA = "0.08";
 const BAR_HEIGHT_PERCENT = 100;
+const BAR_VALUE_FONT_WEIGHT = "600";
 const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
 const SCORE_RED_THRESHOLD = 40;
@@ -30,16 +31,16 @@ const REPORT_STYLES = `  <style>
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
     .score-ring { width: 80px; height: 80px; border-radius: ${SCORE_RING_RADIUS_PERCENT}; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: ${BOLD_FONT_WEIGHT}; color: #fff; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
     .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
-    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
+    .bar-fill { width: ${BAR_HEIGHT_PERCENT}%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
-    .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .bar-value { font-size: 0.75rem; font-weight: ${BAR_VALUE_FONT_WEIGHT}; margin-bottom: 0.25rem; }
   </style>`;
 
 /**
@@ -47,14 +48,35 @@ const REPORT_STYLES = `  <style>
  * The HTML includes inline CSS and is fully portable (no external deps).
  */
 export function renderHtmlReport(report: EngineReport): string {
+  const { categoryCounts, severityCounts } = computeCounts(report.findings);
+
+  const severityChart = renderBarChart(
+    "Severity Distribution",
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+  );
+  const categoryChart = renderBarChart(
+    "Category Breakdown",
+    Object.entries(categoryCounts).map(([c, n]) => ({ key: c, value: n, color: "#6366f1" })),
+  );
+
+  return renderHtmlDocument(report, severityCounts, severityChart, categoryChart);
+}
+
+function computeCounts(findings: EngineReport["findings"]): {
+  categoryCounts: Record<string, number>;
+  severityCounts: Record<string, number>;
+} {
   const categoryCounts: Record<string, number> = {};
   const severityCounts: Record<string, number> = {};
-  for (const f of report.findings) {
+  for (const f of findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
     severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
   }
+  return { categoryCounts, severityCounts };
+}
 
-  const findingsRows = report.findings
+function renderFindingRows(report: EngineReport): string {
+  return report.findings
     .map((f) => {
       const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
       return `<tr>
@@ -66,8 +88,10 @@ export function renderHtmlReport(report: EngineReport): string {
       </tr>`;
     })
     .join("\n");
+}
 
-  const fixRows = report.fixAttempts
+function renderFixRows(report: EngineReport): string {
+  return report.fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
       const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
@@ -79,19 +103,23 @@ export function renderHtmlReport(report: EngineReport): string {
       </tr>`;
     })
     .join("\n");
+}
 
-  const testRows = report.generatedTests
+function renderTestRows(report: EngineReport): string {
+  return report.generatedTests
     .map((t) => `<tr><td>${escapeHtml(t.file)}</td><td>${escapeHtml(t.testFilePath)}</td></tr>`)
     .join("\n");
+}
 
-  const severityChart = renderBarChart(
-    "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
-  );
-  const categoryChart = renderBarChart(
-    "Category Breakdown",
-    Object.entries(categoryCounts).map(([c, n]) => ({ key: c, value: n, color: "#6366f1" })),
-  );
+function renderHtmlDocument(
+  report: EngineReport,
+  severityCounts: Record<string, number>,
+  severityChart: string,
+  categoryChart: string,
+): string {
+  const findingsRows = renderFindingRows(report);
+  const fixRows = renderFixRows(report);
+  const testRows = renderTestRows(report);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -153,7 +181,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-<div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
