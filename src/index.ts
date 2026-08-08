@@ -376,7 +376,7 @@ export const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
+  "            git config --local http.https://github.com/.extraheader \"AUTHORIZATION: basic $(echo -n x-access-token:${GIT_PUSH_TOKEN} | base64 -w0)\" 2>&1",
   "            git pull --rebase --autostash origin ${{ github.ref_name }} 2>&1 || true",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
   "            if [ $? -ne 0 ]; then",
@@ -389,7 +389,7 @@ export const BUILD_WORKFLOW_CONTENT = [
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
+  "            git config --local http.https://github.com/.extraheader \"AUTHORIZATION: basic $(echo -n x-access-token:${GIT_PUSH_TOKEN} | base64 -w0)\" 2>&1",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
@@ -617,6 +617,7 @@ async function main(): Promise<void> {
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
       process.on(signal, () => {
         dash.stop();
+        process.exit(0);
       });
     }
     return;
@@ -725,6 +726,11 @@ async function main(): Promise<void> {
   }
 
   if (values["log-level"]) {
+    if (!["debug", "info", "warn", "error"].includes(values["log-level"])) {
+      process.stderr.write(`Invalid value for --log-level: '${values["log-level"]}' (expected debug | info | warn | error)\n`);
+      showHelp();
+      return;
+    }
     logger.level = values["log-level"] as LogLevel;
   }
   if (values.json) {
@@ -734,13 +740,20 @@ async function main(): Promise<void> {
   const secrets = loadSecrets();
 
   const overrides: Partial<CodeSentinelConfig> = {};
-  if (modeArg) overrides.mode = modeArg as Mode;
+  if (modeArg && modeArg !== "deadcode") overrides.mode = modeArg as Mode;
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
-  if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
+  if (values["improve-type"]) {
+    if (!["test", "util", "doc"].includes(values["improve-type"])) {
+      process.stderr.write(`Invalid value for --improve-type: '${values["improve-type"]}' (expected test | util | doc)\n`);
+      showHelp();
+      return;
+    }
+    overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
+  }
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
   const issueTitle = process.env.INPUT_ISSUE_TITLE;
