@@ -16,6 +16,7 @@ const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
 const SCORE_RED_THRESHOLD = 40;
 const APOSTROPHE_ENTITY = "&#39;";
+const FALLBACK_COLOR = SEVERITY_COLORS.info;
 const REPORT_STYLES = `  <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
@@ -34,8 +35,8 @@ const REPORT_STYLES = `  <style>
     td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
-    .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
-    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .bar-chart { display: flex; align-items: stretch; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
+    .bar { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; flex: 1; }
     .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
     .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
     .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
@@ -55,7 +56,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const findingsRows = report.findings
     .map((f) => {
-      const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
+      const color = SEVERITY_COLORS[f.severity] ?? FALLBACK_COLOR;
       return `<tr>
         <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
@@ -69,7 +70,7 @@ export function renderHtmlReport(report: EngineReport): string {
   const fixRows = report.fixAttempts
     .map((a) => {
       const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
+      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : FALLBACK_COLOR;
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
@@ -85,7 +86,7 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const severityChart = renderBarChart(
     "Severity Distribution",
-    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? FALLBACK_COLOR })),
   );
   const categoryChart = renderBarChart(
     "Category Breakdown",
@@ -104,6 +105,7 @@ export function renderHtmlReport(report: EngineReport): string {
 <div class="container">
   <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
   <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
+  <p class="meta">${escapeHtml(report.summary)}</p>
 
   ${renderSummaryCards(report, severityCounts)}
 
@@ -153,8 +155,6 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div>
         <div class="label">Quality Score</div>
         <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
-
-      </div>
     </div>`;
 }
 
@@ -208,7 +208,7 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-.replace(/'/g, APOSTROPHE_ENTITY);
+    .replace(/'/g, APOSTROPHE_ENTITY);
 }
 
 function scoreColor(score: number): string {
