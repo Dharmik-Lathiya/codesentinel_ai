@@ -81,6 +81,12 @@ describe("processData", () => {
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
   });
+  // Sentinel collision: a literal {"value":0} is a valid parse that produces the
+  // same { value: 0 } sentinel as an invalid input, so it is indistinguishable from an error.
+  test('literal sentinel {"value":0} is indistinguishable from an error result', () => {
+    expect(processData('{"value":0}')).toEqual({ value: 0 });
+  });
+
 
   test('negative and decimal values are preserved', () => {
     expect(processData('{"value":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
