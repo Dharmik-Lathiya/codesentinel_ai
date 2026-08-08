@@ -21,12 +21,16 @@ export function buildSuggestionsComment(
       const after = ctxAfter ? ctxAfter : "";
       const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
       const original = lines[f.line - 1];
-      const code = suggested || `${context}  // ${f.comment}\n${original}\n${after}`;
+      const comment = f.comment.split("\n").map((l) => `// ${l}`).join("\n");
+      const code = `${context}${original}\n${suggested || comment}\n${after}`;
       parts.push(`**${f.file}:${f.line}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`);
     } else {
       const suggested = f.suggestion?.trim().replace(/^```\w*\s*/, "").replace(/\s*```\s*$/, "") ?? "";
       parts.push(`**${f.file}** — ${f.severity.toUpperCase()} — ${f.comment}\n\n\`\`\`suggestion\n${suggested || "// " + f.comment}\n\`\`\`\n`);
     }
+  }
+  if (findings.length > MAX_FINDINGS) {
+    parts.push(`... and ${findings.length - MAX_FINDINGS} more findings omitted`);
   }
   return parts.join("\n---\n");
 }
