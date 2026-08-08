@@ -10,12 +10,16 @@ const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 const MAX_SAFE_INTEGER_BITS = 53;
 const DECIMAL_FRACTION = 25;
-const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
+const PERCENT_TO_DECIMAL = 100;
+const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / PERCENT_TO_DECIMAL);
 
 /**
  * Scales the input by a fixed multiplier.
  * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
+ * Inputs at or below EXTREME_THRESHOLD use MULTIPLIER; inputs above it use
+ * EXTREME_MULTIPLIER — an intentional, hard 2x multiplier step at the threshold.
+ * Both multipliers are powers of two, so scaling is exact even when the result
+ * exceeds Number.MAX_SAFE_INTEGER (not a safe integer, but no precision lost).
  */
 export function calculate(x: number): number {
   const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
@@ -59,6 +63,11 @@ describe("calculate", () => {
   ])('boundary value %i', (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
+  test('EXTREME_THRESHOLD is an intentional hard 2x multiplier step', () => {
+    expect(calculate(EXTREME_THRESHOLD)).toBe(EXTREME_THRESHOLD * MULTIPLIER);
+    expect(calculate(EXTREME_THRESHOLD + 1)).toBe((EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER);
+    expect(calculate(EXTREME_THRESHOLD + 1)).toBeGreaterThan(calculate(EXTREME_THRESHOLD) * 2);
+  });
 });
 
 describe("processData", () => {
@@ -66,10 +75,10 @@ describe("processData", () => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
-  test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
+  test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} scale exactly (power-of-two multipliers)`, () => {
     const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
     const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
-    expect(BigInt(calculate(input))).not.toBe(expected);
+    expect(BigInt(calculate(input))).toBe(expected);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
