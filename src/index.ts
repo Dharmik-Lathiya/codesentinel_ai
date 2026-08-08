@@ -14,10 +14,10 @@ import { renderSarif } from "./utils/sarif.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GATE_MIN_SCORE = 70;
-const PARSE_INT_RADIX = 10;
-const MAX_SCORE = 100;
-const MAX_ISSUE_BODY_LENGTH = 8000;
-const NODE_VERSION = 20;
+export const PARSE_INT_RADIX = 10;
+export const MAX_SCORE = 100;
+export const MAX_ISSUE_BODY_LENGTH = 8000;
+export const NODE_VERSION = 20;
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 const VALID_MODES = new Set<string>(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"]);
 
@@ -169,8 +169,7 @@ export const WORKFLOW_CONTENT = [
 "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
   "            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }",
 "            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
-"            try {",
-"              await github.rest.issues.updateComment({",
+"            try { await github.rest.issues.updateComment({",
 "                owner: context.repo.owner, repo: context.repo.repo,",
 "                comment_id: ${{ steps.loading.outputs.comment_id }},",
 "                body: body",
@@ -839,7 +838,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const report = await engine.run();
+  let report: Awaited<ReturnType<typeof engine.run>>;
+  try {
+    report = await engine.run();
+  } catch (err) {
+    process.stderr.write(`CodeSentinel run failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
 
   // JSON output mode
   if (values.json) {
