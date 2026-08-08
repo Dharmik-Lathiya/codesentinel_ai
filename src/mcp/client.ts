@@ -23,6 +23,7 @@ export interface MCPContextEntry {
 
 export class MCPManager {
   private clients = new Map<string, Client>();
+  private toolsCache = new Map<Client, Array<{ name: string }>>();
   private configs: MCPServerConfig[];
 
   constructor(configs: MCPServerConfig[] = []) {
@@ -31,11 +32,7 @@ export class MCPManager {
 
   async connectAll(): Promise<void> {
     for (const cfg of this.configs) {
-      try {
-        await this.connect(cfg);
-      } catch {
-        // Error already handled in connect()
-      }
+      await this.connect(cfg);
     }
   }
 
@@ -66,7 +63,7 @@ export class MCPManager {
       }
       const timeout = cfg.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const abort = AbortSignal.timeout(timeout);
-      await client.connect(transport);
+      await client.connect(transport, { signal: abort });
       this.clients.set(cfg.name, client);
       logger.info(`MCP: connected to "${cfg.name}"`);
     } catch (err) {
@@ -82,12 +79,22 @@ export class MCPManager {
       } catch { /* ignore */ }
     }
     this.clients.clear();
+    this.toolsCache.clear();
+  }
+
+  private async cachedToolNames(client: Client): Promise<Array<{ name: string }>> {
+    const cached = this.toolsCache.get(client);
+    if (cached) return cached;
+    const { tools } = await client.listTools();
+    const names = tools.map((tool) => ({ name: tool.name }));
+    this.toolsCache.set(client, names);
+    return names;
   }
 
   private async queryClientTools(serverName: string, client: Client, prompt: string): Promise<MCPContextEntry[]> {
     const entries: MCPContextEntry[] = [];
     try {
-      const tools = await client.listTools();
+      const tools = await this.cachedToolNames(client);
       for (const tool of tools.tools) {
         if (tool.name.includes("search") || tool.name.includes("query") || tool.name.includes("docs")) {
           const result = await client.callTool({ name: tool.name, arguments: { query: prompt } });
@@ -113,8 +120,8 @@ export class MCPManager {
   private async getClientLibraryDocs(serverName: string, client: Client, library: string): Promise<MCPContextEntry[]> {
     const entries: MCPContextEntry[] = [];
     try {
-      const tools = await client.listTools();
-      for (const tool of tools.tools) {
+      const tools = await this.cachedToolNames(client);
+      for (const tool of tools) {
         if (tool.name.toLowerCase().includes("docs") || tool.name.toLowerCase().includes("context")) {
           const result = await client.callTool({ name: tool.name, arguments: { library } });
           const content = JSON.stringify(result.content ?? "");
