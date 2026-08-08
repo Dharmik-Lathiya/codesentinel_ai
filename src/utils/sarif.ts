@@ -71,8 +71,9 @@ function createRuleId(
   rules: Map<string, ReportingDescriptor>
 ): string {
   const hash = simpleHash(comment);
+  const canonical = truncateComment(comment);
   let ruleId = `${base}:${hash}`;
-  for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== comment; n++) {
+  for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== canonical; n++) {
     ruleId = `${base}:${hash}:${n}`;
   }
   return ruleId;
@@ -102,7 +103,7 @@ function createSarifLocation(file: string, line?: number): SarifResult["location
   return {
     physicalLocation: {
       artifactLocation: { uri: createArtifactUri(file) },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      ...(line != null && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }

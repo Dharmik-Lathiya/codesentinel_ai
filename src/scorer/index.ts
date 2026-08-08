@@ -25,6 +25,9 @@ export const WEIGHTS = {
   test_coverage: TEST_COVERAGE_WEIGHT,
 } as const;
 
+const MAX_LINE_LENGTH = 120;
+const COMMENT_RATIO_BONUS = 20;
+const MIN_READABILITY_SCORE = 20;
 const MAX_SCORE = 100;
 
 const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
@@ -153,11 +156,11 @@ export class Scorer {
         (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
-      const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const longLines = lines.filter((l) => l.length > MAX_LINE_LENGTH).length;
+      const score = MAX_SCORE - longLines * 2 + commentRatio * COMMENT_RATIO_BONUS;
+      total += Math.max(MIN_READABILITY_SCORE, score);
     }
-    return fileCount ? total / fileCount : 100;
+    return fileCount ? total / fileCount : MAX_SCORE;
   }
 
   /** Coverage heuristic: fraction of source files that have a related test. */
