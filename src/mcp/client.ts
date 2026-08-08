@@ -84,60 +84,82 @@ export class MCPManager {
     this.clients.clear();
   }
 
-  private async queryClientTools(serverName: string, client: Client, prompt: string): Promise<MCPContextEntry[]> {
-    const entries: MCPContextEntry[] = [];
+  private async selectToolsAndQuery(
+    serverName: string,
+    client: Client,
+    predicate: (toolName: string) => boolean,
+    argsBuilder: (toolName: string) => Record<string, unknown>,
+    searchText: string,
+    baseRelevance: number,
+  ): Promise<MCPContextEntry[]> {
     try {
       const tools = await client.listTools();
-      for (const tool of tools.tools) {
-        if (tool.name.includes("search") || tool.name.includes("query") || tool.name.includes("docs")) {
-          const result = await client.callTool({ name: tool.name, arguments: { query: prompt } });
-          const content = JSON.stringify(result.content ?? "");
-          entries.push({ serverName, content, relevance: 1 });
-        }
-      }
+      const matching = tools.tools
+        .map((tool, index) => ({ tool, index }))
+        .filter(({ tool }) => predicate(tool.name));
+      const results = await Promise.all(
+        matching.map(async ({ tool, index }) => {
+          const result = await client.callTool({ name: tool.name, arguments: argsBuilder(tool.name) });
+          return { index, content: JSON.stringify(result.content ?? "") };
+        }),
+      );
+      const terms = searchText.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+      return results
+        .sort((a, b) => a.index - b.index)
+        .map(({ content }) => ({
+          serverName,
+          content,
+          relevance: this.computeRelevance(content, terms, baseRelevance),
+        }));
     } catch (err) {
-      logger.warn(`MCP: query error on "${serverName}": ${err}`);
+      logger.debug(`MCP: tool query error on "${serverName}": ${err}`);
+      return [];
     }
-    return entries;
+  }
+
+  private computeRelevance(content: string, terms: string[], baseRelevance: number): number {
+    const lower = content.toLowerCase();
+    let matches = 0;
+    for (const term of new Set(terms)) {
+      if (lower.includes(term)) matches++;
+    }
+    const lengthBoost = Math.min(1, content.length / 2000) * 0.1;
+    const matchBoost = terms.length ? matches / terms.length : 0;
+    return Math.min(1, baseRelevance + lengthBoost + matchBoost * 0.5);
+  }
+
+  private isSearchTool(toolName: string): boolean {
+    const name = toolName.toLowerCase();
+    return name.includes("search") || name.includes("query") || name.includes("docs");
+  }
+
+  private isDocsTool(toolName: string): boolean {
+    const name = toolName.toLowerCase();
+    return name.includes("docs") || name.includes("context");
   }
 
   async queryContext(prompt: string, maxTokens = DEFAULT_QUERY_MAX_TOKENS): Promise<MCPContextEntry[]> {
-    const entries: MCPContextEntry[] = [];
-    for (const [name, client] of this.clients) {
-      const clientEntries = await this.queryClientTools(name, client, prompt);
-      entries.push(...clientEntries);
-    }
-    return this.trimByBudget(entries, maxTokens);
-  }
-
-  private async getClientLibraryDocs(serverName: string, client: Client, library: string): Promise<MCPContextEntry[]> {
-    const entries: MCPContextEntry[] = [];
-    try {
-      const tools = await client.listTools();
-      for (const tool of tools.tools) {
-        if (tool.name.toLowerCase().includes("docs") || tool.name.toLowerCase().includes("context")) {
-          const result = await client.callTool({ name: tool.name, arguments: { library } });
-          const content = JSON.stringify(result.content ?? "");
-          entries.push({ serverName, content, relevance: 0.8 });
-        }
-      }
-    } catch { /* skip */ }
-    return entries;
+    const clientEntries = await Promise.all(
+      Array.from(this.clients.entries()).map(([name, client]) =>
+        this.selectToolsAndQuery(name, client, this.isSearchTool, () => ({ query: prompt }), prompt, 1),
+      ),
+    );
+    return this.trimByBudget(clientEntries.flat(), maxTokens);
   }
 
   async getLibraryDocs(libraries: string[], maxTokens = DEFAULT_LIBRARY_MAX_TOKENS): Promise<MCPContextEntry[]> {
-    const entries: MCPContextEntry[] = [];
+    const tasks: Promise<MCPContextEntry[]>[] = [];
     for (const lib of libraries) {
       for (const [name, client] of this.clients) {
-        const clientEntries = await this.getClientLibraryDocs(name, client, lib);
-        entries.push(...clientEntries);
+        tasks.push(this.selectToolsAndQuery(name, client, this.isDocsTool, () => ({ library: lib }), lib, 0.8));
       }
     }
-    return this.trimByBudget(entries, maxTokens);
+    const results = await Promise.all(tasks);
+    return this.trimByBudget(results.flat(), maxTokens);
   }
 
   private trimByBudget(entries: MCPContextEntry[], maxTokens: number): MCPContextEntry[] {
-    const sorted = entries.sort((a, b) => b.relevance - a.relevance);
+    const sorted = [...entries].sort((a, b) => b.relevance - a.relevance);
     let total = 0;
     const result: MCPContextEntry[] = [];
     for (const e of sorted) {
