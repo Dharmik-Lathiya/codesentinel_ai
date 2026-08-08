@@ -2,9 +2,6 @@ import { logger } from "./logger.js";
 
 const MILLISECONDS_PER_SECOND = 1000;
 const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
-const HTTP_STATUS_RATE_LIMIT = "429";
-const HTTP_STATUS_SERVICE_UNAVAILABLE = "503";
-const HTTP_STATUS_BAD_GATEWAY = "502";
 const RETRYABLE_STATUS_CODES = new Set([429, 502, 503]);
 
 export interface RetryOptions {
@@ -19,7 +16,6 @@ export interface RetryOptions {
   maxDelayMs?: number;
   /**
    * Optional predicate: return true to retry on this error.
-   * Optional predicate: return true to retry on this error.
    * Note: the default predicate only matches `Error` instances; non-Error
    * throws (strings, plain objects) are never retried.
    */
@@ -28,8 +24,21 @@ export interface RetryOptions {
 
 const getErrorStatus = (err: unknown): number | undefined => {
   if (typeof err !== "object" || err === null) return undefined;
-  const status = (err as Record<string, unknown>).status ?? (err as Record<string, unknown>).statusCode;
+  const e = err as Record<string, unknown>;
+  const status = e.status ?? e.statusCode;
   return typeof status === "number" ? status : undefined;
+};
+
+const getRetryAfterMs = (err: unknown): number | undefined => {
+  if (typeof err !== "object" || err === null) return undefined;
+  const headers = (err as Record<string, unknown>).headers;
+  const retryAfter =
+    headers && typeof (headers as Record<string, unknown>).get === "function"
+      ? (headers as { get: (name: string) => string | null }).get("retry-after")
+      : (err as Record<string, unknown>)._retryAfter;
+  if (typeof retryAfter !== "string" || retryAfter.length === 0) return undefined;
+  const seconds = Number(retryAfter);
+  return Number.isFinite(seconds) ? seconds * MILLISECONDS_PER_SECOND : undefined;
 };
 
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
@@ -42,9 +51,7 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return (
       msg.includes("rate limit") ||
       msg.includes("rate-limited") ||
-      msg.includes(HTTP_STATUS_RATE_LIMIT) ||
-      msg.includes(HTTP_STATUS_SERVICE_UNAVAILABLE) ||
-      msg.includes(HTTP_STATUS_BAD_GATEWAY) ||
+      /\b(429|502|503)\b/.test(msg) ||
       msg.includes("timeout") ||
       msg.includes("econnreset") ||
       msg.includes("overloaded")
@@ -76,9 +83,10 @@ export async function retry<T>(
       if (attempt === maxAttempts || !shouldRetry(err)) {
         throw err;
       }
+      const retryAfterMs = getRetryAfterMs(err);
       const backoff = baseDelayMs * Math.pow(2, attempt - 1);
       const capped = Math.min(maxDelayMs, backoff);
-      const delay = capped * (0.5 + Math.random() * 0.5);
+      const delay = retryAfterMs ?? capped * (0.5 + Math.random() * 0.5);
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
