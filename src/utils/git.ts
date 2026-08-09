@@ -138,6 +138,8 @@ export async function collectDiff(
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
+    files.push({ path, status, content, diff });
+  }
 
   if (baseRef === undefined) {
     let untracked: string[] = [];
@@ -162,8 +164,7 @@ export async function collectDiff(
       files.push({ path: untrackedPath, status: "added", content, diff: "" });
     }
   }
-    files.push({ path, status, content, diff });
-  }
+
   return files;
 }
 
