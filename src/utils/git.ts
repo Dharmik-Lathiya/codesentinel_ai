@@ -1,5 +1,5 @@
-import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { execFile, type ExecFileException } from "node:child_process";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -27,7 +27,7 @@ export async function git(
     return stdout;
   } catch (err) {
     const timedOut =
-      err instanceof Error && (err as { killed?: boolean }).killed === true;
+err instanceof Error && (err as ExecFileException).killed === true;
     const command = `git ${args.join(" ")}`;
     if (!options.quiet) {
       logger.error(
@@ -112,42 +112,34 @@ export async function collectDiff(
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      const result = await readContentForPath(
+        workspaceRoot,
+        path,
+        baseRef !== undefined ? "HEAD" : undefined,
+      );
+      if (result === null) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
+      content = result;
     }
     const diff = diffByPath.get(path) ?? "";
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
+    files.push({ path, status, content, diff });
+  }
 
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
     for (const untrackedPath of untracked) {
-      const full = resolve(workspaceRoot, untrackedPath);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      const content = await readContentForPath(workspaceRoot, untrackedPath);
+      if (content === null) {
         logger.warn(`Skipping path outside workspace: ${untrackedPath}`);
         continue;
       }
-      let content = "";
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${untrackedPath}`);
-      }
       files.push({ path: untrackedPath, status: "added", content, diff: "" });
     }
-  }
-    files.push({ path, status, content, diff });
   }
   return files;
 }
@@ -296,6 +288,44 @@ async function readContent(full: string): Promise<string> {
     return "";
   }
   return text;
+}
+async function readContentForPath(
+  workspaceRoot: string,
+  path: string,
+  ref?: string,
+): Promise<string | null> {
+  const full = resolve(workspaceRoot, path);
+  const rel = relative(workspaceRoot, full);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    return null;
+  }
+  if (ref !== undefined) {
+    try {
+      return await git(["show", `${ref}:${path}`], workspaceRoot, {
+        quiet: true,
+      });
+    } catch {
+      logger.debug(`Could not read content for ${path} at ${ref}`);
+      return "";
+    }
+  }
+  try {
+    const real = await realpath(full);
+    const realRel = relative(workspaceRoot, real);
+    if (realRel === "" || realRel.startsWith("..") || isAbsolute(realRel)) {
+      logger.warn(`Skipping content outside workspace: ${real}`);
+      return "";
+    }
+  } catch {
+    logger.debug(`Failed to resolve real path of: ${full}`);
+    return "";
+  }
+  try {
+    return await readContent(full);
+  } catch {
+    logger.debug(`Failed to read content of: ${full}`);
+    return "";
+  }
 }
 
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
