@@ -11,13 +11,6 @@ const DECIMAL_FRACTION = 25;
 const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
 
 /**
- * Scales the input by a fixed multiplier.
- * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
- */
-
-
-describe("calculate", () => {
   test.each([
     [0, 0],
     [-5, -5 * MULTIPLIER],
@@ -40,15 +33,19 @@ describe("processData", () => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
-  test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
-    const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
+  test(`inputs above MAX_SAFE_INTEGER lose integer precision (documented limitation)`, () => {
+    const input = 2 ** MAX_SAFE_INTEGER_BITS;
     const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
-    expect(BigInt(calculate(input))).not.toBe(expected);
+    expect(BigInt(calculate(input))).toBeLessThan(expected);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
     ["not-json"],
-    ["[1,2,3]"],
+    ['{"value":1e999}'],
+    ["undefined"],
+    ["null"],
+    ["[{\"value\":42}]"],
+    ['{"value":"42"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
     ['{"value":null}'],
