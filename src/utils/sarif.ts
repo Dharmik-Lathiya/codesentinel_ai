@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import type { EngineReport } from "../engine/index.js";
 
 interface SarifResult {
@@ -45,16 +46,9 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
 };
 
 const COMMENT_TRUNCATION_LENGTH = 40;
-const HASH_RADIX = 36;
 
 function simpleHash(s: string): string {
-  let hash = 0;
-  for (let i = 0; i < s.length; i++) {
-    const char = s.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(HASH_RADIX);
+  return createHash("sha256").update(s).digest("hex").slice(0, 16);
 }
 
 function truncateComment(text: string): string {
@@ -71,6 +65,7 @@ function createRuleId(
   rules: Map<string, ReportingDescriptor>
 ): string {
   const hash = simpleHash(comment);
+  const canonical = truncateComment(comment);
   let ruleId = `${base}:${hash}`;
   for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== comment; n++) {
     ruleId = `${base}:${hash}:${n}`;
@@ -95,7 +90,14 @@ function createArtifactUri(file: string): string {
   if (isAbsolute) {
     return `file:///${tail}`;
   }
-  return tail;
+  const cwdTail = process
+    .cwd()
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter(Boolean)
+    .map(encodePathSegment)
+    .join("/");
+  return `file:///${cwdTail}/${tail}`;
 }
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
