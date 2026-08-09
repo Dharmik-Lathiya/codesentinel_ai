@@ -1,14 +1,16 @@
 import { describe, expect, test } from "vitest";
-import { EXTREME_THRESHOLD, MULTIPLIER, EXTREME_MULTIPLIER, calculate, processData } from "./src/numeric";
+import { EXTREME_THRESHOLD, MULTIPLIER, EXTREME_MULTIPLIER, calculate, processData } from "./src/numeric.js";
 
 const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
-const MAX_SAFE_INTEGER_BITS = 53;
-const DECIMAL_FRACTION = 25;
-const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
+const MAX_SAFE_INTEGER_BITS = Number.MAX_SAFE_INTEGER.toString(2).length;
+const DECIMAL_WHOLE = 7;
+const DECIMAL_FRACTION_PERCENT = 25;
+const DECIMAL_PERCENT_BASE = 100;
+const DECIMAL_SAMPLE_VALUE = -(DECIMAL_WHOLE + DECIMAL_FRACTION_PERCENT / DECIMAL_PERCENT_BASE);
 
 /**
  * Scales the input by a fixed multiplier.
@@ -41,9 +43,9 @@ describe("processData", () => {
   });
 
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
-    const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
+    const input = Number("123456789012345678901");
     const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
-    expect(BigInt(calculate(input))).not.toBe(expected);
+    expect(BigInt(calculate(input)) - expected).not.toBe(0n);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
