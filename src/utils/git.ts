@@ -119,7 +119,10 @@ export async function collectDiff(
         continue;
       }
       try {
-        content = await readContent(full);
+        content =
+          baseRef !== undefined
+            ? await readContentFromGit(`HEAD:${path}`, cwd)
+            : await readContent(full);
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
@@ -128,6 +131,8 @@ export async function collectDiff(
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
+    files.push({ path, status, content, diff });
+  }
 
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
@@ -147,8 +152,7 @@ export async function collectDiff(
       files.push({ path, status: "added", content, diff: "" });
     }
   }
-    files.push({ path, status, content, diff });
-  }
+
   return files;
 }
 
@@ -157,12 +161,55 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
+    const match = /^(.*) (.*)$/.exec(firstLine);
     if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const oldPath = stripPrefix(unquoteGitPath(match[1]), "a");
+    const newPath = stripPrefix(unquoteGitPath(match[2]), "b");
+    const path = newPath === "dev/null" ? oldPath : newPath;
     byPath.set(path, part);
   }
   return byPath;
+}
+
+function unquoteGitPath(raw: string): string {
+  if (!raw.startsWith('"')) return raw;
+  const inner = raw.slice(1, -1);
+  const escapes: Record<string, string> = {
+    a: "\u0007",
+    b: "\b",
+    t: "\t",
+    n: "\n",
+    v: "\v",
+    f: "\f",
+    r: "\r",
+    '"': '"',
+    "\\": "\\",
+  };
+  let out = "";
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch !== "\\") {
+      out += ch;
+      continue;
+    }
+    const next = inner[i + 1];
+    if (next !== undefined && escapes[next] !== undefined) {
+      out += escapes[next];
+      i += 1;
+    } else if (next !== undefined && /^[0-7]$/.test(next)) {
+      const octal = inner.slice(i + 1, i + 4);
+      out += String.fromCharCode(parseInt(octal, 8));
+      i += octal.length;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+function stripPrefix(path: string, prefix: string): string {
+  const prefixed = `${prefix}/`;
+  return path.startsWith(prefixed) ? path.slice(prefixed.length) : path;
 }
 
 async function listUntrackedFiles(cwd: string): Promise<string[]> {
@@ -187,7 +234,13 @@ async function listUntrackedFiles(cwd: string): Promise<string[]> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
+  let fileStat;
+  try {
+    fileStat = await stat(full);
+  } catch {
+    logger.debug(`Failed to stat content of: ${full}`);
+    return "";
+  }
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
@@ -206,22 +259,36 @@ async function readContent(full: string): Promise<string> {
   return text;
 }
 
+async function readContentFromGit(
+  treeish: string,
+  cwd: string,
+): Promise<string> {
+  let text: string;
+  try {
+    text = await git(["show", treeish], cwd, { quiet: true });
+  } catch {
+    logger.debug(`Failed to read content of: ${treeish}`);
+    return "";
+  }
+  if (text.length > MAX_CONTENT_BYTES) {
+    logger.debug(`Skipping oversized file content: ${treeish}`);
+    return "";
+  }
+  if (text.includes("\0")) {
+    logger.debug(`Skipping binary file content: ${treeish}`);
+    return "";
+  }
+  return text;
+}
+
 /** Determine a sensible base ref (main/master/develop or upstream merge-base). */
 async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
     const remoteBase = `origin/${githubBaseRef}`;
-    try {
-      if (await refExists(remoteBase, cwd)) return remoteBase;
-    } catch {
-      logger.debug(`Failed to resolve base ref: ${remoteBase}`);
-    }
-    try {
-      if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
-    } catch {
-      logger.debug(`Failed to resolve base ref: ${githubBaseRef}`);
-    }
+    if (await refExists(remoteBase, cwd)) return remoteBase;
+    if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
   }
 
   const candidates = ["origin/main", "origin/master", "main", "master"];
