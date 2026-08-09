@@ -5,9 +5,11 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
-const KILOBYTE = 1024;
+const BYTES_PER_KILOBYTE = 1024;
+const KILOBYTE = BYTES_PER_KILOBYTE;
 const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const BUFFER_MEGABYTES = 64;
+const MAX_BUFFER = BUFFER_MEGABYTES * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
 
@@ -29,13 +31,11 @@ export async function git(
     const timedOut =
       err instanceof Error && (err as { killed?: boolean }).killed === true;
     const command = `git ${args.join(" ")}`;
+    const message = timedOut
+      ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
+      : `git command failed: ${command}`;
     if (!options.quiet) {
-      logger.error(
-        timedOut
-          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-          : `git command failed: ${command}`,
-        err,
-      );
+      logger.error(message, err);
     }
     throw err;
   }
@@ -61,7 +61,13 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  const baseRef = base ?? (await defaultBaseRef(cwd));
+  let baseRef: string | undefined;
+  try {
+    baseRef = base ?? (await defaultBaseRef(cwd));
+  } catch (err) {
+    logger.warn("Failed to determine default base ref; using working-tree diff:", err);
+    baseRef = base;
+  }
   const rangeArgs = baseRef ? [baseRef + "..."] : ["HEAD"];
   let nameStatus: string;
   try {
@@ -130,7 +136,13 @@ export async function collectDiff(
     }
 
   if (baseRef === undefined) {
-    const untracked = await listUntrackedFiles(cwd);
+    let untracked: string[];
+    try {
+      untracked = await listUntrackedFiles(cwd);
+    } catch (err) {
+      logger.warn("Failed to list untracked files:", err);
+      untracked = [];
+    }
     for (const untrackedPath of untracked) {
       const full = resolve(workspaceRoot, untrackedPath);
       const rel = relative(workspaceRoot, full);
