@@ -29,6 +29,7 @@ export function buildCacheKey(filePath: string, pattern: string): string {
   return createHash("sha256")
     .update(filePath + "::" + pattern)
     .digest("hex")
+    // Truncated to 64 bits (16 hex chars); collision risk acceptable at current cache scale.
     .slice(0, 16);
 }
 
@@ -36,7 +37,11 @@ class FileSystemBackend implements CacheBackend {
   constructor(private cacheDir: string) {}
 
   private async ensureDir(): Promise<void> {
-    await mkdir(this.cacheDir, { recursive: true }).catch(() => {});
+    try {
+      await mkdir(this.cacheDir, { recursive: true });
+    } catch (err) {
+      logger.warn(`Failed to create cache directory ${this.cacheDir}:`, err);
+    }
   }
 
   private filePath(key: string): string {
@@ -87,6 +92,7 @@ export class LearningCache {
   private backend: CacheBackend;
   private locks = new Map<string, Promise<unknown>>();
   private static LOCK_TIMEOUT = 30000;
+  private static TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
   constructor(backendOrDir?: CacheBackend | string) {
     if (!backendOrDir || typeof backendOrDir === "string") {
@@ -109,18 +115,20 @@ export class LearningCache {
     this.locks.set(key, next);
     next.finally(() => {
       if (this.locks.get(key) === next) this.locks.delete(key);
-    });
+    }).catch(() => {});
     return next;
   }
 
   async get(key: string): Promise<Lesson[]> {
-    const entry = await this.backend.get(key);
-    if (!entry) return [];
-    for (const l of entry.lessons) {
-      l.hitCount++;
-    }
-    await this.backend.set(key, entry);
-    return entry.lessons.map((l) => ({ ...l }));
+    return this.withLock(key, async () => {
+      const entry = await this.backend.get(key);
+      if (!entry) return [];
+      for (const l of entry.lessons) {
+        l.hitCount++;
+      }
+      await this.backend.set(key, entry);
+      return entry.lessons.map((l) => ({ ...l }));
+    });
   }
 
   async set(key: string, lesson: Lesson): Promise<void> {
@@ -143,28 +151,39 @@ export class LearningCache {
   private mergeLesson(entry: CacheEntry, lesson: Lesson): void {
     const idx = entry.lessons.findIndex((l) => l.pattern === lesson.pattern);
     if (idx >= 0) {
-      entry.lessons[idx] = lesson;
+      const prev = entry.lessons[idx];
+      entry.lessons[idx] = { ...lesson, hitCount: prev.hitCount + (lesson.hitCount ?? 0) };
     } else {
       entry.lessons.push(lesson);
     }
     entry.updatedAt = new Date(Date.now()).toISOString();
   }
 
-  async getAll(): Promise<Lesson[]> {
+  private async readAllEntries(): Promise<{ key: string; entry: CacheEntry }[]> {
     const files: string[] = await this.backend.list().catch(() => []);
-    const entries = await Promise.all(
+    const results = await Promise.all(
       files.map(async (file) => {
         const key = file.replace(/\.json$/, "");
         try {
-          return await this.backend.get(key);
+          const entry = await this.backend.get(key);
+          return entry ? { key, entry } : null;
         } catch {
           return null;
         }
       })
     );
+    return results.filter((r): r is { key: string; entry: CacheEntry } => r !== null);
+  }
+
+  async getAll(): Promise<Lesson[]> {
+    const now = Date.now();
     const lessons: Lesson[] = [];
-    for (const entry of entries) {
-      if (entry) lessons.push(...entry.lessons.map((l) => ({ ...l })));
+    for (const { key, entry } of await this.readAllEntries()) {
+      if (now - Date.parse(entry.updatedAt) > LearningCache.TTL_MS) {
+        await this.backend.remove(key).catch(() => {});
+        continue;
+      }
+      lessons.push(...entry.lessons.map((l) => ({ ...l })));
     }
     return lessons;
   }
@@ -178,21 +197,18 @@ export class LearningCache {
   }
 
   async getStats(): Promise<{ totalEntries: number; totalLessons: number }> {
-    const files = await this.backend.list();
-    const entries = await Promise.all(
-      files.map(async (file) => {
-        const key = file.replace(/\.json$/, "");
-        try {
-          return await this.backend.get(key);
-        } catch {
-          return null;
-        }
-      })
-    );
+    const now = Date.now();
+    const rows = await this.readAllEntries();
     let totalLessons = 0;
-    for (const entry of entries) {
-      if (entry) totalLessons += entry.lessons.length;
+    let expired = 0;
+    for (const { key, entry } of rows) {
+      if (now - Date.parse(entry.updatedAt) > LearningCache.TTL_MS) {
+        await this.backend.remove(key).catch(() => {});
+        expired++;
+        continue;
+      }
+      totalLessons += entry.lessons.length;
     }
-    return { totalEntries: files.length, totalLessons };
+    return { totalEntries: rows.length - expired, totalLessons };
   }
 }
