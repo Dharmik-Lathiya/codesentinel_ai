@@ -2,8 +2,6 @@ import { describe, expect, test } from "vitest";
 import { EXTREME_THRESHOLD, MULTIPLIER, EXTREME_MULTIPLIER, calculate, processData } from "./src/numeric";
 
 const BELOW_THRESHOLD_INPUT = 4999;
-const MODERATE_INPUT = 5000;
-const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 const MAX_SAFE_INTEGER_BITS = 53;
@@ -22,11 +20,13 @@ describe("calculate", () => {
     [0, 0],
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
+    [5000, 5000 * MULTIPLIER],
+    [6000, 6000 * MULTIPLIER],
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    [-EXTREME_THRESHOLD, -EXTREME_THRESHOLD * MULTIPLIER],
+    [-EXTREME_THRESHOLD - 1, (-EXTREME_THRESHOLD - 1) * EXTREME_MULTIPLIER],
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
@@ -36,8 +36,8 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
-    expect(processData('{"value":' + value + "}")).toEqual({ value });
+  test('valid JSON value returns the parsed value', () => {
+    expect(processData('{"value":' + SAMPLE_VALUE + "}")).toEqual({ value: SAMPLE_VALUE });
   });
 
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
