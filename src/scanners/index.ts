@@ -9,13 +9,10 @@ interface ScannerTool {
 }
 
 const BYTES_PER_KILOBYTE = 1024;
-const ONE_KB = BYTES_PER_KILOBYTE;
-const ONE_MB = ONE_KB * ONE_KB;
+const ONE_MB = BYTES_PER_KILOBYTE * BYTES_PER_KILOBYTE;
 const MAX_BUFFER_SIZE_IN_MB = 10;
-const MAX_BUFFER_MB = MAX_BUFFER_SIZE_IN_MB;
-const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
+const MAX_BUFFER = MAX_BUFFER_SIZE_IN_MB * ONE_MB;
 const SNIPPET_MAX_CHAR_LENGTH = 80;
-const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
 
 function parseTrufflehogLine(line: string): Finding | null {
   try {
@@ -26,7 +23,7 @@ function parseTrufflehogLine(line: string): Finding | null {
       severity: "high" as const,
       category: "security" as const,
       comment: `[trufflehog] ${r.DetectorName ?? "secret"}: ${r.Description ?? ""}`,
-      suggestion: `Matched: ${(r.Raw || "").slice(0, SNIPPET_LENGTH)}`,
+      suggestion: `Matched: ${(r.Raw || "").slice(0, SNIPPET_MAX_CHAR_LENGTH)}`,
       source: "scanner" as const,
     } as Finding;
   } catch {
@@ -66,7 +63,7 @@ const gitleaks: ScannerTool = {
         severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
         category: "security" as const,
         comment: `[gitleaks] ${r.Description}`,
-        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
+        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_MAX_CHAR_LENGTH)}`,
         source: "scanner" as const,
       }));
     } catch (e) {
