@@ -29,6 +29,7 @@ interface ReportingDescriptor {
 }
 
 const PKG_VERSION = (() => {
+  if (process.env.npm_package_version) return process.env.npm_package_version;
   try {
     return (createRequire(import.meta.url)("../../package.json") as { version: string }).version ?? "0.0.0";
   } catch {
@@ -65,14 +66,22 @@ function truncateComment(text: string): string {
 
 const encodePathSegment = (segment: string): string => encodeURIComponent(segment);
 
+/**
+ * Rule identity is an approximate grouping key: a truncated description plus a
+ * non-cryptographic 32-bit hash. Distinct comments that share the same prefix
+ * (or collide on hash) within one category are merged into a single rule. This
+ * is a documented approximation — use a less lossy representation if exact
+ * rule identity is required.
+ */
 function createRuleId(
   base: string,
   comment: string,
   rules: Map<string, ReportingDescriptor>
 ): string {
   const hash = simpleHash(comment);
+  const truncated = truncateComment(comment);
   let ruleId = `${base}:${hash}`;
-  for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== comment; n++) {
+  for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== truncated; n++) {
     ruleId = `${base}:${hash}:${n}`;
   }
   return ruleId;

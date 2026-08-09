@@ -10,6 +10,9 @@ const RETRYABLE_STATUS_CODES = new Set([
   HTTP_STATUS_SERVICE_UNAVAILABLE,
   HTTP_STATUS_BAD_GATEWAY,
 ]);
+const RETRYABLE_STATUS_PATTERN = new RegExp(
+  `\\b(?:${HTTP_STATUS_RATE_LIMIT}|${HTTP_STATUS_BAD_GATEWAY}|${HTTP_STATUS_SERVICE_UNAVAILABLE})\\b`,
+);
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -60,7 +63,7 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     const msg = err.message;
     return (
       /\brate[\s-]*limit(?:ed)?\b/i.test(msg) ||
-      /\b(?:429|502|503)\b/.test(msg) ||
+      RETRYABLE_STATUS_PATTERN.test(msg) ||
       /\btimeout\b/i.test(msg) ||
       /\beconnreset\b/i.test(msg) ||
       /\boverloaded\b/i.test(msg)
