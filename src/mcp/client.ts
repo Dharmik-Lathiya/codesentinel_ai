@@ -5,6 +5,8 @@ import { logger } from "../utils/logger.js";
 const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_QUERY_MAX_TOKENS = 4000;
 const DEFAULT_LIBRARY_MAX_TOKENS = 2000;
+const QUERY_RELEVANCE = 1;
+const DOCS_RELEVANCE = 0.8;
 
 export interface MCPServerConfig {
   name: string;
@@ -24,6 +26,7 @@ export interface MCPContextEntry {
 export class MCPManager {
   private clients = new Map<string, Client>();
   private configs: MCPServerConfig[];
+  private toolsCache = new Map<string, Awaited<ReturnType<Client["listTools"]>>>();
 
   constructor(configs: MCPServerConfig[] = []) {
     this.configs = configs;
@@ -54,6 +57,14 @@ export class MCPManager {
     }
   }
 
+  private async getTools(serverName: string, client: Client): Promise<Awaited<ReturnType<Client["listTools"]>>> {
+    const cached = this.toolsCache.get(serverName);
+    if (cached) return cached;
+    const tools = await client.listTools();
+    this.toolsCache.set(serverName, tools);
+    return tools;
+  }
+
   async connect(cfg: MCPServerConfig): Promise<void> {
     try {
       const client = new Client(
@@ -82,17 +93,18 @@ export class MCPManager {
       } catch { /* ignore */ }
     }
     this.clients.clear();
+    this.toolsCache.clear();
   }
 
   private async queryClientTools(serverName: string, client: Client, prompt: string): Promise<MCPContextEntry[]> {
     const entries: MCPContextEntry[] = [];
     try {
-      const tools = await client.listTools();
+      const tools = await this.getTools(serverName, client);
       for (const tool of tools.tools) {
         if (tool.name.includes("search") || tool.name.includes("query") || tool.name.includes("docs")) {
           const result = await client.callTool({ name: tool.name, arguments: { query: prompt } });
           const content = JSON.stringify(result.content ?? "");
-          entries.push({ serverName, content, relevance: 1 });
+          entries.push({ serverName, content, relevance: QUERY_RELEVANCE });
         }
       }
     } catch (err) {
@@ -113,12 +125,12 @@ export class MCPManager {
   private async getClientLibraryDocs(serverName: string, client: Client, library: string): Promise<MCPContextEntry[]> {
     const entries: MCPContextEntry[] = [];
     try {
-      const tools = await client.listTools();
+      const tools = await this.getTools(serverName, client);
       for (const tool of tools.tools) {
         if (tool.name.toLowerCase().includes("docs") || tool.name.toLowerCase().includes("context")) {
           const result = await client.callTool({ name: tool.name, arguments: { library } });
           const content = JSON.stringify(result.content ?? "");
-          entries.push({ serverName, content, relevance: 0.8 });
+          entries.push({ serverName, content, relevance: DOCS_RELEVANCE });
         }
       }
     } catch { /* skip */ }
