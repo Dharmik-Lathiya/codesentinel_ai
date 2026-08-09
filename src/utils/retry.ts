@@ -10,6 +10,13 @@ const RETRYABLE_STATUS_CODES = new Set([
   HTTP_STATUS_SERVICE_UNAVAILABLE,
   HTTP_STATUS_BAD_GATEWAY,
 ]);
+const RETRYABLE_ERROR_CODES = new Set([
+  "econnreset",
+  "etimedout",
+  "eagain",
+  "econnaborted",
+  "enetreset",
+]);
 
 export interface RetryOptions {
   /** Maximum number of attempts (including the first). Default: 3. */
@@ -23,8 +30,10 @@ export interface RetryOptions {
   maxDelayMs?: number;
   /**
    * Optional predicate: return true to retry on this error.
-   * Note: the default predicate only matches `Error` instances; non-Error
-   * throws (strings, plain objects) are never retried.
+   * Note: the default predicate retries errors that expose a retryable numeric
+   * status (status/statusCode/response.status) or an `Error` whose message
+   * matches a transient pattern; other non-Error throws (strings, bare
+   * objects) are never retried.
    */
   shouldRetry?: (err: unknown) => boolean;
   /**
@@ -51,10 +60,20 @@ const getErrorStatus = (err: unknown): number | undefined => {
   return undefined;
 };
 
+const getErrorCode = (err: unknown): string | undefined => {
+  if (typeof err !== "object" || err === null) return undefined;
+  const code = (err as Record<string, unknown>).code;
+  return typeof code === "string" ? code : undefined;
+};
+
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
   const status = getErrorStatus(err);
   if (status !== undefined) {
     return RETRYABLE_STATUS_CODES.has(status);
+  }
+  const code = getErrorCode(err);
+  if (code !== undefined) {
+    return RETRYABLE_ERROR_CODES.has(code.toLowerCase());
   }
   if (err instanceof Error) {
     const msg = err.message;
@@ -117,7 +136,7 @@ export async function retry<T>(
       const backoff = baseDelayMs * Math.pow(2, attempt - 1);
       const capped = Math.min(maxDelayMs, backoff);
       const delay = capped * (0.5 + Math.random() * 0.5);
-      logger.warn(
+      logger.info(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
       await sleep(delay, signal);
