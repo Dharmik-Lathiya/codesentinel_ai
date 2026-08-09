@@ -17,7 +17,7 @@ const DEFAULT_GATE_MIN_SCORE = 70;
 const PARSE_INT_RADIX = 10;
 const MAX_SCORE = 100;
 const MAX_ISSUE_BODY_LENGTH = 8000;
-const NODE_VERSION = 20;
+const NODE_VERSION = 2 * PARSE_INT_RADIX;
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 const VALID_MODES = new Set<string>(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"]);
 
