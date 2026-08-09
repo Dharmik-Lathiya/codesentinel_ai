@@ -102,52 +102,65 @@ export async function collectDiff(
   }
   const diffByPath = splitDiffByPath(diffText);
 
-  const files: DiffFile[] = [];
   const nameStatusEntries = nameStatus.split("\0");
+  const entries: { path: string; status: DiffFile["status"] }[] = [];
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
-    let content = "";
     if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
+      const rel = relative(workspaceRoot, resolve(workspaceRoot, path));
       if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
+    }
+    entries.push({ path, status });
+  }
+
+  const contents = new Map<string, string>();
+  await Promise.all(
+    entries.map(async ({ path, status }) => {
+      if (status === "deleted") return;
       try {
-        content = await readContent(full);
+        contents.set(path, await readContent(resolve(workspaceRoot, path)));
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
-    }
+    }),
+  );
+
+  const files: DiffFile[] = entries.map(({ path, status }) => {
     const diff = diffByPath.get(path) ?? "";
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
+    return {
+      path,
+      status,
+      content: status === "deleted" ? "" : contents.get(path) ?? "",
+      diff,
+    };
+  });
 
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
     for (const untrackedPath of untracked) {
-      const full = resolve(workspaceRoot, untrackedPath);
-      const rel = relative(workspaceRoot, full);
+      const rel = relative(workspaceRoot, resolve(workspaceRoot, untrackedPath));
       if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
         logger.warn(`Skipping path outside workspace: ${untrackedPath}`);
         continue;
       }
       let content = "";
       try {
-        content = await readContent(full);
+        content = await readContent(resolve(workspaceRoot, untrackedPath));
       } catch {
         logger.debug(`Could not read content for ${untrackedPath}`);
       }
       files.push({ path: untrackedPath, status: "added", content, diff: "" });
     }
-  }
-    files.push({ path, status, content, diff });
   }
   return files;
 }
@@ -289,6 +302,10 @@ async function readContent(full: string): Promise<string> {
     text = await readFile(full, { encoding: "utf8" });
   } catch {
     logger.debug(`Failed to read content of: ${full}`);
+    return "";
+  }
+  if (Buffer.byteLength(text) > MAX_CONTENT_BYTES) {
+    logger.debug(`Skipping oversized file content: ${full}`);
     return "";
   }
   if (text.includes("\0")) {

@@ -490,15 +490,18 @@ export function runSetup(force: boolean): void {
   printSetupNextSteps();
 }
 
-function showHelp(): void {
-  let pkg;
+function readPkg(): { version: string } {
   try {
-    pkg = JSON.parse(
+    return JSON.parse(
       readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
+    ) as { version: string };
   } catch {
-    pkg = { version: "unknown" };
+    return { version: "unknown" };
   }
+}
+
+function showHelp(): void {
+  const pkg = readPkg();
   process.stdout.write(`CodeSentinel AI v${pkg.version}
 AI-powered code review, fix, audit, scoring, and test generation.
 
@@ -575,15 +578,7 @@ Examples:
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
-  }
-  process.stdout.write(`${pkg.version}\n`);
+  process.stdout.write(`${readPkg().version}\n`);
 }
 
 /**
