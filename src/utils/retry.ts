@@ -60,7 +60,7 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     const msg = err.message;
     return (
       /\brate[\s-]*limit(?:ed)?\b/i.test(msg) ||
-      /\b(?:429|502|503)\b/.test(msg) ||
+      new RegExp(`\\b(?:${HTTP_STATUS_RATE_LIMIT}|${HTTP_STATUS_SERVICE_UNAVAILABLE}|${HTTP_STATUS_BAD_GATEWAY})\\b`).test(msg) ||
       /\btimeout\b/i.test(msg) ||
       /\beconnreset\b/i.test(msg) ||
       /\boverloaded\b/i.test(msg)
