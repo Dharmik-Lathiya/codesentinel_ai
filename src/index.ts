@@ -565,7 +565,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -671,7 +671,34 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { values, positionals } = parseArgs({
+  interface CliValues {
+    mode?: string;
+    config?: string;
+    "max-iterations"?: string;
+    "auto-fix": boolean;
+    scoring: boolean;
+    "test-gen": boolean;
+    provider?: string;
+    ask?: string;
+    context?: string;
+    "log-level"?: string;
+    "dry-run": boolean;
+    json: boolean;
+    sarif: boolean;
+    "min-score"?: string;
+    "max-critical"?: string;
+    "max-high"?: string;
+    help: boolean;
+    version: boolean;
+    "jsonl": boolean;
+    "mcp": boolean;
+    "learning-db"?: string;
+    "yaml-config": boolean;
+    "improve-type"?: string;
+    "use-opencode-cli": boolean;
+  }
+
+  const parsedArgs = parseArgs({
     options: {
       mode: { type: "string", short: "m" },
       config: { type: "string", short: "c" },
@@ -700,7 +727,29 @@ async function main(): Promise<void> {
     },
     args: process.argv.slice(2),
     allowPositionals: true,
+    strict: false,
+    tokens: true,
   });
+  const values = parsedArgs.values as CliValues;
+  const positionals = parsedArgs.positionals;
+  const tokens = parsedArgs.tokens;
+
+  const KNOWN_OPTIONS = new Set<string>([
+    "mode", "config", "max-iterations", "auto-fix", "scoring", "test-gen",
+    "provider", "ask", "context", "log-level", "dry-run", "json", "sarif",
+    "min-score", "max-critical", "max-high", "help", "version", "jsonl",
+    "mcp", "learning-db", "yaml-config", "improve-type", "use-opencode-cli",
+  ]);
+  const unknownOptions = tokens
+    .filter((t) => t.kind === "option" && !KNOWN_OPTIONS.has(t.name))
+    .map((t) => (t.kind === "option" ? t.rawName : ""))
+    .join(", ");
+  if (unknownOptions) {
+    process.stderr.write(`Unknown option(s): ${unknownOptions}\n`);
+    process.stderr.write("Run 'codesentinel --help' to see available options.\n");
+    process.exitCode = 1;
+    return;
+  }
 
   // Use positional arg as mode if --mode not provided
   const modeArg = values.mode || positionals[0];
@@ -720,15 +769,18 @@ async function main(): Promise<void> {
     return;
   }
 
-  const numericFlags: Array<[string | undefined, string]> = [
-    [values["max-iterations"], "--max-iterations"],
-    [values["min-score"], "--min-score"],
-    [values["max-critical"], "--max-critical"],
-    [values["max-high"], "--max-high"],
+  type NumericFlag = [string | undefined, string, (n: number) => boolean, string];
+  const numericFlags: NumericFlag[] = [
+    [values["max-iterations"], "--max-iterations", (n) => Number.isInteger(n) && n >= 1, "a positive integer"],
+    [values["min-score"], "--min-score", (n) => n >= 0 && n <= MAX_SCORE, `a number between 0 and ${MAX_SCORE}`],
+    [values["max-critical"], "--max-critical", (n) => n >= 0, "a non-negative number"],
+    [values["max-high"], "--max-high", (n) => n >= 0, "a non-negative number"],
   ];
-  for (const [value, name] of numericFlags) {
-    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
-      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
+  for (const [value, name, isValid, expected] of numericFlags) {
+    if (value === undefined) continue;
+    const num = Number(value);
+    if (!Number.isFinite(num) || !isValid(num)) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (expected ${expected})\n`);
       showHelp();
       return;
     }
@@ -808,6 +860,10 @@ async function main(): Promise<void> {
 
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+
+  if (values["ask"] && modeArg && modeArg !== "chat") {
+    process.stderr.write(`[codesentinel:warn] --ask is ignored in mode '${modeArg}'; use 'chat' mode to ask questions.\n`);
+  }
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     try {
