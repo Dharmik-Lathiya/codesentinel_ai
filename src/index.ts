@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Engine } from "./engine/index.js";
+import { Engine, type EngineReport } from "./engine/index.js";
 import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
 import type { CodeSentinelConfig, Mode, ModelConfig, Provider, RuntimeSecrets } from "./config/types.js";
 import { logger, type LogLevel } from "./utils/logger.js";
@@ -490,16 +490,18 @@ export function runSetup(force: boolean): void {
   printSetupNextSteps();
 }
 
-function showHelp(): void {
-  let pkg;
+function readPackageVersion(): { version: string } {
   try {
-    pkg = JSON.parse(
+    return JSON.parse(
       readFileSync(join(__dirname, "..", "package.json"), "utf8"),
     );
   } catch {
-    pkg = { version: "unknown" };
+    return { version: "unknown" };
   }
-  process.stdout.write(`CodeSentinel AI v${pkg.version}
+}
+
+function helpText(version: string): string {
+  return `CodeSentinel AI v${version}
 AI-powered code review, fix, audit, scoring, and test generation.
 
 Usage:
@@ -571,19 +573,130 @@ Examples:
   codesentinel dashboard
   codesentinel deadcode
   codesentinel describe
-`);
+`;
+}
+
+function showHelp(): void {
+  process.stdout.write(helpText(readPackageVersion().version));
 }
 
 function showVersion(): void {
-  let pkg;
-  try {
-    pkg = JSON.parse(
-      readFileSync(join(__dirname, "..", "package.json"), "utf8"),
-    );
-  } catch {
-    pkg = { version: "unknown" };
+  process.stdout.write(`${readPackageVersion().version}\n`);
+}
+
+async function runDismissCommand(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    showHelp();
+    return;
   }
-  process.stdout.write(`${pkg.version}\n`);
+  if (args.includes("--version")) {
+    showVersion();
+    return;
+  }
+  const parsed = parseDismissArgs(args.slice(1));
+  if (parsed.error) {
+    process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+    process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+    if (parsed.error.startsWith("Options")) {
+      process.stderr.write("Options --rule and --file are mutually exclusive.\n");
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  const engine = Engine.fromInputs({ secrets: loadSecrets() });
+  if (parsed.ruleId !== undefined) {
+    try {
+      await engine.dismissByRule(parsed.ruleId, parsed.reason);
+      process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
+    } catch (err) {
+      process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  } else {
+    try {
+      await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+      process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
+    } catch (err) {
+      process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
+}
+
+async function runDeadcodeHandler(engine: Engine): Promise<void> {
+  const root = process.cwd();
+  const rels = collectFiles(root, engine.config.include, engine.config.exclude);
+  const files = rels.map((path) => ({
+    path,
+    content: readText(resolve(root, path)),
+  }));
+  try {
+    const findings: Awaited<ReturnType<typeof engine.runDeadCode>> = await engine.runDeadCode(files);
+    if (findings.length === 0) {
+      process.stdout.write("✅ No unused exports detected.\n");
+    } else {
+      process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
+      process.stdout.write(`Unused exports (${findings.length}):\n`);
+      for (const f of findings) {
+        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
+      }
+    }
+  } catch (err) {
+    process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  }
+}
+
+function printReport(report: EngineReport, values: { json?: boolean; sarif?: boolean; "dry-run"?: boolean }): void {
+  if (values.json) {
+    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    if (report.mode === "gate" && report.gatePassed === false) {
+      process.stderr.write("Gate check failed\n");
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (values.sarif) {
+    process.stdout.write(renderSarif(report) + "\n");
+    if (report.mode === "gate" && report.gatePassed === false) {
+      process.stderr.write("Gate check failed\n");
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  process.stdout.write(`\n=== CodeSentinel [${report.mode}] ===\n`);
+  if (values["dry-run"] && report.mode === "fix") {
+    process.stdout.write("[DRY RUN] No files were modified.\n");
+  }
+  process.stdout.write(report.summary + "\n");
+  if (report.score) {
+    process.stdout.write(
+      `Score: ${report.score.overall}/${MAX_SCORE} ` +
+        `(readability ${report.score.readability}, ` +
+        `maintainability ${report.score.maintainability}, ` +
+        `security ${report.score.security}, ` +
+        `coverage ${report.score.test_coverage})\n`,
+    );
+  }
+  if (report.findings.length && (report.mode !== "review" && report.mode !== "fix")) {
+    process.stdout.write(`\nFindings (${report.findings.length}):\n`);
+    for (const f of report.findings) {
+      process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${stripAnsi(f.comment)}\n`);
+    }
+  }
+  if (report.generatedTests.length) {
+    process.stdout.write(`\nGenerated tests:\n`);
+    for (const t of report.generatedTests) {
+      process.stdout.write(`  + ${t.testFilePath}\n`);
+    }
+  }
+  process.stdout.write(`\nDone in ${report.metrics.durationMs}ms.\n`);
+
+  if (report.mode === "gate" && report.gatePassed === false) {
+    process.stderr.write("Gate check failed\n");
+    process.exitCode = 1;
+  }
 }
 
 /**
@@ -633,41 +746,7 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dismiss") {
-    if (args.includes("--help") || args.includes("-h")) {
-      showHelp();
-      return;
-    }
-    if (args.includes("--version")) {
-      showVersion();
-      return;
-    }
-    const parsed = parseDismissArgs(args.slice(1));
-    if (parsed.error) {
-      process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
-      if (parsed.error.startsWith("Options")) {
-        process.stderr.write("Options --rule and --file are mutually exclusive.\n");
-      }
-      process.exitCode = 1;
-      return;
-    }
-
-    const engine = Engine.fromInputs({ secrets: loadSecrets() });
-    if (parsed.ruleId !== undefined) {
-      try {
-        await engine.dismissByRule(parsed.ruleId, parsed.reason);
-        process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
-      } catch (err) {
-        process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
-      }
-    } else {
-      try {
-        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
-        process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
-      } catch (err) {
-        process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
-      }
-    }
+    await runDismissCommand(args);
     return;
   }
 
@@ -822,33 +901,11 @@ async function main(): Promise<void> {
 
   // Special handling for deadcode mode — run in-process without AI
   if (modeArg === "deadcode") {
-    const root = process.cwd();
-    const rels = collectFiles(root, engine.config.include, engine.config.exclude);
-    const files = rels.map((path) => ({
-      path,
-      content: readText(resolve(root, path)),
-    }));
-    let findings: Awaited<ReturnType<typeof engine.runDeadCode>>;
-    try {
-      findings = await engine.runDeadCode(files);
-    } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
-      process.exitCode = 1;
-      return;
-    }
-    if (findings.length === 0) {
-      process.stdout.write("✅ No unused exports detected.\n");
-    } else {
-      process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
-      process.stdout.write(`Unused exports (${findings.length}):\n`);
-      for (const f of findings) {
-        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
-      }
-    }
+    await runDeadcodeHandler(engine);
     return;
   }
 
-  let report: Awaited<ReturnType<typeof engine.run>>;
+  let report: EngineReport;
   try {
     report = await engine.run();
   } catch (err) {
@@ -857,60 +914,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // JSON output mode
-  if (values.json) {
-    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
-    if (report.mode === "gate" && report.gatePassed === false) {
-      process.stderr.write("Gate check failed\n");
-      process.exitCode = 1;
-    }
-    return;
-  }
-
-  // SARIF output mode
-  if (values.sarif) {
-    process.stdout.write(renderSarif(report) + "\n");
-    if (report.mode === "gate" && report.gatePassed === false) {
-      process.stderr.write("Gate check failed\n");
-      process.exitCode = 1;
-    }
-    return;
-  }
-
-  // Human-readable console output.
-  process.stdout.write(`\n=== CodeSentinel [${report.mode}] ===\n`);
-  if (values["dry-run"] && report.mode === "fix") {
-    process.stdout.write("[DRY RUN] No files were modified.\n");
-  }
-  process.stdout.write(report.summary + "\n");
-  if (report.score) {
-    process.stdout.write(
-      `Score: ${report.score.overall}/${MAX_SCORE} ` +
-        `(readability ${report.score.readability}, ` +
-        `maintainability ${report.score.maintainability}, ` +
-        `security ${report.score.security}, ` +
-        `coverage ${report.score.test_coverage})\n`,
-    );
-  }
-  if (report.findings.length && (report.mode !== "review" && report.mode !== "fix")) {
-    process.stdout.write(`\nFindings (${report.findings.length}):\n`);
-    for (const f of report.findings) {
-      process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${stripAnsi(f.comment)}\n`);
-    }
-  }
-  if (report.generatedTests.length) {
-    process.stdout.write(`\nGenerated tests:\n`);
-    for (const t of report.generatedTests) {
-      process.stdout.write(`  + ${t.testFilePath}\n`);
-    }
-  }
-  process.stdout.write(`\nDone in ${report.metrics.durationMs}ms.\n`);
-
-  // Exit non-zero if gate fails
-  if (report.mode === "gate" && report.gatePassed === false) {
-    process.stderr.write("Gate check failed\n");
-    process.exitCode = 1;
-  }
+  printReport(report, values);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
