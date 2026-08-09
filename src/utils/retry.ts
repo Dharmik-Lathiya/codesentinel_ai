@@ -19,20 +19,26 @@ export interface RetryOptions {
    * Default: 1000ms (`DEFAULT_BASE_DELAY_MS`).
    */
   baseDelayMs?: number;
-  /** Max delay in ms for a single retry (cap on exponential backoff). Default: 32x baseDelayMs (baseDelayMs * 2^5). */
+  /** Max delay in ms for a single retry (cap on exponential backoff). Default: baseDelayMs * 2^(maxAttempts-1), the backoff of the last retryable attempt. */
   maxDelayMs?: number;
   /**
-   * Optional predicate: return true to retry on this error.
+   * Controls whether a given failure should be retried.
    * Note: the default predicate only matches `Error` instances; non-Error
    * throws (strings, plain objects) are never retried.
    */
   shouldRetry?: (err: unknown) => boolean;
+  /** AbortSignal to cancel an in-flight retry backoff. On abort, rejects with signal.reason. */
+  signal?: AbortSignal;
 }
 
 const getErrorStatus = (err: unknown): number | undefined => {
   if (typeof err !== "object" || err === null) return undefined;
-  const status = (err as Record<string, unknown>).status ?? (err as Record<string, unknown>).statusCode;
-  return typeof status === "number" ? status : undefined;
+  const record = err as Record<string, unknown>;
+  const status = record.status;
+  const statusCode = record.statusCode;
+  if (typeof status === "number") return status;
+  if (typeof statusCode === "number") return statusCode;
+  return undefined;
 };
 
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
@@ -66,9 +72,10 @@ export async function retry<T>(
   opts: RetryOptions = {},
 ): Promise<T> {
   const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
-  const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+  const baseDelayMs = Math.max(1, opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS);
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
-  const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, 5);
+  const signal = opts.signal;
+  const maxDelayMs = Math.max(1, opts.maxDelayMs ?? baseDelayMs * Math.pow(2, maxAttempts - 1));
 
   for (let attempt = 1; ; attempt++) {
     try {
@@ -83,7 +90,22 @@ export async function retry<T>(
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
-      await new Promise((r) => setTimeout(r, delay));
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, delay);
+        if (signal?.aborted) {
+          clearTimeout(t);
+          reject(signal.reason);
+          return;
+        }
+        signal?.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(t);
+            reject(signal.reason);
+          },
+          { once: true },
+        );
+      });
     }
   }
 }
