@@ -537,16 +537,23 @@ Options:
   --ask <question>            Ask a question (activates chat mode)
   --context <text>            Free-form project context for prompts
   --dry-run                   Show what would be fixed without writing (fix mode)
+  --json                      Output results as JSON
+  --sarif                     Output results in SARIF format
   --jsonl                     Output AI review results in JSONL format
   --mcp                       Enable MCP server integration for library docs
   --learning-db <path>        Enable self-learning store at path
   --yaml-config               Enable YAML config file discovery (.opencode-reviewer.yml)
+  --improve-type <type>       Improvement type for improve mode (test | util | doc)
+  --use-opencode-cli          Use opencode CLI for AI calls
   --log-level <level>         Log level: debug | info | warn | error
   --min-score <n>             Minimum score to pass gate (0-${MAX_SCORE})
   --max-critical <n>          Max critical findings allowed in gate
   --max-high <n>              Max high findings allowed in gate
   --version                   Show version number
   --help                      Show this help message
+
+Note: review/fix console output summarizes the top-5 issues; the complete
+      findings list is available via --json / --sarif or the report file.
 
 Environment Variables:
   GITHUB_TOKEN                GitHub token for PR comments / issues
@@ -565,7 +572,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -687,7 +694,7 @@ async function main(): Promise<void> {
       }
     } else {
       try {
-        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum ?? null, parsed.ruleIdArg!, parsed.reason);
         process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
@@ -877,7 +884,7 @@ async function main(): Promise<void> {
     try {
       findings = await engine.runDeadCode(files);
     } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exitCode = 1;
       return;
     }

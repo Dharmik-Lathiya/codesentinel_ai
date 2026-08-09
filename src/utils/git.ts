@@ -125,7 +125,7 @@ export async function collectDiff(
       }
     }
     const diff = diffByPath.get(path) ?? "";
-    if (!diff && status !== "deleted") {
+    if (baseRef !== undefined && !diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
 
