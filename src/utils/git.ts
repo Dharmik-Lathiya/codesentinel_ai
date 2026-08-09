@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -119,9 +119,8 @@ export async function collectDiff(
     if (!status) continue;
     let content = "";
     if (status !== "deleted") {
-      const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      const full = await resolveInWorkspace(workspaceRoot, path);
+      if (!full) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -135,31 +134,72 @@ export async function collectDiff(
     if (!diff && status !== "deleted") {
       logger.warn(`Could not collect diff for ${path}`);
     }
+    files.push({ path, status, content, diff });
+  }
 
   if (baseRef === undefined) {
-    let untracked: string[];
-    try {
-      untracked = await listUntrackedFiles(cwd);
-    } catch {
-      untracked = [];
-    }
-    for (const untrackedPath of untracked) {
-      const full = resolve(workspaceRoot, untrackedPath);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${untrackedPath}`);
-        continue;
-      }
-      let content = "";
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${untrackedPath}`);
-      }
-      files.push({ path: untrackedPath, status: "added", content, diff: "" });
-    }
+    files.push(...(await collectUntracked(workspaceRoot, cwd)));
   }
-    files.push({ path, status, content, diff });
+  return files;
+}
+
+/**
+ * Resolve a workspace-relative path and ensure its real location (after
+ * following symlinks) still lies inside the workspace. Returns null when the
+ * path escapes the workspace or cannot be resolved.
+ */
+async function resolveInWorkspace(
+  workspaceRoot: string,
+  path: string,
+): Promise<string | null> {
+  const full = resolve(workspaceRoot, path);
+  const rel = relative(workspaceRoot, full);
+  if (rel === "" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) {
+    return null;
+  }
+  let real: string;
+  try {
+    real = await realpath(full);
+  } catch {
+    return null;
+  }
+  const realRel = relative(workspaceRoot, real);
+  if (
+    realRel === "" ||
+    realRel === ".." ||
+    realRel.startsWith("../") ||
+    isAbsolute(realRel)
+  ) {
+    return null;
+  }
+  return real;
+}
+
+/** Collect untracked files as added `DiffFile` entries. */
+async function collectUntracked(
+  workspaceRoot: string,
+  cwd: string,
+): Promise<DiffFile[]> {
+  const files: DiffFile[] = [];
+  let untracked: string[];
+  try {
+    untracked = await listUntrackedFiles(cwd);
+  } catch {
+    untracked = [];
+  }
+  for (const untrackedPath of untracked) {
+    const full = await resolveInWorkspace(workspaceRoot, untrackedPath);
+    if (!full) {
+      logger.warn(`Skipping path outside workspace: ${untrackedPath}`);
+      continue;
+    }
+    let content = "";
+    try {
+      content = await readContent(full);
+    } catch {
+      logger.debug(`Could not read content for ${untrackedPath}`);
+    }
+    files.push({ path: untrackedPath, status: "added", content, diff: "" });
   }
   return files;
 }
@@ -291,7 +331,13 @@ async function listUntrackedFiles(cwd: string): Promise<string[]> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
+  let fileStat: Awaited<ReturnType<typeof stat>>;
+  try {
+    fileStat = await stat(full);
+  } catch {
+    logger.debug(`Failed to stat file: ${full}`);
+    return "";
+  }
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
