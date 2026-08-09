@@ -565,7 +565,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -809,6 +809,11 @@ async function main(): Promise<void> {
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
+  if (modeArg === "chat" && !values["ask"]) {
+    process.stderr.write("Error: chat mode requires --ask <question>.\n");
+    process.exitCode = 1;
+    return;
+  }
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     try {
       const answer = await engine.ask(values["ask"]);
@@ -832,7 +837,7 @@ async function main(): Promise<void> {
     try {
       findings = await engine.runDeadCode(files);
     } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}` + "\n");
       process.exitCode = 1;
       return;
     }
