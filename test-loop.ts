@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
+export const EXTREME_THRESHOLD = 10000; // strict > (not >=): only inputs strictly above this switch to the 2x multiplier step; inputs equal to it use MULTIPLIER
 export const MULTIPLIER = 4096;
 export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
 const BELOW_THRESHOLD_INPUT = 4999;
@@ -60,6 +60,11 @@ describe("calculate", () => {
     expect(calculate(input)).toBe(expected);
   });
 });
+
+  test('calculate(Number.MAX_VALUE) overflows to Infinity', () => {
+    expect(calculate(Number.MAX_VALUE)).toBe(Infinity);
+  });
+
 
 describe("processData", () => {
   test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
