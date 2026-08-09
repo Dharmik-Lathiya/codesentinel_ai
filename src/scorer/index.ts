@@ -65,8 +65,8 @@ export class Scorer {
     const security = clamp(MAX_SCORE - securityPenalty);
     const maintainability = clamp(MAX_SCORE - smellPenalty);
 
-    // Readability proxy: average function length / comment presence.
-    const readability = clamp(this.readabilityMetric(files));
+    // Readability proxy: long lines (>120 chars) + comment ratio.
+    const readability = clamp(this.longLinesAndCommentMetric(files));
 
     // Test coverage proxy: ratio of source files that have a sibling test.
     const testCoverage = clamp(this.coverageMetric(files));
@@ -140,8 +140,8 @@ export class Scorer {
     return { readability, maintainability, security, test_coverage, overall, rationale: b.rationale };
   }
 
-  /** Readability heuristic: penalize very long functions and reward comments. */
-  private readabilityMetric(
+  /** Readability heuristic: penalize long lines and reward comment density. */
+  private longLinesAndCommentMetric(
     files: { path: string; content: string }[],
   ): number {
     let total = 0;
@@ -170,11 +170,16 @@ export class Scorer {
         .filter((p) => /\.(test|spec)\.[jt]sx?$/.test(p) || /__tests__\//.test(p)),
     );
     const sourceFiles = files.filter((f) => !/\.(test|spec)\.[jt]sx?$/.test(f.path) && !/__tests__\//.test(f.path));
-    if (sourceFiles.length === 0) return 100;
+    if (sourceFiles.length === 0) return 0;
+    const coveredBases = new Set(
+      [...testPaths].map((t) =>
+        t.replace(/\.(test|spec)\.[jt]sx?$/, "").replace(/\.[^.]+$/, ""),
+      ),
+    );
     let covered = 0;
     for (const f of sourceFiles) {
       const base = f.path.replace(/\.[^.]+$/, "");
-      if ([...testPaths].some((t) => t.startsWith(base))) covered++;
+      if (coveredBases.has(base)) covered++;
     }
     return (covered / sourceFiles.length) * 100;
   }
