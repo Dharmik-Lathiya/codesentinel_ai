@@ -10,21 +10,16 @@ const MAX_SAFE_INTEGER_BITS = 53;
 const DECIMAL_FRACTION = 25;
 const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
 
-/**
- * Scales the input by a fixed multiplier.
- * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
- */
-
-
 describe("calculate", () => {
   test.each([
     [0, 0],
+    [-0, -0 * MULTIPLIER],
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
     [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
     [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
+    [EXTREME_THRESHOLD - 1, (EXTREME_THRESHOLD - 1) * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
     [NaN, NaN],
@@ -36,8 +31,8 @@ describe("calculate", () => {
 });
 
 describe("processData", () => {
-  test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
-    expect(processData('{"value":' + value + "}")).toEqual({ value });
+  test('valid JSON value returns the parsed value', () => {
+    expect(processData('{"value":' + SAMPLE_VALUE + '}')).toEqual({ value: SAMPLE_VALUE });
   });
 
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
@@ -51,9 +46,16 @@ describe("processData", () => {
     ["[1,2,3]"],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
+  ])('malformed or wrong-shape JSON %s returns the default result', (input) => {
+    expect(processData(input)).toEqual({ value: 0 });
+  });
+  // Intentional divergence from calculate(): null and values that overflow to
+  // Infinity (1e999) are collapsed to the default 0 by processData, whereas
+  // calculate() preserves NaN and ±Infinity.
+  test.each([
     ['{"value":null}'],
     ['{"value":1e999}'],
-  ])('invalid input %s returns the default result', (input) => {
+  ])('non-finite or null JSON %s collapses to the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
   });
   test('explicit value 0 is a valid parsed value (documented sentinel)', () => {
