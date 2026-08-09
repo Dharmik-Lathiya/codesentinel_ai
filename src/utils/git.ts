@@ -5,9 +5,10 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
-const KILOBYTE = 1024;
+const KILOBYTE = 2 ** 10;
 const MEGABYTE = KILOBYTE * KILOBYTE;
-const MAX_BUFFER = 64 * MEGABYTE;
+const MAX_BUFFER_MEGABYTES = 64;
+const MAX_BUFFER = MAX_BUFFER_MEGABYTES * MEGABYTE;
 const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
 
@@ -26,19 +27,21 @@ export async function git(
     });
     return stdout;
   } catch (err) {
-    const timedOut =
-      err instanceof Error && (err as { killed?: boolean }).killed === true;
-    const command = `git ${args.join(" ")}`;
-    if (!options.quiet) {
-      logger.error(
-        timedOut
-          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-          : `git command failed: ${command}`,
-        err,
-      );
-    }
+    if (!options.quiet) logGitError(err, args);
     throw err;
   }
+}
+
+function logGitError(err: unknown, args: string[]): void {
+  const timedOut =
+    err instanceof Error && (err as { killed?: boolean }).killed === true;
+  const command = `git ${args.join(" ")}`;
+  logger.error(
+    timedOut
+      ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
+      : `git command failed: ${command}`,
+    err,
+  );
 }
 
 export interface DiffFile {
@@ -61,7 +64,14 @@ export async function collectDiff(
   base?: string,
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
-  const baseRef = base ?? (await defaultBaseRef(cwd));
+  let baseRef = base;
+  if (baseRef === undefined) {
+    try {
+      baseRef = await defaultBaseRef(cwd);
+    } catch (err) {
+      logger.warn("Failed to determine base ref:", err);
+    }
+  }
   const rangeArgs = baseRef ? [baseRef + "..."] : ["HEAD"];
   let nameStatus: string;
   try {
@@ -130,7 +140,12 @@ export async function collectDiff(
     }
 
   if (baseRef === undefined) {
-    const untracked = await listUntrackedFiles(cwd);
+    let untracked: string[] = [];
+    try {
+      untracked = await listUntrackedFiles(cwd);
+    } catch (err) {
+      logger.warn("Failed to list untracked files:", err);
+    }
     for (const untrackedPath of untracked) {
       const full = resolve(workspaceRoot, untrackedPath);
       const rel = relative(workspaceRoot, full);

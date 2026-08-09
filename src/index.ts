@@ -316,7 +316,7 @@ export const BUILD_WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  build-fix:",
-  "    if: ${{ github.event_name === 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
+  "    if: ${{ github.event_name === 'push' && !contains(github.event.head_commit.message, '[skip ci]') }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
   "        with:",
@@ -371,6 +371,7 @@ export const BUILD_WORKFLOW_CONTENT = [
   '            node "${RUNNER_TEMP}/codesentinel/dist/index.js" fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
   "",
   "            grep -qxF \"node_modules/\" .gitignore 2>/dev/null || echo \"node_modules/\" >> .gitignore",
+  "            grep -qxF \".codesentinel-cache/\" .gitignore 2>/dev/null || echo \".codesentinel-cache/\" >> .gitignore",
   "            git add -A",
   "            if git diff --cached --quiet; then",
   '              echo "⚠️ No changes produced by fix — continuing"',
@@ -455,7 +456,7 @@ function printSetupNextSteps(): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
