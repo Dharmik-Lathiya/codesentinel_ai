@@ -5,8 +5,8 @@
 export async function concurrentMap(items, fn, concurrency = 5) {
     if (!Array.isArray(items))
         throw new TypeError('items must be an array');
-    if (concurrency < 1)
-        throw new Error('concurrency must be >= 1');
+    if (!Number.isInteger(concurrency) || concurrency < 1)
+        throw new Error('concurrency must be a positive integer');
     const results = new Array(items.length);
     let nextIndex = 0;
     async function worker() {
@@ -21,7 +21,12 @@ export async function concurrentMap(items, fn, concurrency = 5) {
         }
     }
     const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
-    await Promise.all(workers);
+    try {
+        await Promise.all(workers);
+    }
+    catch (error) {
+        throw error instanceof Error ? error : new Error(String(error));
+    }
     return results;
 }
 //# sourceMappingURL=concurrency.js.map

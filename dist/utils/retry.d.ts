@@ -6,7 +6,11 @@ export interface RetryOptions {
      * Default: 1000ms (`DEFAULT_BASE_DELAY_MS`).
      */
     baseDelayMs?: number;
-    /** Optional predicate: return true to retry on this error. */
+    /**
+     * Optional predicate: return true to retry on this error.
+     * Note: the default predicate only matches `Error` instances; non-Error
+     * throws (strings, plain objects) are never retried.
+     */
     shouldRetry?: (err: unknown) => boolean;
 }
 /**

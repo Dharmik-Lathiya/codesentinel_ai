@@ -5,8 +5,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Engine } from "./engine/index.js";
-import type { Mode, RuntimeSecrets } from "./config/types.js";
-import { logger } from "./utils/logger.js";
+import { DEFAULT_CLI_TIMEOUT_MINUTES } from "./ai/opencode.js";
+import type { CodeSentinelConfig, Mode, ModelConfig, Provider, RuntimeSecrets } from "./config/types.js";
+import { logger, type LogLevel } from "./utils/logger.js";
 import { collectFiles, readText } from "./utils/files.js";
 import { installHook } from "./hook/index.js";
 import { renderSarif } from "./utils/sarif.js";
@@ -17,8 +18,95 @@ const PARSE_INT_RADIX = 10;
 const MAX_SCORE = 100;
 const MAX_ISSUE_BODY_LENGTH = 8000;
 const NODE_VERSION = 20;
+const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
+const VALID_MODES = new Set<string>(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"]);
 
-const WORKFLOW_CONTENT = [
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE_RE, "");
+}
+function mergeOverride<T extends object>(current: T | undefined, patch: Partial<T>): T {
+  return { ...(current as T), ...patch } as T;
+}
+
+function loadSecrets(): RuntimeSecrets {
+  return {
+    github_token: process.env.GITHUB_TOKEN,
+    openai_api_key: process.env.OPENAI_API_KEY,
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
+    gemini_api_key: process.env.GEMINI_API_KEY,
+    opencode_api_key: process.env.OPENCODE_API_KEY,
+    opencode_base_url: process.env.OPENCODE_BASE_URL,
+  };
+}
+
+export interface DismissArgs {
+  reason: string;
+  ruleId?: string;
+  filePath?: string;
+  lineNum?: number | null;
+  ruleIdArg?: string;
+  error?: string;
+}
+
+function parseRuleDismissArgs(dismissArgs: string[]): DismissArgs {
+  const ruleIdx = dismissArgs.indexOf("--rule");
+  const ruleId = dismissArgs[ruleIdx + 1];
+  if (!ruleId || ruleId.startsWith("--")) {
+    return { reason: "dismissed by user", error: "Missing rule id for --rule." };
+  }
+  const reasonIdx = dismissArgs.indexOf("--reason");
+  if (reasonIdx >= 0) {
+    const reasonValue = dismissArgs[reasonIdx + 1];
+    if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
+      return { reason: reasonValue, ruleId };
+    }
+    return { reason: "dismissed by user", error: "Missing value for --reason." };
+  }
+  const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
+  const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
+  return { reason, ruleId };
+}
+
+function parseFileDismissArgs(dismissArgs: string[]): DismissArgs {
+  const fileIdx = dismissArgs.indexOf("--file");
+  const filePath = dismissArgs[fileIdx + 1];
+  if (!filePath || filePath.startsWith("--")) {
+    return { reason: "dismissed by user", error: "Missing file path for --file." };
+  }
+  const lineIdx = dismissArgs.indexOf("--line");
+  let lineNum: number | null = null;
+  if (lineIdx >= 0) {
+    const rawLine = dismissArgs[lineIdx + 1];
+    if (rawLine === undefined || rawLine.startsWith("--") || !/^\d+$/.test(rawLine.trim())) {
+      return { reason: "dismissed by user", error: "Invalid value for --line; expected a non-negative integer." };
+    }
+    lineNum = parseInt(rawLine, PARSE_INT_RADIX);
+  }
+  const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
+  const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
+  const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
+  const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
+  const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
+  return { reason, filePath, lineNum, ruleIdArg };
+}
+
+export function parseDismissArgs(dismissArgs: string[]): DismissArgs {
+  const hasRule = dismissArgs.indexOf("--rule") >= 0;
+  const hasFile = dismissArgs.indexOf("--file") >= 0;
+
+  if (hasRule && hasFile) {
+    return { reason: "dismissed by user", error: "Options --rule and --file are mutually exclusive." };
+  }
+  if (hasRule) {
+    return parseRuleDismissArgs(dismissArgs);
+  }
+  if (hasFile) {
+    return parseFileDismissArgs(dismissArgs);
+  }
+  return { reason: "dismissed by user", error: "Missing --rule or --file." };
+}
+
+export const WORKFLOW_CONTENT = [
   "# CodeSentinel AI — Optimized workflow",
   "# Uses pre-built composite action (no TypeScript compilation needed)",
   "# Setup time: ~30s vs ~5min for npm install + tsc build",
@@ -42,7 +130,7 @@ const WORKFLOW_CONTENT = [
   "",
   "jobs:",
   "  plan-on-issue:",
-  "    if: github.event_name == 'issues' && github.event.action == 'opened'",
+  "    if: github.event_name === 'issues' && github.event.action === 'opened'",
   "    runs-on: ubuntu-latest",
   "    steps:",
   "      - name: Checkout repository",
@@ -100,6 +188,7 @@ const WORKFLOW_CONTENT = [
 "          script: |",
 "            const fs = require('fs');",
 "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
+  "            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }",
 "            const body = '### CodeSentinel \\u2014 Implementation Plan\\n\\n```\\n' + out + '\\n```\\n\\nReply with `/fix` to start implementation.';",
 "            try {",
 "              await github.rest.issues.updateComment({",
@@ -112,7 +201,7 @@ const WORKFLOW_CONTENT = [
 "            }",
   "",
   "  slash-command:",
-  "    if: github.event_name == 'issue_comment' && github.event.action == 'created'",
+  "    if: github.event_name === 'issue_comment' && github.event.action === 'created'",
   "    runs-on: ubuntu-latest",
   "    steps:",
   "      - name: Is PR comment?",
@@ -128,12 +217,13 @@ const WORKFLOW_CONTENT = [
   "        with:",
   "          script: |",
   "            const body = context.payload.comment.body.trim();",
-  "            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\\b/i);",
-  "            if (!match) { core.setFailed('No valid command'); return; }",
-  "            const mode = match[1].toLowerCase();",
-  "            const question = mode === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
-  "            core.setOutput('mode', mode);",
-  "            core.setOutput('question', question);",
+"            const match = body.match(/^\\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|improve|ask)\\b/i);",
+"            if (!match) { core.setFailed('No valid command'); return; }",
+"            const cmd = match[1].toLowerCase();",
+"            const mode = cmd === 'ask' ? 'chat' : cmd;",
+"            const question = cmd === 'ask' ? body.replace(/^\\/ask\\s*/i, '').trim() : '';",
+"            core.setOutput('mode', mode);",
+"            core.setOutput('question', question);",
   "",
   "      - name: Get PR info (PR comments only)",
   "        id: pr",
@@ -141,12 +231,14 @@ const WORKFLOW_CONTENT = [
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
-  "            const { data: pr } = await github.rest.pulls.get({",
-  "              owner: context.repo.owner, repo: context.repo.repo,",
-  "              pull_number: context.issue.number",
-  "            });",
-  "            core.setOutput('base_ref', pr.base.ref);",
-  "            core.setOutput('head_sha', pr.head.sha);",
+  "            try {",
+  "              const { data: pr } = await github.rest.pulls.get({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                pull_number: context.issue.number",
+  "              });",
+  "              core.setOutput('base_ref', pr.base.ref);",
+  "              core.setOutput('head_sha', pr.head.sha);",
+  "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      - name: Checkout PR (PR comments only)",
   "        if: steps.is_pr.outputs.value === 'true'",
@@ -166,28 +258,33 @@ const WORKFLOW_CONTENT = [
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
-  "            const { data: comment } = await github.rest.issues.createComment({",
-  "              owner: context.repo.owner, repo: context.repo.repo,",
-  "              issue_number: context.issue.number,",
-  "              body: '\u{1F504} **CodeSentinel** is processing... please wait.'",
-  "            });",
-  "            core.setOutput('comment_id', comment.id);",
+  "            try {",
+  "              const { data: comment } = await github.rest.issues.createComment({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                issue_number: context.issue.number,",
+  "                body: '\u{1F504} **CodeSentinel** is processing... please wait.'",
+  "              });",
+  "              core.setOutput('comment_id', comment.id);",
+  "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      - name: Get issue info (for plan/fix commands)",
   "        id: issue_info",
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
-  "            const { data: issue } = await github.rest.issues.get({",
-  "              owner: context.repo.owner, repo: context.repo.repo,",
-  "              issue_number: context.issue.number",
-  "            });",
-  "            core.setOutput('title', issue.title);",
-`            core.setOutput('body', (issue.body || '').slice(0, ${MAX_ISSUE_BODY_LENGTH}));`,
+  "            try {",
+  "              const { data: issue } = await github.rest.issues.get({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                issue_number: context.issue.number",
+  "              });",
+  "              core.setOutput('title', issue.title);",
+  "              core.setOutput('body', (issue.body || '').slice(0, " + `${MAX_ISSUE_BODY_LENGTH}` + "));",
+  "            } catch (err) { core.setFailed(err.message); }",
   "",
   "      # Uses pre-built composite action — no npm install + tsc build",
   "      # CODESENTINEL_GITHUB_TOKEN: optional PAT for git push (higher permissions)",
   "      - name: Run CodeSentinel",
+  "        id: cs",
   "        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ env.CODESENTINEL_VERSION }}",
   "        env:",
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
@@ -220,6 +317,7 @@ const WORKFLOW_CONTENT = [
   "          script: |",
   "            const fs = require('fs');",
   "            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}",
+  "            if (!out.trim()) { core.setFailed('CodeSentinel produced no output'); return; }",
   "            const mode = '${{ steps.cmd.outputs.mode }}';",
   "            const planSuffix = mode === 'plan' ? '\\n\\nReply with `/fix` to start implementation.' : '';",
   "            const body = '### CodeSentinel \\u2014 ' + mode + '\\n\\n```\\n' + out + '\\n```' + planSuffix;",
@@ -238,7 +336,7 @@ const WORKFLOW_CONTENT = [
   "            }",
 ].join("\n");
 
-const BUILD_WORKFLOW_CONTENT = [
+export const BUILD_WORKFLOW_CONTENT = [
   "name: CodeSentinel Build Fix",
   "",
   "on:",
@@ -250,10 +348,13 @@ const BUILD_WORKFLOW_CONTENT = [
   "  contents: write",
   "    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}",
   "",
+  "env:",
+  "  # Pin CodeSentinel CLI to a release tag, not the default branch",
+  "  CODESENTINEL_VERSION: v0.8.0",
+  "",
   "jobs:",
   "  build-fix:",
-  "    if: ${{ github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
-  "    runs-on: ubuntu-latest",
+  "    if: ${{ github.event_name === 'push' && github.actor != 'CodeSentinel Bot' && !contains(github.event.head_commit.message, '[skip ci]') }}",
   "    steps:",
   "      - uses: actions/checkout@v4",
   "        with:",
@@ -265,8 +366,18 @@ const BUILD_WORKFLOW_CONTENT = [
   "        with:",
 `          node-version: ${NODE_VERSION}`,
   "",
-  "      - name: Install dependencies (fast — no devDeps, no scripts)",
-  "        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --omit=dev --ignore-scripts --no-audit --no-fund",
+  "      - name: Checkout CodeSentinel CLI (pinned tag)",
+  "        uses: actions/checkout@v4",
+  "        with:",
+  "          repository: Dharmik-Lathiya/CodeSentinel_AI",
+  "          ref: ${{ env.CODESENTINEL_VERSION }}",
+  "          path: ${{ runner.temp }}/codesentinel",
+  "          fetch-depth: 1",
+  "",
+  "      - name: Install CodeSentinel CLI dependencies",
+  "        run: npm ci --prefix \"${{ runner.temp }}/codesentinel\" --omit=dev --ignore-scripts --no-audit --no-fund",
+  "      - name: Install dependencies (includes devDeps for tsc/build)",
+  "        run: npm ci --ignore-scripts --no-audit --no-fund 2>/dev/null || npm install --ignore-scripts --no-audit --no-fund",
   "",
   "      - name: Build and auto-fix loop",
   "        env:",
@@ -309,6 +420,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   '            node codesentinel/dist/index.js fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
   "",
+  "            grep -qxF \"node_modules/\" .gitignore 2>/dev/null || echo \"node_modules/\" >> .gitignore",
   "            git add -A",
   "            if git diff --cached --quiet; then",
   '              echo "⚠️ No changes produced by fix — continuing"',
@@ -317,9 +429,19 @@ const BUILD_WORKFLOW_CONTENT = [
   "",
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
-  '            git commit -m "CodeSentinel: auto-fix build errors [skip ci]"',
-  "            git pull --rebase origin ${{ github.ref_name }} 2>&1 || true",
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
+  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
+  "            git pull --rebase --autostash origin ${{ github.ref_name }} 2>&1 || true",
+  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            if [ $? -ne 0 ]; then",
+  '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
+  "              git fetch origin ${{ github.ref_name }} 2>&1",
+  "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
+  "              git push origin HEAD:${{ github.ref_name }} 2>&1",
+  '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
+  "            else",
+  '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
+  "            fi",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
@@ -360,25 +482,7 @@ const BUILD_WORKFLOW_CONTENT = [
   "            }",
 ].join("\n");
 
-function runSetup(): void {
-  const cwd = process.cwd();
-  const workflowDir = join(cwd, ".github", "workflows");
-  const workflowPath = join(workflowDir, "codesentinel.yml");
-  const buildWorkflowPath = join(workflowDir, "codesentinel-build.yml");
-
-  if (existsSync(workflowPath)) {
-    process.stdout.write(`Overwriting existing workflow...\n`);
-  }
-  mkdirSync(workflowDir, { recursive: true });
-  writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
-  process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
-
-  if (existsSync(buildWorkflowPath)) {
-    process.stdout.write(`Overwriting existing build-fix workflow...\n`);
-  }
-  writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
-  process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
-
+function printSetupNextSteps(): void {
   process.stdout.write("Next steps:\n");
   process.stdout.write("  git add .github/workflows/\n");
   process.stdout.write('  git commit -m "Add CodeSentinel AI workflows"\n');
@@ -393,6 +497,7 @@ function runSetup(): void {
   process.stdout.write("  /deadcode  — detect unused exports\n");
   process.stdout.write("  /describe  — generate PR description\n");
   process.stdout.write("  /plan      — generate implementation plan from issue\n");
+  process.stdout.write("  /improve   — auto-improve code quality\n");
   process.stdout.write("  /ask       — ask a question\n\n");
   process.stdout.write("Auto-analyze: When a new issue is opened, CodeSentinel automatically\n");
   process.stdout.write("  generates an implementation plan and asks clarifying questions.\n");
@@ -406,6 +511,35 @@ function runSetup(): void {
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
+}
+
+export function runSetup(force: boolean): void {
+  const cwd = process.cwd();
+  const workflowDir = join(cwd, ".github", "workflows");
+  const workflowPath = join(workflowDir, "codesentinel.yml");
+  const buildWorkflowPath = join(workflowDir, "codesentinel-build.yml");
+
+  if (!force && (existsSync(workflowPath) || existsSync(buildWorkflowPath))) {
+    process.stdout.write("Existing workflow(s) found. Re-run with --force to overwrite (existing files are backed up to .bak).\n");
+    return;
+  }
+
+  if (existsSync(workflowPath)) {
+    writeFileSync(`${workflowPath}.bak`, readFileSync(workflowPath), "utf8");
+    process.stdout.write("Backed up existing workflow to codesentinel.yml.bak\n");
+  }
+  mkdirSync(workflowDir, { recursive: true });
+  writeFileSync(workflowPath, WORKFLOW_CONTENT, "utf8");
+  process.stdout.write(`\n✅ Created .github/workflows/codesentinel.yml\n`);
+
+  if (existsSync(buildWorkflowPath)) {
+    writeFileSync(`${buildWorkflowPath}.bak`, readFileSync(buildWorkflowPath), "utf8");
+    process.stdout.write("Backed up existing build-fix workflow to codesentinel-build.yml.bak\n");
+  }
+  writeFileSync(buildWorkflowPath, BUILD_WORKFLOW_CONTENT, "utf8");
+  process.stdout.write(`✅ Created .github/workflows/codesentinel-build.yml\n\n`);
+
+  printSetupNextSteps();
 }
 
 function showHelp(): void {
@@ -425,7 +559,7 @@ Usage:
   codesentinel setup
 
 Commands:
-  setup               Create GitHub Actions workflow in current project
+  setup [--force]     Create GitHub Actions workflow (--force overwrites existing files)
   init-hook           Install git hook (add --type post-commit for build-fix loop)
   dashboard           Start web dashboard
   dismiss <finding>   Dismiss a false positive finding
@@ -439,6 +573,9 @@ Modes:
   chat        Ask questions about the codebase (--ask required)
   gate        Run quality gate (exit non-zero on threshold breach)
   deadcode    Detect unused exports across files
+  describe    Generate a PR description
+  improve     Auto-improve code (generate tests, utilities, docs)
+  plan        Generate an implementation plan from an issue
 
 Options:
   -m, --mode <mode>           Operational mode
@@ -471,8 +608,7 @@ Environment Variables:
   GEMINI_API_KEY              Google Gemini API key
   OPENCODE_API_KEY            OpenCode API key
   OPENCODE_BASE_URL           Custom OpenCode endpoint URL
-  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default 20 minutes)
-  CODESENTINEL_LOG_LEVEL      Default log level
+  OPENCODE_CLI_TIMEOUT_MINUTES Timeout for opencode run CLI calls (default ${DEFAULT_CLI_TIMEOUT_MINUTES} minutes)
 
 Examples:
   codesentinel setup
@@ -513,7 +649,7 @@ async function main(): Promise<void> {
 
   // Handle top-level commands
   if (args[0] === "setup") {
-    runSetup();
+    runSetup(args.includes("--force"));
     return;
   }
 
@@ -530,22 +666,15 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dashboard") {
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-      opencode_base_url: process.env.OPENCODE_BASE_URL,
-    };
-    const engine = Engine.fromInputs({ secrets });
+    const engine = Engine.fromInputs({ secrets: loadSecrets() });
     const dash = engine.getDashboard();
-    if (dash) {
-      dash.start();
-      process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
-    } else {
-      process.stdout.write("Dashboard is not available.\n");
+    if (!dash) {
+      process.stderr.write("Dashboard is not available.\n");
+      process.exitCode = 1;
+      return;
     }
+    dash.start();
+    process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
     process.stdout.write("Press Ctrl+C to stop.\n");
     try {
       await new Promise(() => {});
@@ -556,25 +685,20 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dismiss") {
-    const secrets: RuntimeSecrets = {
-      github_token: process.env.GITHUB_TOKEN,
-      openai_api_key: process.env.OPENAI_API_KEY,
-      anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-      gemini_api_key: process.env.GEMINI_API_KEY,
-      opencode_api_key: process.env.OPENCODE_API_KEY,
-      opencode_base_url: process.env.OPENCODE_BASE_URL,
-    };
-    const engine = Engine.fromInputs({ secrets });
-    const dismissArgs = args.slice(1);
-    const reasonIdx = dismissArgs.findIndex((a) => !a.startsWith("--"));
-    const reason = reasonIdx >= 0 ? dismissArgs.slice(reasonIdx).join(" ") : "dismissed by user";
-
-    if (dismissArgs.includes("--rule")) {
-      const ruleIdx = dismissArgs.indexOf("--rule");
-      const ruleId = dismissArgs[ruleIdx + 1];
-      if (!ruleId) {
-        process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-        return;
+    if (args.includes("--help") || args.includes("-h")) {
+      showHelp();
+      return;
+    }
+    if (args.includes("--version")) {
+      showVersion();
+      return;
+    }
+    const parsed = parseDismissArgs(args.slice(1));
+    if (parsed.error) {
+      process.stderr.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
+      process.stderr.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+      if (parsed.error.startsWith("Options")) {
+        process.stderr.write("Options --rule and --file are mutually exclusive.\n");
       }
       try {
         await engine.dismissByRule(ruleId, reason);
@@ -593,12 +717,13 @@ async function main(): Promise<void> {
         process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
         return;
       }
-      const ruleIdArg = dismissArgs.includes("--rule-id") ? dismissArgs[dismissArgs.indexOf("--rule-id") + 1] : `${filePath}:${lineNum ?? "all"}`;
-      await engine.dismissByFinding(filePath, lineNum, ruleIdArg, reason);
-      process.stdout.write(`✅ Dismissed finding: ${filePath}${lineNum ? `:${lineNum}` : ""}\n`);
     } else {
-      process.stdout.write("Usage: codesentinel dismiss --rule <ruleId> [reason]\n");
-      process.stdout.write("       codesentinel dismiss --file <path> --line <n> [reason]\n");
+      try {
+        await engine.dismissByFinding(parsed.filePath!, parsed.lineNum!, parsed.ruleIdArg!, parsed.reason);
+        process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
+      } catch (err) {
+        process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+      }
     }
     return;
   }
@@ -646,30 +771,43 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (modeArg && !VALID_MODES.has(modeArg)) {
+    process.stderr.write(`Unknown mode: '${modeArg}'\n`);
+    showHelp();
+    return;
+  }
+
+  const numericFlags: Array<[string | undefined, string]> = [
+    [values["max-iterations"], "--max-iterations"],
+    [values["min-score"], "--min-score"],
+    [values["max-critical"], "--max-critical"],
+    [values["max-high"], "--max-high"],
+  ];
+  for (const [value, name] of numericFlags) {
+    if (value !== undefined && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a non-negative number)\n`);
+      showHelp();
+      return;
+    }
+  }
+
   if (values["log-level"]) {
-    logger.level = values["log-level"] as any;
+    logger.level = values["log-level"] as LogLevel;
   }
   if (values.json) {
     logger.setJsonMode(true);
   }
 
-  const secrets: RuntimeSecrets = {
-    github_token: process.env.GITHUB_TOKEN,
-    openai_api_key: process.env.OPENAI_API_KEY,
-    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-    gemini_api_key: process.env.GEMINI_API_KEY,
-    opencode_api_key: process.env.OPENCODE_API_KEY,
-    opencode_base_url: process.env.OPENCODE_BASE_URL,
-  };
+  const secrets = loadSecrets();
 
-  const overrides: Record<string, unknown> = {};
+  const overrides: Partial<CodeSentinelConfig> = {};
   if (modeArg) overrides.mode = modeArg as Mode;
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
-  if (values["improve-type"]) overrides.improve_type = values["improve-type"];
+  if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
   const issueTitle = process.env.INPUT_ISSUE_TITLE;
@@ -678,17 +816,17 @@ async function main(): Promise<void> {
   if (issueBody) overrides.issue_body = issueBody;
 
   if (values["min-score"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), minScore: Number(values["min-score"]) };
+    overrides.gate = mergeOverride(overrides.gate, { minScore: Number(values["min-score"]) });
   }
   if (values["max-critical"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), maxCritical: Number(values["max-critical"]) };
+    overrides.gate = mergeOverride(overrides.gate, { maxCritical: Number(values["max-critical"]) });
   }
   if (values["max-high"]) {
-    overrides.gate = { ...(overrides.gate as any || {}), maxHigh: Number(values["max-high"]) };
+    overrides.gate = mergeOverride(overrides.gate, { maxHigh: Number(values["max-high"]) });
   }
 
   if (values.provider) {
-    const providerModel = { provider: values.provider as any, model: "default" };
+    const providerModel: ModelConfig = { provider: values.provider as Provider, model: "default" };
     overrides.default_model = providerModel;
     overrides.models = {
       review: providerModel,
@@ -702,14 +840,14 @@ async function main(): Promise<void> {
   }
   if (values["dry-run"]) overrides.enable_auto_fix = false;
   if (values.jsonl) overrides.jsonl_output = true;
-  if (values.mcp) overrides.mcp = { ...(overrides.mcp as any || {}), enabled: true };
+  if (values.mcp) overrides.mcp = mergeOverride(overrides.mcp, { enabled: true });
   if (values["learning-db"]) {
-    overrides.learning = { ...(overrides.learning as any || {}), enabled: true, dbPath: values["learning-db"] };
+    overrides.learning = mergeOverride(overrides.learning, { enabled: true, dbPath: values["learning-db"] });
   }
   if (values["use-opencode-cli"]) {
     overrides.use_opencode_cli = true;
   }
-  if (values["yaml-config"]) {
+  if (values["yaml-config"] && !values.config) {
     const searchPaths = [".opencode-reviewer.yml", ".codesentinel.yml", "codesentinel.config.yml"];
     for (const p of searchPaths) {
       if (existsSync(resolve(process.cwd(), p))) {
@@ -721,7 +859,7 @@ async function main(): Promise<void> {
 
   const engine = Engine.fromInputs({
     configPath: values.config,
-    overrides: overrides as any,
+    overrides,
     secrets,
   });
 
@@ -729,8 +867,13 @@ async function main(): Promise<void> {
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
-    const answer = await engine.ask(values["ask"]);
-    process.stdout.write(answer + "\n");
+    try {
+      const answer = await engine.ask(values["ask"]);
+      process.stdout.write(answer + "\n");
+    } catch (err) {
+      process.stderr.write(`Chat query failed: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exitCode = 1;
+    }
     return;
   }
 
@@ -742,26 +885,41 @@ async function main(): Promise<void> {
       path,
       content: readText(resolve(root, path)),
     }));
-    const findings = await engine.runDeadCode(files);
+    let findings: Awaited<ReturnType<typeof engine.runDeadCode>>;
+    try {
+      findings = await engine.runDeadCode(files);
+    } catch (err) {
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exitCode = 1;
+      return;
+    }
     if (findings.length === 0) {
       process.stdout.write("✅ No unused exports detected.\n");
     } else {
       process.stdout.write(`\n=== CodeSentinel [deadcode] ===\n`);
       process.stdout.write(`Unused exports (${findings.length}):\n`);
       for (const f of findings) {
-        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${f.comment}\n`);
+        process.stdout.write(`  [${f.severity}] ${f.file}:${f.line} — ${stripAnsi(f.comment)}\n`);
       }
     }
     return;
   }
 
-  const report = await engine.run();
+  let report: Awaited<ReturnType<typeof engine.run>>;
+  try {
+    report = await engine.run();
+  } catch (err) {
+    process.stderr.write(`Run failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
 
   // JSON output mode
   if (values.json) {
     process.stdout.write(JSON.stringify(report, null, 2) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
-    throw new Error("Gate check failed");
+      process.stderr.write("Gate check failed\n");
+      process.exitCode = 1;
     }
     return;
   }
@@ -770,7 +928,8 @@ async function main(): Promise<void> {
   if (values.sarif) {
     process.stdout.write(renderSarif(report) + "\n");
     if (report.mode === "gate" && report.gatePassed === false) {
-      throw new Error("Gate check failed");
+      process.stderr.write("Gate check failed\n");
+      process.exitCode = 1;
     }
     return;
   }
@@ -793,7 +952,7 @@ async function main(): Promise<void> {
   if (report.findings.length && (report.mode !== "review" && report.mode !== "fix")) {
     process.stdout.write(`\nFindings (${report.findings.length}):\n`);
     for (const f of report.findings) {
-      process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${f.comment}\n`);
+      process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${stripAnsi(f.comment)}\n`);
     }
   }
   if (report.generatedTests.length) {
@@ -806,11 +965,14 @@ async function main(): Promise<void> {
 
   // Exit non-zero if gate fails
   if (report.mode === "gate" && report.gatePassed === false) {
-    throw new Error("Gate check failed");
+    process.stderr.write("Gate check failed\n");
+    process.exitCode = 1;
   }
 }
 
-main().catch((err) => {
-  logger.error("Fatal:", err);
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    logger.error("Fatal:", err);
+    process.exitCode = 1;
+  });
+}

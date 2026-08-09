@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+const PKG_VERSION = createRequire(import.meta.url)("../../package.json").version;
 const SEVERITY_MAP = {
     critical: "error",
     high: "error",
@@ -18,7 +20,7 @@ function simpleHash(s) {
 function createSarifLocation(file, line) {
     return {
         physicalLocation: {
-            artifactLocation: { uri: file },
+            artifactLocation: { uri: encodeURI(file.replace(/\\/g, "/")) },
             ...(line != null ? { region: { startLine: line } } : {}),
         },
     };
@@ -26,7 +28,7 @@ function createSarifLocation(file, line) {
 function createToolDriver(rules) {
     return {
         name: "CodeSentinel AI",
-        version: "0.1.6",
+        version: PKG_VERSION,
         rules: Array.from(rules.values()),
     };
 }
@@ -48,9 +50,6 @@ export function renderSarif(report) {
                 id: ruleId,
                 shortDescription: { text: f.comment },
             });
-        }
-        if (!SEVERITY_MAP[f.severity]) {
-            throw new Error(`Unknown severity: "${f.severity}"`);
         }
         results.push({
             ruleId,

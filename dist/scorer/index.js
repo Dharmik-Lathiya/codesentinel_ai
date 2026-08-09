@@ -1,12 +1,16 @@
 /** Weights used to combine the four dimensions into the overall score. */
+const READABILITY_WEIGHT = 0.25;
+const MAINTAINABILITY_WEIGHT = 0.3;
+const SECURITY_WEIGHT = 0.25;
+const TEST_COVERAGE_WEIGHT = 0.2;
 export const WEIGHTS = {
-    readability: 0.25,
-    maintainability: 0.3,
-    security: 0.25,
-    test_coverage: 0.2,
+    readability: READABILITY_WEIGHT,
+    maintainability: MAINTAINABILITY_WEIGHT,
+    security: SECURITY_WEIGHT,
+    test_coverage: TEST_COVERAGE_WEIGHT,
 };
-const clamp = (n) => Math.max(0, Math.min(100, Math.round(n)));
 const MAX_SCORE = 100;
+const clamp = (n) => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
 const HIGH_SEVERITY_PENALTY = 16;
 const CRITICAL_SEVERITY_PENALTY = 30;
 /** Severity penalty weights applied to the security dimension. */
