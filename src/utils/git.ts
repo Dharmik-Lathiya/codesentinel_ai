@@ -279,7 +279,13 @@ async function listUntrackedFiles(cwd: string): Promise<string[]> {
 }
 
 async function readContent(full: string): Promise<string> {
-  const fileStat = await stat(full);
+  let fileStat: Awaited<ReturnType<typeof stat>>;
+  try {
+    fileStat = await stat(full);
+  } catch {
+    logger.debug(`Failed to stat: ${full}`);
+    return "";
+  }
   if (fileStat.size > MAX_CONTENT_BYTES) {
     logger.debug(`Skipping oversized file content: ${full}`);
     return "";
