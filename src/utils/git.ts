@@ -100,10 +100,15 @@ export async function collectDiff(
     );
     throw err;
   }
-  const diffByPath = splitDiffByPath(diffText);
+  const nameStatusEntries = nameStatus.split("\0");
+  const knownPaths = new Set<string>();
+  for (let i = 1; i < nameStatusEntries.length - 1; i += 2) {
+    const path = nameStatusEntries[i];
+    if (path) knownPaths.add(path);
+  }
+  const diffByPath = splitDiffByPath(diffText, knownPaths);
 
   const files: DiffFile[] = [];
-  const nameStatusEntries = nameStatus.split("\0");
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
     const path = nameStatusEntries[i + 1];
@@ -152,14 +157,32 @@ export async function collectDiff(
   return files;
 }
 
-function splitDiffByPath(diffText: string): Map<string, string> {
+function splitDiffByPath(
+  diffText: string,
+  knownPaths: Set<string>,
+): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
-    const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const body = part.slice("diff --git ".length);
+    let path: string | undefined;
+    let bestLength = -1;
+    for (const candidate of knownPaths) {
+      const matches =
+        body.startsWith(`a/${candidate} b/${candidate}`) ||
+        body.startsWith(`a/${candidate} b/dev/null`) ||
+        body.startsWith(`a/dev/null b/${candidate}`);
+      if (matches && candidate.length > bestLength) {
+        bestLength = candidate.length;
+        path = candidate;
+      }
+    }
+    if (path === undefined) {
+      const firstLine = body.split("\n", 1)[0];
+      const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
+      if (!match) continue;
+      path = match[2] === "dev/null" ? match[1] : match[2];
+    }
     byPath.set(path, part);
   }
   return byPath;
