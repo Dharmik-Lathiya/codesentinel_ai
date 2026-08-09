@@ -62,7 +62,11 @@ export async function collectDiff(
   cwd = process.cwd(),
 ): Promise<DiffFile[]> {
   const baseRef = base ?? (await defaultBaseRef(cwd));
-  const rangeArgs = baseRef ? [baseRef + "..."] : ["HEAD"];
+  const rangeArgs = baseRef
+    ? [baseRef + "..."]
+    : (await refExists("HEAD", cwd))
+      ? ["HEAD"]
+      : [];
   let nameStatus: string;
   try {
     nameStatus = await git(
@@ -76,6 +80,7 @@ export async function collectDiff(
         ...rangeArgs,
       ],
       cwd,
+      { quiet: true },
     );
   } catch (err) {
     logger.warn(
@@ -92,6 +97,7 @@ export async function collectDiff(
     diffText = await git(
       ["-c", "core.quotepath=false", "diff", "--no-renames", ...rangeArgs],
       cwd,
+      { quiet: true },
     );
   } catch (err) {
     logger.warn(
@@ -100,7 +106,7 @@ export async function collectDiff(
     );
     throw err;
   }
-  const diffByPath = splitDiffByPath(diffText);
+  const diffByPath = splitDiffByPath(diffText, pathsFromNameStatus(nameStatus));
 
   const files: DiffFile[] = [];
   const nameStatusEntries = nameStatus.split("\0");
@@ -152,17 +158,37 @@ export async function collectDiff(
   return files;
 }
 
-function splitDiffByPath(diffText: string): Map<string, string> {
+function splitDiffByPath(
+  diffText: string,
+  changedPaths: ReadonlySet<string>,
+): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
-    byPath.set(path, part);
+    for (const path of changedPaths) {
+      if (
+        firstLine === `a/${path} b/${path}` ||
+        firstLine === `a/dev/null b/${path}` ||
+        firstLine === `a/${path} b/dev/null`
+      ) {
+        byPath.set(path, part);
+        break;
+      }
+    }
   }
   return byPath;
+}
+
+function pathsFromNameStatus(nameStatus: string): Set<string> {
+  const paths = new Set<string>();
+  const entries = nameStatus.split("\0");
+  for (let i = 0; i < entries.length - 1; i += 2) {
+    const statusCode = entries[i];
+    const path = entries[i + 1];
+    if (statusCode && path) paths.add(path);
+  }
+  return paths;
 }
 
 async function listUntrackedFiles(cwd: string): Promise<string[]> {
