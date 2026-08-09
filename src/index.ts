@@ -25,7 +25,7 @@ function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
 }
 function mergeOverride<T extends object>(current: T | undefined, patch: Partial<T>): T {
-  return { ...(current as T), ...patch } as T;
+  return { ...(current ?? {}), ...patch } as T;
 }
 
 function loadSecrets(): RuntimeSecrets {
@@ -351,7 +351,7 @@ export const BUILD_WORKFLOW_CONTENT = [
 '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}',
 '          CODESENTINEL_GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN }}',
   "        run: |",
-  "          MAX_ITER=${MAX_ITERATIONS:-5}",
+  "          MAX_ITER=5",
   '          echo "::group::Build-Fix Loop"',
   "          for i in $(seq 1 $MAX_ITER); do",
   '            echo "=== Iteration $i/$MAX_ITER ==="',
@@ -677,7 +677,8 @@ async function main(): Promise<void> {
       config: { type: "string", short: "c" },
       "max-iterations": { type: "string" },
       "auto-fix": { type: "boolean", default: false },
-      scoring: { type: "boolean", default: true },
+      scoring: { type: "boolean" },
+      "no-scoring": { type: "boolean", default: false },
       "test-gen": { type: "boolean", default: false },
       provider: { type: "string" },
       ask: { type: "string" },
@@ -747,7 +748,8 @@ async function main(): Promise<void> {
   if (modeArg) overrides.mode = modeArg as Mode;
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
-  if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
+  if (values.scoring !== undefined) overrides.enable_scoring = true;
+  if (values["no-scoring"]) overrides.enable_scoring = false;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
   if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
@@ -779,6 +781,7 @@ async function main(): Promise<void> {
       testgen: providerModel,
       chat: providerModel,
       describe: providerModel,
+      plan: providerModel,
     };
   }
   if (values["dry-run"]) overrides.enable_auto_fix = false;
@@ -807,7 +810,7 @@ async function main(): Promise<void> {
   });
 
   const runMode = modeArg ?? engine.config.mode;
-  process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+  process.stderr.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     try {
