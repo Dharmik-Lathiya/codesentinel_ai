@@ -659,6 +659,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     } else {
       try {
@@ -666,6 +667,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     }
     return;
@@ -732,6 +734,16 @@ async function main(): Promise<void> {
       showHelp();
       return;
     }
+    if (value !== undefined && name === "--max-iterations" && Number(value) < 1) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (expected an integer >= 1)\n`);
+      showHelp();
+      return;
+    }
+    if (value !== undefined && name === "--min-score" && (Number(value) < 0 || Number(value) > 100)) {
+      process.stderr.write(`Invalid value for ${name}: '${value}' (expected a number between 0 and 100)\n`);
+      showHelp();
+      return;
+    }
   }
 
   if (values["log-level"]) {
@@ -750,7 +762,14 @@ async function main(): Promise<void> {
   if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
-  if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
+  if (values["improve-type"]) {
+    if (!["test", "util", "doc"].includes(values["improve-type"])) {
+      process.stderr.write(`Invalid value for --improve-type: '${values["improve-type"]}' (expected one of: test, util, doc)\n`);
+      showHelp();
+      return;
+    }
+    overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
+  }
 
   // Issue plan mode — read from env (set by GitHub Actions workflow)
   const issueTitle = process.env.INPUT_ISSUE_TITLE;
@@ -819,6 +838,9 @@ async function main(): Promise<void> {
     }
     return;
   }
+  if (values["ask"] && runMode !== "chat") {
+    process.stderr.write(`[codesentinel:warning] --ask was ignored because mode is '${runMode}'. Use chat mode (--mode chat) to ask a question.\n`);
+  }
 
   // Special handling for deadcode mode — run in-process without AI
   if (modeArg === "deadcode") {
@@ -832,7 +854,7 @@ async function main(): Promise<void> {
     try {
       findings = await engine.runDeadCode(files);
     } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exitCode = 1;
       return;
     }
