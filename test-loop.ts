@@ -8,7 +8,8 @@ const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 const MAX_SAFE_INTEGER_BITS = 53;
 const DECIMAL_FRACTION = 25;
-const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
+const DECIMAL_PERCENT = 100;
+const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / DECIMAL_PERCENT);
 
 /**
  * Scales the input by a fixed multiplier.
@@ -42,6 +43,10 @@ describe("processData", () => {
 
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
     const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
+    // Guard before BigInt(): BigInt() throws RangeError on fractional values.
+    // The mismatch below asserts the documented integer-precision loss above
+    // Number.MAX_SAFE_INTEGER (results are no longer exact integers).
+    expect(Number.isInteger(EXTREME_MULTIPLIER)).toBe(true);
     const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
     expect(BigInt(calculate(input))).not.toBe(expected);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
@@ -57,7 +62,13 @@ describe("processData", () => {
     expect(processData(input)).toEqual({ value: 0 });
   });
   test('explicit value 0 is a valid parsed value (documented sentinel)', () => {
-    expect(processData('{"value":0}')).toEqual({ value: 0 });
+    const parsed = processData('{"value":0}');
+    expect(parsed).toEqual({ value: 0 });
+    // Round-trip: re-serializing 0 must reproduce '0', proving it was parsed
+    // rather than silently collapsed to the invalid-input default { value: 0 }.
+    // (A fully distinguishable API shape, e.g. { value, ok }, is out of scope
+    // for this test-only change.)
+    expect(JSON.stringify(parsed.value)).toBe('0');
   });
   test('negative and decimal values are preserved', () => {
     expect(processData('{"value":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
