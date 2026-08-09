@@ -1,8 +1,7 @@
 import { describe, expect, test } from "vitest";
 
-export const EXTREME_THRESHOLD = 10000; // intentional: inputs above this use a hard 2x multiplier step
-export const MULTIPLIER = 4096;
-export const EXTREME_MULTIPLIER = MULTIPLIER * 2; // 2x MULTIPLIER
+import { EXTREME_MULTIPLIER, EXTREME_THRESHOLD, MULTIPLIER, calculate, processData } from "./src/utils.js";
+
 const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
 const HIGH_INPUT = 6000;
@@ -10,40 +9,9 @@ const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 const MAX_SAFE_INTEGER_BITS = 53;
 const DECIMAL_FRACTION = 25;
-const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
+const DECIMAL_SCALE = 100;
+const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / DECIMAL_SCALE);
 
-/**
- * Scales the input by a fixed multiplier.
- * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
- */
-export function calculate(x: number): number {
-  const multiplier = x > EXTREME_THRESHOLD ? EXTREME_MULTIPLIER : MULTIPLIER;
-  return x * multiplier;
-}
-
-function isValueObject(v: unknown): v is { value?: number } {
-  return typeof v === "object" && v !== null && "value" in v;
-}
-/**
- * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
- * input (unparsable JSON, missing/non-numeric value, NaN/Infinity).
- * NOTE: 0 is an overloaded sentinel — a legitimate {"value":0} is indistinguishable
- * from a parse failure; callers needing error detection should use a discriminated result.
- */
-export function processData(input: string): { value: number } {
-  try {
-    const parsed = JSON.parse(input) as unknown;
-    if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
-      return { value: parsed.value };
-    }
-    return { value: 0 };
-  } catch {
-    return { value: 0 };
-  }
-}
-
-describe("calculate", () => {
   test.each([
     [0, 0],
     [-5, -5 * MULTIPLIER],
@@ -77,7 +45,7 @@ describe("processData", () => {
     ["[1,2,3]"],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
-    ["{}"],
+    ['{"value":true}'],
     ['{"value":null}'],
     ['{"value":1e999}'],
   ])('invalid input %s returns the default result', (input) => {
