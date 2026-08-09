@@ -2,31 +2,23 @@ import { describe, expect, test } from "vitest";
 import { EXTREME_THRESHOLD, MULTIPLIER, EXTREME_MULTIPLIER, calculate, processData } from "./src/numeric";
 
 const BELOW_THRESHOLD_INPUT = 4999;
-const MODERATE_INPUT = 5000;
-const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 const MAX_SAFE_INTEGER_BITS = 53;
 const DECIMAL_FRACTION = 25;
 const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
 
-/**
- * Scales the input by a fixed multiplier.
- * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
- */
-
-
 describe("calculate", () => {
   test.each([
     [0, 0],
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
+    [5000, 5000 * MULTIPLIER],
+    [6000, 6000 * MULTIPLIER],
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    [-EXTREME_THRESHOLD, -EXTREME_THRESHOLD * MULTIPLIER],
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
@@ -42,9 +34,10 @@ describe("processData", () => {
 
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
     const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
+    const result = calculate(input);
     const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
-    expect(BigInt(calculate(input))).not.toBe(expected);
-    expect(Number.isSafeInteger(calculate(input))).toBe(false);
+    expect(BigInt(result)).not.toBe(expected);
+    expect(Number.isSafeInteger(result)).toBe(false);
   });
   test.each([
     ["not-json"],
