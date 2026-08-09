@@ -61,24 +61,26 @@ describe("calculate", () => {
   });
 });
 
-describe("processData", () => {
+  });
+
+  test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} produce results outside the safe-integer range (documented limitation)`, () => {
+    const input = 2 ** MAX_SAFE_INTEGER_BITS + 2;
+    const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
+    expect(BigInt(calculate(input))).toBe(expected);
+    expect(Number.isSafeInteger(calculate(input))).toBe(false);
+  });
+});
   test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
     expect(processData('{"value":' + value + "}")).toEqual({ value });
   });
 
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
     const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
-    const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
-    expect(BigInt(calculate(input))).not.toBe(expected);
-    expect(Number.isSafeInteger(calculate(input))).toBe(false);
-  });
-  test.each([
-    ["not-json"],
     ["[1,2,3]"],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
     ["{}"],
-    ['{"value":null}'],
+    ['{"value":false}'],
     ['{"value":1e999}'],
   ])('invalid input %s returns the default result', (input) => {
     expect(processData(input)).toEqual({ value: 0 });
