@@ -10,7 +10,8 @@ const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 const MAX_SAFE_INTEGER_BITS = 53;
 const DECIMAL_FRACTION = 25;
-const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
+const DECIMAL_DIVISOR = 100;
+const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / DECIMAL_DIVISOR);
 
 /**
  * Scales the input by a fixed multiplier.
@@ -26,20 +27,19 @@ function isValueObject(v: unknown): v is { value?: number } {
   return typeof v === "object" && v !== null && "value" in v;
 }
 /**
- * Returns the parsed numeric `value`, or 0 as a sentinel for every invalid
- * input (unparsable JSON, missing/non-numeric value, NaN/Infinity).
- * NOTE: 0 is an overloaded sentinel — a legitimate {"value":0} is indistinguishable
- * from a parse failure; callers needing error detection should use a discriminated result.
+ * Returns a discriminated result: { ok: true, value } for valid numeric
+ * JSON inputs, or { ok: false } for every invalid input (unparsable JSON,
+ * missing/non-numeric value, NaN/Infinity).
  */
-export function processData(input: string): { value: number } {
+export function processData(input: string): { ok: true; value: number } | { ok: false } {
   try {
     const parsed = JSON.parse(input) as unknown;
     if (isValueObject(parsed) && typeof parsed.value === "number" && Number.isFinite(parsed.value)) {
-      return { value: parsed.value };
+      return { ok: true, value: parsed.value };
     }
-    return { value: 0 };
+    return { ok: false };
   } catch {
-    return { value: 0 };
+    return { ok: false };
   }
 }
 
@@ -63,7 +63,7 @@ describe("calculate", () => {
 
 describe("processData", () => {
   test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
-    expect(processData('{"value":' + value + "}")).toEqual({ value });
+    expect(processData('{"value":' + value + "}")).toEqual({ ok: true, value });
   });
 
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
@@ -76,22 +76,22 @@ describe("processData", () => {
     ["not-json"],
     ["[1,2,3]"],
     ['{"value":"' + SAMPLE_VALUE + '"}'],
-    ['{"value":"' + SAMPLE_VALUE + '"}'],
+    ['{"value":true}'],
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
   ])('invalid input %s returns the default result', (input) => {
-    expect(processData(input)).toEqual({ value: 0 });
+    expect(processData(input)).toEqual({ ok: false });
   });
 
   test('negative and decimal values are preserved', () => {
-    expect(processData('{"value":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
+    expect(processData('{"value":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ ok: true, value: DECIMAL_SAMPLE_VALUE });
   });
   test('whitespace-padded JSON is parsed', () => {
-    expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
+    expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ ok: true, value: SAMPLE_VALUE });
   });
 
   test('empty string input is handled', () => {
-    expect(processData("")).toEqual({ value: 0 });
+    expect(processData("")).toEqual({ ok: false });
   });
 });
