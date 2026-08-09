@@ -40,6 +40,9 @@ class FileSystemBackend implements CacheBackend {
   }
 
   private filePath(key: string): string {
+    if (!/^[\w.-]+$/.test(key) || key.includes("..") || key === ".") {
+      throw new Error(`Invalid cache key: ${key}`);
+    }
     return join(this.cacheDir, `${key}.json`);
   }
 
@@ -47,7 +50,8 @@ class FileSystemBackend implements CacheBackend {
     const path = this.filePath(key);
     try {
       return JSON.parse(await readFile(path, "utf8")) as CacheEntry;
-    } catch {
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       return null;
     }
   }
@@ -114,11 +118,13 @@ export class LearningCache {
   }
 
   async get(key: string): Promise<Lesson[]> {
-    const entry = await this.backend.get(key);
-    if (!entry) return [];
-    entry.lessons.forEach((l) => l.hitCount++);
-    await this.backend.set(key, entry);
-    return entry.lessons.map((l) => ({ ...l }));
+    return this.withLock(key, async () => {
+      const entry = await this.backend.get(key);
+      if (!entry) return [];
+      entry.lessons.forEach((l) => l.hitCount++);
+      await this.backend.set(key, entry).catch(() => {});
+      return entry.lessons.map((l) => ({ ...l }));
+    });
   }
 
   async set(key: string, lesson: Lesson): Promise<void> {
