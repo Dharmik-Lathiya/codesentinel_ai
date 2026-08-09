@@ -60,7 +60,7 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     const msg = err.message;
     return (
       /\brate[\s-]*limit(?:ed)?\b/i.test(msg) ||
-      /\b(?:429|502|503)\b/.test(msg) ||
+      new RegExp(`\\b(?:${HTTP_STATUS_RATE_LIMIT}|${HTTP_STATUS_SERVICE_UNAVAILABLE}|${HTTP_STATUS_BAD_GATEWAY})\\b`).test(msg) ||
       /\btimeout\b/i.test(msg) ||
       /\beconnreset\b/i.test(msg) ||
       /\boverloaded\b/i.test(msg)
@@ -101,12 +101,13 @@ export async function retry<T>(
   fn: () => Promise<T>,
   opts: RetryOptions = {},
 ): Promise<T> {
-  const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
+  const maxAttempts = Number.isFinite(opts.maxAttempts) ? Math.max(1, Math.floor(opts.maxAttempts ?? 3)) : 3;
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
   const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, 5);
   const signal = opts.signal;
 
+  if (signal?.aborted) throw createAbortError();
   for (let attempt = 1; ; attempt++) {
     try {
       return await fn();
