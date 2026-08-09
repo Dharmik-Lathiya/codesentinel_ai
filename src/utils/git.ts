@@ -131,20 +131,20 @@ export async function collectDiff(
 
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
-    for (const path of untracked) {
-      const full = resolve(workspaceRoot, path);
+    for (const untrackedPath of untracked) {
+      const full = resolve(workspaceRoot, untrackedPath);
       const rel = relative(workspaceRoot, full);
       if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${path}`);
+        logger.warn(`Skipping path outside workspace: ${untrackedPath}`);
         continue;
       }
       let content = "";
       try {
         content = await readContent(full);
       } catch {
-        logger.debug(`Could not read content for ${path}`);
+        logger.debug(`Could not read content for ${untrackedPath}`);
       }
-      files.push({ path, status: "added", content, diff: "" });
+      files.push({ path: untrackedPath, status: "added", content, diff: "" });
     }
   }
     files.push({ path, status, content, diff });
@@ -157,12 +157,104 @@ function splitDiffByPath(diffText: string): Map<string, string> {
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
     const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-    if (!match) continue;
-    const path = match[2] === "dev/null" ? match[1] : match[2];
+    const paths = diffHeaderPaths(firstLine);
+    if (!paths) continue;
+    const path = paths.b === "dev/null" ? paths.a : paths.b;
     byPath.set(path, part);
   }
   return byPath;
+}
+
+/**
+ * Extract the `a/<path>` and `b/<path>` paths from a `diff --git` header
+ * line, decoding Git's C-style quoting so the returned paths are raw bytes
+ * that align with `--name-status` / `--name-status -z` output.
+ */
+function diffHeaderPaths(header: string): { a: string; b: string } | null {
+  const quoted = header.includes('"');
+  if (!quoted) {
+    const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(header);
+    if (!match) return null;
+    return { a: match[1], b: match[2] };
+  }
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < header.length) {
+    if (header[i] === " ") {
+      i++;
+      continue;
+    }
+    if (header[i] === '"') {
+      const token = unquoteGitToken(header, i);
+      tokens.push(token.value);
+      i = token.end;
+    } else {
+      const next = header.indexOf(" ", i);
+      tokens.push(header.slice(i, next === -1 ? undefined : next));
+      i = next === -1 ? header.length : next;
+    }
+  }
+  if (tokens.length !== 2) return null;
+  const a = tokens[0];
+  const b = tokens[1];
+  return {
+    a: a.startsWith("a/") ? a.slice(2) : a,
+    b: b.startsWith("b/") ? b.slice(2) : b,
+  };
+}
+
+/** Decode a single Git C-quoted token starting at the opening double quote. */
+function unquoteGitToken(
+  source: string,
+  start: number,
+): { value: string; end: number } {
+  let value = "";
+  let i = start + 1;
+  while (i < source.length && source[i] !== '"') {
+    const ch = source[i];
+    if (ch !== "\\") {
+      value += ch;
+      i++;
+      continue;
+    }
+    const next = source[i + 1];
+    let consumed = 2;
+    if (next !== undefined && next >= "0" && next <= "7") {
+      let octal = "";
+      let j = i + 1;
+      while (
+        j < source.length &&
+        octal.length < 3 &&
+        source[j] >= "0" &&
+        source[j] <= "7"
+      ) {
+        octal += source[j];
+        j++;
+      }
+      value += String.fromCharCode(parseInt(octal, 8));
+      consumed = j - i;
+    } else {
+      const escapes: Record<string, string> = {
+        a: "\x07",
+        b: "\b",
+        f: "\f",
+        n: "\n",
+        r: "\r",
+        t: "\t",
+        v: "\v",
+        "\\": "\\",
+        '"': '"',
+      };
+      value += escapes[next] ?? next;
+    }
+    i += consumed;
+  }
+  return {
+    // Quoted tokens hold one character per raw byte; re-decode those bytes as
+    // UTF-8 so the key matches the (UTF-8 decoded) --name-status output.
+    value: Buffer.from(value, "latin1").toString("utf8"),
+    end: Math.min(i + 1, source.length),
+  };
 }
 
 async function listUntrackedFiles(cwd: string): Promise<string[]> {
