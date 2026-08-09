@@ -5,10 +5,12 @@ const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
 const HTTP_STATUS_RATE_LIMIT = 429;
 const HTTP_STATUS_SERVICE_UNAVAILABLE = 503;
 const HTTP_STATUS_BAD_GATEWAY = 502;
+const HTTP_STATUS_INTERNAL_SERVER_ERROR = 500;
 const RETRYABLE_STATUS_CODES = new Set([
   HTTP_STATUS_RATE_LIMIT,
   HTTP_STATUS_SERVICE_UNAVAILABLE,
   HTTP_STATUS_BAD_GATEWAY,
+  HTTP_STATUS_INTERNAL_SERVER_ERROR,
 ]);
 
 export interface RetryOptions {
@@ -60,8 +62,9 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     const msg = err.message;
     return (
       /\brate[\s-]*limit(?:ed)?\b/i.test(msg) ||
-      new RegExp(`\\b(?:${HTTP_STATUS_RATE_LIMIT}|${HTTP_STATUS_SERVICE_UNAVAILABLE}|${HTTP_STATUS_BAD_GATEWAY})\\b`).test(msg) ||
+      new RegExp(`\b(?:status|http|code)\b[^0-9]*(?:${HTTP_STATUS_RATE_LIMIT}|${HTTP_STATUS_SERVICE_UNAVAILABLE}|${HTTP_STATUS_BAD_GATEWAY}|${HTTP_STATUS_INTERNAL_SERVER_ERROR})\b`, "i").test(msg) ||
       /\btimeout\b/i.test(msg) ||
+      /\btimed\s*out\b/i.test(msg) ||
       /\beconnreset\b/i.test(msg) ||
       /\boverloaded\b/i.test(msg)
     );
@@ -119,7 +122,7 @@ export async function retry<T>(
       const capped = Math.min(maxDelayMs, backoff);
       const delay = capped * (0.5 + Math.random() * 0.5);
       logger.warn(
-        `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
+        `Attempt ${attempt}/${maxAttempts} failed, retrying in ${Math.round(delay)}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
       await sleep(delay, signal);
     }
