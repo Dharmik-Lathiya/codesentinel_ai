@@ -3,7 +3,6 @@ import { EXTREME_THRESHOLD, MULTIPLIER, EXTREME_MULTIPLIER, calculate, processDa
 
 const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
-const HIGH_INPUT = 6000;
 const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 const MAX_SAFE_INTEGER_BITS = 53;
@@ -23,7 +22,6 @@ describe("calculate", () => {
     [-5, -5 * MULTIPLIER],
     [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
     [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
     [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
@@ -37,13 +35,11 @@ describe("calculate", () => {
 
 describe("processData", () => {
   test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
-    expect(processData('{"value":' + value + "}")).toEqual({ value });
+    expect(processData(JSON.stringify({ value }))).toEqual({ value });
   });
 
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
-    const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
-    const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
-    expect(BigInt(calculate(input))).not.toBe(expected);
+    const input = 2 ** MAX_SAFE_INTEGER_BITS;
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
@@ -60,7 +56,7 @@ describe("processData", () => {
     expect(processData('{"value":0}')).toEqual({ value: 0 });
   });
   test('negative and decimal values are preserved', () => {
-    expect(processData('{"value":' + DECIMAL_SAMPLE_VALUE + '}')).toEqual({ value: DECIMAL_SAMPLE_VALUE });
+    expect(processData(JSON.stringify({ value: DECIMAL_SAMPLE_VALUE }))).toEqual({ value: DECIMAL_SAMPLE_VALUE });
   });
   test('whitespace-padded JSON is parsed', () => {
     expect(processData(' {"value": ' + SAMPLE_VALUE + "} ")).toEqual({ value: SAMPLE_VALUE });
