@@ -10,27 +10,23 @@ const MAX_SAFE_INTEGER_BITS = 53;
 const DECIMAL_FRACTION = 25;
 const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
 
-/**
- * Scales the input by a fixed multiplier.
- * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
- */
 
 
 describe("calculate", () => {
   test.each([
     [0, 0],
-    [-5, -5 * MULTIPLIER],
-    [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
-    [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    [-5, -50],
+    [BELOW_THRESHOLD_INPUT, 49990],
+    [MODERATE_INPUT, 50000],
+    [HIGH_INPUT, 60000],
+    [BELOW_EXTREME_INPUT, 99990],
+    [EXTREME_THRESHOLD - 1, 99990],
+    [EXTREME_THRESHOLD, 100000],
+    [EXTREME_THRESHOLD + 1, 10001000],
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
-  ])('boundary value %i', (input, expected) => {
+  ])('boundary value %s', (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
 });
@@ -43,7 +39,7 @@ describe("processData", () => {
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
     const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
     const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
-    expect(BigInt(calculate(input))).not.toBe(expected);
+    expect(BigInt(Math.round(calculate(input)))).not.toBe(expected);
     expect(Number.isSafeInteger(calculate(input))).toBe(false);
   });
   test.each([
