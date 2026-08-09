@@ -659,6 +659,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     } else {
       try {
@@ -666,6 +667,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     }
     return;
@@ -678,6 +680,7 @@ async function main(): Promise<void> {
       "max-iterations": { type: "string" },
       "auto-fix": { type: "boolean", default: false },
       scoring: { type: "boolean", default: true },
+      "no-scoring": { type: "boolean", default: false },
       "test-gen": { type: "boolean", default: false },
       provider: { type: "string" },
       ask: { type: "string" },
@@ -747,7 +750,11 @@ async function main(): Promise<void> {
   if (modeArg) overrides.mode = modeArg as Mode;
   if (values["max-iterations"]) overrides.max_iterations = Number(values["max-iterations"]);
   if (values["auto-fix"]) overrides.enable_auto_fix = true;
-  if (values.scoring !== undefined) overrides.enable_scoring = values.scoring;
+  if (values["no-scoring"]) {
+    overrides.enable_scoring = false;
+  } else {
+    overrides.enable_scoring = values.scoring;
+  }
   if (values["test-gen"]) overrides.enable_test_generation = true;
   if (values.context) overrides.project_context = values.context;
   if (values["improve-type"]) overrides.improve_type = values["improve-type"] as "test" | "util" | "doc";
@@ -790,18 +797,19 @@ async function main(): Promise<void> {
   if (values["use-opencode-cli"]) {
     overrides.use_opencode_cli = true;
   }
+  let yamlConfigPath: string | undefined;
   if (values["yaml-config"] && !values.config) {
     const searchPaths = [".opencode-reviewer.yml", ".codesentinel.yml", "codesentinel.config.yml"];
     for (const p of searchPaths) {
       if (existsSync(resolve(process.cwd(), p))) {
-        overrides.configFile = p;
+        yamlConfigPath = p;
         break;
       }
     }
   }
 
   const engine = Engine.fromInputs({
-    configPath: values.config,
+    configPath: values.config ?? yamlConfigPath,
     overrides,
     secrets,
   });
