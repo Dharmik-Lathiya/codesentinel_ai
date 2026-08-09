@@ -597,11 +597,27 @@ async function main(): Promise<void> {
 
   // Handle top-level commands
   if (args[0] === "setup") {
+    if (args.includes("--help") || args.includes("-h")) {
+      showHelp();
+      return;
+    }
+    if (args.includes("--version")) {
+      showVersion();
+      return;
+    }
     runSetup(args.includes("--force"));
     return;
   }
 
   if (args[0] === "init-hook") {
+    if (args.includes("--help") || args.includes("-h")) {
+      showHelp();
+      return;
+    }
+    if (args.includes("--version")) {
+      showVersion();
+      return;
+    }
     const root = process.cwd();
     const typeIdx = args.indexOf("--type");
     const hookType = typeIdx >= 0 && args[typeIdx + 1] === "post-commit" ? "post-commit" : "pre-commit";
@@ -614,6 +630,14 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "dashboard") {
+    if (args.includes("--help") || args.includes("-h")) {
+      showHelp();
+      return;
+    }
+    if (args.includes("--version")) {
+      showVersion();
+      return;
+    }
     const engine = Engine.fromInputs({ secrets: loadSecrets() });
     const dash = engine.getDashboard();
     if (!dash) {
@@ -625,8 +649,9 @@ async function main(): Promise<void> {
     process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
     process.stdout.write("Press Ctrl+C to stop.\n");
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
-      process.on(signal, () => {
-        dash.stop();
+      process.on(signal, async () => {
+        await dash.stop();
+        process.exit(0);
       });
     }
     return;
@@ -735,6 +760,11 @@ async function main(): Promise<void> {
   }
 
   if (values["log-level"]) {
+    if (!["debug", "info", "warn", "error"].includes(values["log-level"])) {
+      process.stderr.write(`Invalid --log-level: '${values["log-level"]}' (expected debug | info | warn | error)\n`);
+      process.exitCode = 1;
+      return;
+    }
     logger.level = values["log-level"] as LogLevel;
   }
   if (values.json) {
@@ -807,7 +837,22 @@ async function main(): Promise<void> {
   });
 
   const runMode = modeArg ?? engine.config.mode;
-  process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+  if (modeArg === "chat" && !values["ask"]) {
+    process.stderr.write("Chat mode requires --ask <question>.\n");
+    showHelp();
+    process.exitCode = 1;
+    return;
+  }
+  if (values["ask"] && modeArg && modeArg !== "chat") {
+    process.stderr.write(`--ask is only valid in chat mode, not '${modeArg}'.\n`);
+    process.exitCode = 1;
+    return;
+  }
+  if (values.json || values.sarif || values.jsonl) {
+    process.stderr.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+  } else {
+    process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
+  }
 
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     try {
