@@ -40,6 +40,11 @@ const SEVERITY_PENALTY: Record<Severity, number> = {
   high: HIGH_SEVERITY_PENALTY,
   critical: CRITICAL_SEVERITY_PENALTY,
 };
+/** Readability heuristic thresholds and weights. */
+const LONG_LINE_LENGTH_THRESHOLD = 120;
+const LONG_LINE_PENALTY = 2;
+const COMMENT_RATIO_BONUS = 20;
+const MIN_READABILITY_SCORE = 20;
 
 /**
  * Scorer computes a deterministic baseline quality score from static findings
@@ -153,11 +158,11 @@ export class Scorer {
         (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
       ).length;
       const commentRatio = lines.length ? commentLines / lines.length : 0;
-      const longLines = lines.filter((l) => l.length > 120).length;
-      const score = 100 - longLines * 2 + commentRatio * 20;
-      total += Math.max(20, score);
+      const longLines = lines.filter((l) => l.length > LONG_LINE_LENGTH_THRESHOLD).length;
+      const score = MAX_SCORE - longLines * LONG_LINE_PENALTY + commentRatio * COMMENT_RATIO_BONUS;
+      total += Math.max(MIN_READABILITY_SCORE, score);
     }
-    return fileCount ? total / fileCount : 100;
+    return fileCount ? total / fileCount : MAX_SCORE;
   }
 
   /** Coverage heuristic: fraction of source files that have a related test. */

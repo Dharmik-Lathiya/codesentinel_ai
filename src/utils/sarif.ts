@@ -44,6 +44,21 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
+const SARIF_SCHEMA_URL =
+  "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json";
+
+let warnedUnknownSeverity = false;
+
+function resolveLevel(severity: string): "error" | "warning" | "note" {
+  const level = SEVERITY_MAP[severity];
+  if (level) return level;
+  if (!warnedUnknownSeverity) {
+    warnedUnknownSeverity = true;
+    console.warn(`sarif: unknown severity "${severity}" mapped to "warning"`);
+  }
+  return "warning";
+}
+
 const COMMENT_TRUNCATION_LENGTH = 40;
 const HASH_RADIX = 36;
 
@@ -72,7 +87,7 @@ function createRuleId(
 ): string {
   const hash = simpleHash(comment);
   let ruleId = `${base}:${hash}`;
-  for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== comment; n++) {
+  for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== truncateComment(comment); n++) {
     ruleId = `${base}:${hash}:${n}`;
   }
   return ruleId;
@@ -102,7 +117,7 @@ function createSarifLocation(file: string, line?: number): SarifResult["location
   return {
     physicalLocation: {
       artifactLocation: { uri: createArtifactUri(file) },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      ...(line != null && Number.isInteger(line) && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }
@@ -143,14 +158,14 @@ export function renderSarif(report: EngineReport): string {
     }
     results.push({
       ruleId,
-      level: SEVERITY_MAP[f.severity] ?? "note",
+      level: resolveLevel(f.severity),
       message: { text: f.comment },
       locations: [createSarifLocation(f.file, f.line ?? undefined)],
     });
   }
 
   const sarif: SarifLog = {
-    $schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+    $schema: SARIF_SCHEMA_URL,
     version: "2.1.0",
     runs: [createSarifRun(rules, results)],
   };
