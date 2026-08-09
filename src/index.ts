@@ -380,20 +380,20 @@ export const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git pull --rebase --autostash origin ${{ github.ref_name }} 2>&1 || true",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            AUTH_HEADER=\"AUTHORIZATION: basic $(printf \"x-access-token:${GIT_PUSH_TOKEN}\" | base64)\"",
+  "            git -c http.extraheader=\"$AUTH_HEADER\" pull --rebase --autostash origin ${{ github.ref_name }} 2>&1 || true",
+  "            git -c http.extraheader=\"$AUTH_HEADER\" push origin HEAD:${{ github.ref_name }} 2>&1",
   "            if [ $? -ne 0 ]; then",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
-  "              git fetch origin ${{ github.ref_name }} 2>&1",
+  "              git -c http.extraheader=\"$AUTH_HEADER\" fetch origin ${{ github.ref_name }} 2>&1",
   "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
-  "              git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "              git -c http.extraheader=\"$AUTH_HEADER\" push origin HEAD:${{ github.ref_name }} 2>&1",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "            git -c http.extraheader=\"$AUTH_HEADER\" push origin HEAD:${{ github.ref_name }} 2>&1",
+  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
@@ -537,6 +537,8 @@ Options:
   --ask <question>            Ask a question (activates chat mode)
   --context <text>            Free-form project context for prompts
   --dry-run                   Show what would be fixed without writing (fix mode)
+  --json                      Output results as JSON
+  --sarif                     Output results as SARIF
   --jsonl                     Output AI review results in JSONL format
   --mcp                       Enable MCP server integration for library docs
   --learning-db <path>        Enable self-learning store at path
@@ -816,8 +818,11 @@ async function main(): Promise<void> {
     } catch (err) {
       process.stderr.write(`Chat query failed: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exitCode = 1;
+      process.exitCode = 1;
     }
     return;
+  } else if (values["ask"]) {
+    process.stderr.write(`--ask ignored in mode ${modeArg}; use 'chat'\n`);
   }
 
   // Special handling for deadcode mode — run in-process without AI
