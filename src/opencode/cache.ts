@@ -116,7 +116,9 @@ export class LearningCache {
   async get(key: string): Promise<Lesson[]> {
     const entry = await this.backend.get(key);
     if (!entry) return [];
-    entry.lessons.forEach((l) => l.hitCount++);
+    for (const l of entry.lessons) {
+      l.hitCount++;
+    }
     await this.backend.set(key, entry);
     return entry.lessons.map((l) => ({ ...l }));
   }
@@ -125,23 +127,27 @@ export class LearningCache {
     return this.withLock(key, async () => {
       const existing = await this.backend.get(key);
       if (existing) {
-        const idx = existing.lessons.findIndex((l) => l.pattern === lesson.pattern);
-        if (idx >= 0) {
-          existing.lessons[idx] = lesson;
-        } else {
-          existing.lessons.push(lesson);
-        }
-        existing.updatedAt = new Date().toISOString();
+        this.mergeLesson(existing, lesson);
         try { await this.backend.set(key, existing); } catch { /* ignore */ }
       } else {
         const entry: CacheEntry = {
           key,
           lessons: [lesson],
-          updatedAt: new Date().toISOString(),
+          updatedAt: new Date(Date.now()).toISOString(),
         };
         try { await this.backend.set(key, entry); } catch { /* ignore */ }
       }
     });
+  }
+
+  private mergeLesson(entry: CacheEntry, lesson: Lesson): void {
+    const idx = entry.lessons.findIndex((l) => l.pattern === lesson.pattern);
+    if (idx >= 0) {
+      entry.lessons[idx] = lesson;
+    } else {
+      entry.lessons.push(lesson);
+    }
+    entry.updatedAt = new Date(Date.now()).toISOString();
   }
 
   async getAll(): Promise<Lesson[]> {

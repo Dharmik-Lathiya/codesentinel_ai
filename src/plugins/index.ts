@@ -68,6 +68,15 @@ export class PluginManager {
         );
         return null;
       }
+      for (const hook of ["init", "analyze", "score"] as const) {
+        const fn = (plugin as unknown as Record<string, unknown>)[hook];
+        if (fn !== undefined && typeof fn !== "function") {
+          this.ctx.logger.warn(
+            `Plugin "${path}" property "${hook}" must be a function.`,
+          );
+          return null;
+        }
+      }
       return plugin;
     } catch (err) {
       this.ctx.logger.warn(`Failed to load plugin "${path}":`, err);
