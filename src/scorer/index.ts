@@ -27,7 +27,7 @@ export const WEIGHTS = {
 
 const MAX_SCORE = 100;
 
-const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
+const clamp = (n: number): number => Number.isFinite(n) ? Math.max(0, Math.min(MAX_SCORE, n)) : 0;
 
 
 const HIGH_SEVERITY_PENALTY = 16;
@@ -40,7 +40,13 @@ const SEVERITY_PENALTY: Record<Severity, number> = {
   high: HIGH_SEVERITY_PENALTY,
   critical: CRITICAL_SEVERITY_PENALTY,
 };
-/** Readability heuristic thresholds and weights. */
+/**
+ * Readability heuristic thresholds and weights (tuning knobs).
+ * Lines longer than LONG_LINE_LENGTH_THRESHOLD cost LONG_LINE_PENALTY
+ * points each; COMMENT_RATIO_BONUS rewards comment density;
+ * MIN_READABILITY_SCORE floors the per-file readability. Calibrate
+ * these by reviewing scored samples before changing them.
+ */
 const LONG_LINE_LENGTH_THRESHOLD = 120;
 const LONG_LINE_PENALTY = 2;
 const COMMENT_RATIO_BONUS = 20;
@@ -70,7 +76,7 @@ export class Scorer {
     const security = clamp(MAX_SCORE - securityPenalty);
     const maintainability = clamp(MAX_SCORE - smellPenalty);
 
-    // Readability proxy: average function length / comment presence.
+    // Readability proxy: long-line density and comment density.
     const readability = clamp(this.readabilityMetric(files));
 
     // Test coverage proxy: ratio of source files that have a sibling test.
@@ -108,7 +114,7 @@ export class Scorer {
     let security: number;
     switch (strategy) {
       case "avg":
-        security = Math.round(((ai.security ?? baseline.security) + baseline.security) / 2);
+      security = ((ai.security ?? baseline.security) + baseline.security) / 2;
         break;
       case "static-only":
         security = baseline.security;
@@ -142,7 +148,14 @@ export class Scorer {
         security * WEIGHTS.security +
         test_coverage * WEIGHTS.test_coverage,
     );
-    return { readability, maintainability, security, test_coverage, overall, rationale: b.rationale };
+    return {
+      readability: Math.round(readability),
+      maintainability: Math.round(maintainability),
+      security: Math.round(security),
+      test_coverage: Math.round(test_coverage),
+      overall: Math.round(overall),
+      rationale: b.rationale,
+    };
   }
 
   /** Readability heuristic: penalize very long functions and reward comments. */
@@ -154,15 +167,81 @@ export class Scorer {
     for (const { content } of files) {
       fileCount++;
       const lines = content.split("\n");
-      const commentLines = lines.filter(
-        (l) => /^\s*(\/\/|#|\/\*|\*)/.test(l),
-      ).length;
+      const commentLines = this.countCommentLines(content);
       const commentRatio = lines.length ? commentLines / lines.length : 0;
       const longLines = lines.filter((l) => l.length > LONG_LINE_LENGTH_THRESHOLD).length;
       const score = MAX_SCORE - longLines * LONG_LINE_PENALTY + commentRatio * COMMENT_RATIO_BONUS;
       total += Math.max(MIN_READABILITY_SCORE, score);
     }
     return fileCount ? total / fileCount : MAX_SCORE;
+  }
+
+  /** Count lines holding real comment tokens, ignoring strings and template literals. */
+  private countCommentLines(content: string): number {
+    const lines = content.split("\n");
+    let count = 0;
+    let inBlock = false;
+    let inTemplate = false;
+    for (const line of lines) {
+      let counted = false;
+      let sawCode = false;
+      let inString: string | null = inTemplate ? "`" : null;
+      if (inBlock) {
+        count++;
+        counted = true;
+      }
+      for (let ci = 0; ci < line.length; ci++) {
+        const ch = line[ci];
+        const next = line[ci + 1];
+        if (inString) {
+          if (ch === "\\") {
+            ci++;
+          } else if (ch === inString) {
+            inString = null;
+            if (ch === "`") inTemplate = false;
+          }
+          continue;
+        }
+        if (inBlock) {
+          if (ch === "*" && next === "/") {
+            inBlock = false;
+            ci++;
+          }
+          continue;
+        }
+        if (ch === "'" || ch.charCodeAt(0) === 34 || ch === "`") {
+          inString = ch;
+          if (ch === "`") inTemplate = true;
+          sawCode = true;
+          continue;
+        }
+        if (ch === "/" && next === "/") {
+          if (!sawCode && !counted) {
+            count++;
+            counted = true;
+          }
+          break;
+        }
+        if (ch === "/" && next === "*") {
+          inBlock = true;
+          if (!sawCode && !counted) {
+            count++;
+            counted = true;
+          }
+          ci++;
+          continue;
+        }
+        if ((ch === "#" || ch === "*") && !sawCode) {
+          if (!counted) {
+            count++;
+            counted = true;
+          }
+          break;
+        }
+        if (ch.charCodeAt(0) > 32) sawCode = true;
+      }
+    }
+    return count;
   }
 
   /** Coverage heuristic: fraction of source files that have a related test. */
