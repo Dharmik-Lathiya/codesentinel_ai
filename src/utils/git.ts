@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { promisify } from "node:util";
-import { isAbsolute, relative, resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { logger } from "./logger.js";
 
 const exec = promisify(execFile);
@@ -53,6 +53,38 @@ export interface DiffFile {
 }
 
 /**
+ * Return true when a resolved path falls within the given workspace root.
+ * Paths that resolve to an ancestor directory (leading `..` segment) or to
+ * the root itself are treated as outside the workspace.
+ */
+function isInsideWorkspace(fullPath: string, cwd: string): boolean {
+  const rel = relative(cwd, fullPath);
+  return rel !== "" && rel.split(/[/\\/]/)[0] !== "..";
+}
+
+export interface NameStatusPair {
+  status: DiffFile["status"];
+  path: string;
+}
+
+/**
+ * Parse `git diff --name-status -z` output into (status, path) pairs,
+ * skipping unknown status codes.
+ */
+export function parseNameStatus(nameStatus: string): NameStatusPair[] {
+  const entries = nameStatus.split("\0");
+  const pairs: NameStatusPair[] = [];
+  for (let i = 0; i < entries.length - 1; i += 2) {
+    const statusCode = entries[i];
+    const path = entries[i + 1];
+    if (!statusCode || !path) continue;
+    const status = mapStatus(statusCode);
+    if (!status) continue;
+    pairs.push({ status, path });
+  }
+  return pairs;
+}
+/**
  * Collect the changed files for the current PR/branch relative to a base ref.
  * Falls back to the working tree diff when no base ref is supplied and no
  * upstream branch is configured.
@@ -103,18 +135,11 @@ export async function collectDiff(
   const diffByPath = splitDiffByPath(diffText);
 
   const files: DiffFile[] = [];
-  const nameStatusEntries = nameStatus.split("\0");
-  for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
-    const statusCode = nameStatusEntries[i];
-    const path = nameStatusEntries[i + 1];
-    if (!statusCode || !path) continue;
-    const status = mapStatus(statusCode);
-    if (!status) continue;
+  for (const { status, path } of parseNameStatus(nameStatus)) {
     let content = "";
     if (status !== "deleted") {
       const full = resolve(workspaceRoot, path);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      if (!isInsideWorkspace(full, workspaceRoot)) {
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
@@ -129,30 +154,29 @@ export async function collectDiff(
       logger.warn(`Could not collect diff for ${path}`);
     }
 
-  if (baseRef === undefined) {
-    const untracked = await listUntrackedFiles(cwd);
-    for (const untrackedPath of untracked) {
-      const full = resolve(workspaceRoot, untrackedPath);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${untrackedPath}`);
-        continue;
+    if (baseRef === undefined) {
+      const untracked = await listUntrackedFiles(cwd);
+      for (const untrackedPath of untracked) {
+        const full = resolve(workspaceRoot, untrackedPath);
+        if (!isInsideWorkspace(full, workspaceRoot)) {
+          logger.warn(`Skipping path outside workspace: ${untrackedPath}`);
+          continue;
+        }
+        let content = "";
+        try {
+          content = await readContent(full);
+        } catch {
+          logger.debug(`Could not read content for ${untrackedPath}`);
+        }
+        files.push({ path: untrackedPath, status: "added", content, diff: "" });
       }
-      let content = "";
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${untrackedPath}`);
-      }
-      files.push({ path: untrackedPath, status: "added", content, diff: "" });
     }
-  }
     files.push({ path, status, content, diff });
   }
   return files;
 }
 
-function splitDiffByPath(diffText: string): Map<string, string> {
+export function splitDiffByPath(diffText: string): Map<string, string> {
   const byPath = new Map<string, string>();
   for (const part of diffText.split(/(?=^diff --git )/m)) {
     if (!part.startsWith("diff --git ")) continue;
@@ -170,7 +194,7 @@ function splitDiffByPath(diffText: string): Map<string, string> {
  * line, decoding Git's C-style quoting so the returned paths are raw bytes
  * that align with `--name-status` / `--name-status -z` output.
  */
-function diffHeaderPaths(header: string): { a: string; b: string } | null {
+export function diffHeaderPaths(header: string): { a: string; b: string } | null {
   const quoted = header.includes('"');
   if (!quoted) {
     const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(header);
@@ -204,7 +228,7 @@ function diffHeaderPaths(header: string): { a: string; b: string } | null {
 }
 
 /** Decode a single Git C-quoted token starting at the opening double quote. */
-function unquoteGitToken(
+export function unquoteGitToken(
   source: string,
   start: number,
 ): { value: string; end: number } {

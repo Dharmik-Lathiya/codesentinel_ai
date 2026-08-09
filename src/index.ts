@@ -529,7 +529,7 @@ Options:
   -m, --mode <mode>           Operational mode
   -c, --config <path>         Path to codesentinel.config.json
   --provider <name>           AI provider (openai | anthropic | gemini | opencode)
-                              Overrides all task models at once
+                              Overrides default and the 7 core task models (improve/plan use the default)
   --max-iterations <n>        Max fix iterations (default: 5)
   --auto-fix                  Apply fixes automatically
   --scoring / --no-scoring    Enable/disable scoring (default: enabled)
@@ -565,7 +565,7 @@ Examples:
   codesentinel score --provider opencode
   codesentinel chat --ask "How does auth work?"
   codesentinel audit --context "Node.js REST API"
-   codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
+  codesentinel gate --min-score ${DEFAULT_GATE_MIN_SCORE} --max-critical 0
   codesentinel init-hook
   codesentinel init-hook --type post-commit
   codesentinel dashboard
@@ -828,8 +828,13 @@ async function main(): Promise<void> {
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
-  if (values["ask"] && (modeArg === "chat" || !modeArg)) {
+  if (values["ask"] !== undefined && (modeArg === "chat" || !modeArg)) {
     try {
+      if (values["ask"] === "") {
+        process.stderr.write("Chat query failed: --ask requires a non-empty question.\n");
+        process.exitCode = 1;
+        return;
+      }
       const answer = await engine.ask(values["ask"]);
       process.stdout.write(answer + "\n");
     } catch (err) {
