@@ -20,6 +20,7 @@ const MAX_ISSUE_BODY_LENGTH = 8000;
 const NODE_VERSION = 20;
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 const VALID_MODES = new Set<string>(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"]);
+const PROVIDERS = new Set<string>(["openai", "anthropic", "gemini", "opencode", "opencode-cli"]);
 
 function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
@@ -541,7 +542,11 @@ Options:
   --ask <question>            Ask a question (activates chat mode)
   --context <text>            Free-form project context for prompts
   --dry-run                   Show what would be fixed without writing (fix mode)
-  --jsonl                     Output AI review results in JSONL format
+  --json                      Output the full report as JSON
+  --jsonl                     Output AI review results as JSONL (one finding per line)
+  --sarif                     Output findings as SARIF 2.1.0
+  --improve-type <type>       Improve type for improve mode: test | util | doc
+  --use-opencode-cli          Use the opencode CLI (run) instead of the library provider
   --mcp                       Enable MCP server integration for library docs
   --learning-db <path>        Enable self-learning store at path
   --yaml-config               Enable YAML config file discovery (.opencode-reviewer.yml)
@@ -773,6 +778,11 @@ async function main(): Promise<void> {
   }
 
   if (values.provider) {
+    if (!PROVIDERS.has(values.provider)) {
+      process.stderr.write(`Unknown provider: '${values.provider}' (expected one of: ${[...PROVIDERS].join(", ")})\n`);
+      process.exitCode = 1;
+      return;
+    }
     const providerModel: ModelConfig = { provider: values.provider as Provider, model: "default" };
     overrides.default_model = providerModel;
     overrides.models = {
@@ -836,7 +846,7 @@ async function main(): Promise<void> {
     try {
       findings = await engine.runDeadCode(files);
     } catch (err) {
-      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.stderr.write(`Deadcode analysis failed: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exitCode = 1;
       return;
     }
