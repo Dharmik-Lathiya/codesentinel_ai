@@ -32,7 +32,7 @@ const REPORT_STYLES = `  <style>
     .score-ring { width: 80px; height: 80px; border-radius: ${SCORE_RING_RADIUS_PERCENT}; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: ${BOLD_FONT_WEIGHT}; color: #fff; }
     table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
-    td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
+    td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; white-space: pre-wrap; word-break: break-word; }
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
@@ -161,12 +161,13 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
 
 function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
   if (items.length === 0) return "";
-  const maxCount = Math.max(...items.map((item) => item.value));
+  let maxCount = 0;
+  for (const it of items) maxCount = Math.max(maxCount, it.value);
   return `<h2>${escapeHtml(title)}</h2>
   <div class="bar-chart">
     ${items
       .map((item) => {
-        const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
+        const height = barHeightPercent(item.value, maxCount);
         return `<div class="bar">
         <div class="bar-value">${item.value}</div>
         <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
@@ -175,6 +176,10 @@ function renderBarChart(title: string, items: { key: string; value: number; colo
       })
       .join("\n    ")}
   </div>`;
+}
+
+function barHeightPercent(value: number, max: number): number {
+  return max > 0 ? Math.round((value / max) * BAR_HEIGHT_PERCENT) : 0;
 }
 
 function renderFindingsTable(count: number, rows: string): string {

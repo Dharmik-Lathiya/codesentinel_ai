@@ -27,12 +27,28 @@ export interface RetryOptions {
    * throws (strings, plain objects) are never retried.
    */
   shouldRetry?: (err: unknown) => boolean;
+  /**
+   * Optional AbortSignal. The sleep between retries races against this signal;
+   * when it aborts, `retry` rejects with an `AbortError` so callers can
+   * distinguish cancellation from failure.
+   */
+  signal?: AbortSignal;
 }
 
 const getErrorStatus = (err: unknown): number | undefined => {
   if (typeof err !== "object" || err === null) return undefined;
-  const status = (err as Record<string, unknown>).status ?? (err as Record<string, unknown>).statusCode;
-  return typeof status === "number" ? status : undefined;
+  const record = err as Record<string, unknown>;
+  const direct = record.status ?? record.statusCode;
+  if (typeof direct === "number") return direct;
+  const response = record.response;
+  if (
+    typeof response === "object" &&
+    response !== null &&
+    typeof (response as Record<string, unknown>).status === "number"
+  ) {
+    return (response as Record<string, unknown>).status as number;
+  }
+  return undefined;
 };
 
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
@@ -41,21 +57,41 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
     return RETRYABLE_STATUS_CODES.has(status);
   }
   if (err instanceof Error) {
-    const msg = err.message.toLowerCase();
+    const msg = err.message;
     return (
-      msg.includes("rate limit") ||
-      msg.includes("rate-limited") ||
-      msg.includes(String(HTTP_STATUS_RATE_LIMIT)) ||
-      msg.includes(String(HTTP_STATUS_SERVICE_UNAVAILABLE)) ||
-      msg.includes(String(HTTP_STATUS_BAD_GATEWAY)) ||
-      msg.includes("timeout") ||
-      msg.includes("econnreset") ||
-      msg.includes("overloaded")
+      /\brate[\s-]*limit(?:ed)?\b/i.test(msg) ||
+      /\b(?:429|502|503)\b/.test(msg) ||
+      /\btimeout\b/i.test(msg) ||
+      /\beconnreset\b/i.test(msg) ||
+      /\boverloaded\b/i.test(msg)
     );
   }
   return false;
 };
 
+const createAbortError = (): Error => {
+  const error = new Error("retry aborted by signal");
+  error.name = "AbortError";
+  return error;
+};
+
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(createAbortError());
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 /**
  * Retry an async operation with exponential backoff. Only retries on transient
  * errors (rate limits, 5xx, timeouts). Throws the original error on permanent
@@ -69,6 +105,7 @@ export async function retry<T>(
   const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
   const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, 5);
+  const signal = opts.signal;
 
   for (let attempt = 1; ; attempt++) {
     try {
@@ -83,7 +120,7 @@ export async function retry<T>(
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
-      await new Promise((r) => setTimeout(r, delay));
+      await sleep(delay, signal);
     }
   }
 }
