@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { EXTREME_THRESHOLD, MULTIPLIER, EXTREME_MULTIPLIER, calculate, processData } from "./src/numeric";
+import { EXTREME_THRESHOLD, MULTIPLIER, EXTREME_MULTIPLIER, calculate, processData } from "../src/numeric";
 
 const BELOW_THRESHOLD_INPUT = 4999;
 const MODERATE_INPUT = 5000;
@@ -11,35 +11,32 @@ const DECIMAL_FRACTION = 25;
 const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
 
 /**
- * Scales the input by a fixed multiplier.
- * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
- */
-
-
-describe("calculate", () => {
+  test.each([
   test.each([
     [0, 0],
-    [-5, -5 * MULTIPLIER],
-    [BELOW_THRESHOLD_INPUT, BELOW_THRESHOLD_INPUT * MULTIPLIER],
-    [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
-    [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
-    [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
-    [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
+    [-5, -15],
+    [BELOW_THRESHOLD_INPUT, 14997],
+    [MODERATE_INPUT, 15000],
+    [HIGH_INPUT, 18000],
+    [BELOW_EXTREME_INPUT, 29997],
+    [EXTREME_THRESHOLD, 30000],
+    [EXTREME_THRESHOLD + 1, 50005],
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
   ])('boundary value %i', (input, expected) => {
     expect(calculate(input)).toBe(expected);
   });
-});
 
+  test("extreme multiplier is larger than the normal multiplier", () => {
+    expect(EXTREME_MULTIPLIER).toBeGreaterThan(MULTIPLIER);
+  });
+});
 describe("processData", () => {
   test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
-    expect(processData('{"value":' + value + "}")).toEqual({ value });
+  test('valid JSON value is parsed and returned', () => {
+    expect(processData('{"value":' + SAMPLE_VALUE + "}")).toEqual({ value: SAMPLE_VALUE });
   });
-
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
     const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
     const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
