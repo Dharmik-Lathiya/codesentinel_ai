@@ -28,7 +28,7 @@ const REPORT_STYLES = `  <style>
     .card { background: #fff; border-radius: 8px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); }
     .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
-    .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
+    .card .sub { font-size: 0.8rem; color: #64748b; margin-top: 0.25rem; }
     .score-ring { width: 80px; height: 80px; border-radius: ${SCORE_RING_RADIUS_PERCENT}; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: ${BOLD_FONT_WEIGHT}; color: #fff; }
     table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
@@ -69,8 +69,9 @@ export function renderHtmlReport(report: EngineReport): string {
 
   const fixRows = report.fixAttempts
     .map((a) => {
-      const status = a.fixed ? (a.verified ? "verified" : "applied") : "skipped";
-      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : "#6b7280";
+      const errored = !a.fixed && a.explanation.startsWith("Error: ");
+      const status = a.fixed ? (a.verified ? "verified" : "applied") : errored ? "failed" : "skipped";
+      const statusColor = a.fixed ? (a.verified ? "#16a34a" : "#d97706") : errored ? "#dc2626" : "#6b7280";
       return `<tr>
         <td>#${a.iteration}</td>
         <td>${escapeHtml(a.file)}</td>
@@ -153,8 +154,7 @@ function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): stri
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-<div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
-
+        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
       </div>
     </div>`;
 }
@@ -214,7 +214,7 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-.replace(/'/g, APOSTROPHE_ENTITY);
+    .replace(/'/g, APOSTROPHE_ENTITY);
 }
 
 function scoreColor(score: number): string {

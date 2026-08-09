@@ -41,20 +41,34 @@ const getErrorStatus = (err: unknown): number | undefined => {
   const direct = record.status ?? record.statusCode;
   if (typeof direct === "number") return direct;
   const response = record.response;
-  if (
-    typeof response === "object" &&
-    response !== null &&
-    typeof (response as Record<string, unknown>).status === "number"
-  ) {
-    return (response as Record<string, unknown>).status as number;
+  if (typeof response === "object" && response !== null) {
+    const responseRecord = response as Record<string, unknown>;
+    const nested = responseRecord.status ?? responseRecord.statusCode;
+    if (typeof nested === "number") return nested;
   }
   return undefined;
 };
 
+const getRetryAfterMs = (err: unknown): number | undefined => {
+  if (typeof err !== "object" || err === null) return undefined;
+  const record = err as Record<string, unknown>;
+  const response = record.response;
+  const headers =
+    (typeof response === "object" && response !== null
+      ? (response as Record<string, unknown>).headers
+      : undefined) ?? record.headers;
+  if (typeof headers !== "object" || headers === null) return undefined;
+  const raw = (headers as Record<string, unknown>)["retry-after"];
+  if (typeof raw !== "string" && typeof raw !== "number") return undefined;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  return seconds * 1000;
+};
+
 const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
   const status = getErrorStatus(err);
-  if (status !== undefined) {
-    return RETRYABLE_STATUS_CODES.has(status);
+  if (status !== undefined && RETRYABLE_STATUS_CODES.has(status)) {
+    return true;
   }
   if (err instanceof Error) {
     const msg = err.message;
@@ -69,22 +83,28 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
   return false;
 };
 
-const createAbortError = (): Error => {
-  const error = new Error("retry aborted by signal");
-  error.name = "AbortError";
+const createAbortError = (cause?: unknown): Error => {
+  const error = new DOMException("retry aborted by signal", "AbortError");
+  if (cause !== undefined) {
+    (error as Error & { cause?: unknown }).cause = cause;
+  }
   return error;
 };
 
-const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+const sleep = (
+  ms: number,
+  signal?: AbortSignal,
+  cause?: unknown,
+): Promise<void> =>
   new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(createAbortError());
+      reject(createAbortError(cause));
       return;
     }
     let timer: ReturnType<typeof setTimeout>;
     const onAbort = (): void => {
       clearTimeout(timer);
-      reject(createAbortError());
+      reject(createAbortError(cause));
     };
     timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
@@ -102,9 +122,17 @@ export async function retry<T>(
   opts: RetryOptions = {},
 ): Promise<T> {
   const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
-  const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
+  const baseDelayMs =
+    typeof opts.baseDelayMs === "number" &&
+    Number.isFinite(opts.baseDelayMs) &&
+    opts.baseDelayMs > 0
+      ? opts.baseDelayMs
+      : DEFAULT_BASE_DELAY_MS;
   const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
-  const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, 5);
+  const maxDelayMs =
+    typeof opts.maxDelayMs === "number" && Number.isFinite(opts.maxDelayMs) && opts.maxDelayMs > 0
+      ? opts.maxDelayMs
+      : baseDelayMs * Math.pow(2, 5);
   const signal = opts.signal;
 
   for (let attempt = 1; ; attempt++) {
@@ -114,13 +142,17 @@ export async function retry<T>(
       if (attempt >= maxAttempts || !shouldRetry(err)) {
         throw err;
       }
-      const backoff = baseDelayMs * Math.pow(2, attempt - 1);
-      const capped = Math.min(maxDelayMs, backoff);
-      const delay = capped * (0.5 + Math.random() * 0.5);
+  const backoff = baseDelayMs * Math.pow(2, attempt - 1);
+  const capped = Math.min(maxDelayMs, backoff);
+  const retryAfterMs = getRetryAfterMs(err);
+  const delay =
+    retryAfterMs !== undefined
+      ? Math.max(backoff, retryAfterMs)
+      : capped * (0.5 + Math.random() * 0.5);
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );
-      await sleep(delay, signal);
+      await sleep(delay, signal, err);
     }
   }
 }

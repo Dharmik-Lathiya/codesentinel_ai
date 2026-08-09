@@ -72,7 +72,7 @@ function createRuleId(
 ): string {
   const hash = simpleHash(comment);
   let ruleId = `${base}:${hash}`;
-  for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== comment; n++) {
+  for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== truncateComment(comment); n++) {
     ruleId = `${base}:${hash}:${n}`;
   }
   return ruleId;
@@ -95,14 +95,14 @@ function createArtifactUri(file: string): string {
   if (isAbsolute) {
     return `file:///${tail}`;
   }
-  return tail;
+  return tail ? `./${tail}` : "./";
 }
 
 function createSarifLocation(file: string, line?: number): SarifResult["locations"][number] {
   return {
     physicalLocation: {
       artifactLocation: { uri: createArtifactUri(file) },
-      ...(line != null ? { region: { startLine: line } } : {}),
+      ...(line != null && line > 0 ? { region: { startLine: line } } : {}),
     },
   };
 }
