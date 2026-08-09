@@ -24,8 +24,26 @@ const VALID_MODES = new Set<string>(["review", "fix", "audit", "score", "testgen
 function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_RE, "");
 }
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function mergeOverride<T extends object>(current: T | undefined, patch: Partial<T>): T {
-  return { ...(current as T), ...patch } as T;
+  if (!isPlainObject(current)) {
+    return { ...(patch as T) };
+  }
+  const merged: Record<string, unknown> = { ...current };
+  for (const key of Object.keys(patch) as (keyof T)[]) {
+    const value = patch[key];
+    if (value === undefined) continue;
+    const baseValue = merged[key as string];
+    if (isPlainObject(baseValue) && isPlainObject(value)) {
+      merged[key as string] = mergeOverride(baseValue, value);
+    } else {
+      merged[key as string] = value;
+    }
+  }
+  return merged as T;
 }
 
 function loadSecrets(): RuntimeSecrets {
@@ -48,7 +66,9 @@ export interface DismissArgs {
   error?: string;
 }
 
-function parseRuleDismissArgs(dismissArgs: string[]): DismissArgs {
+const DISMISS_FLAG_REGEX = /^--(file|line|rule-id|reason)$/;
+
+export function parseRuleDismissArgs(dismissArgs: string[]): DismissArgs {
   const ruleIdx = dismissArgs.indexOf("--rule");
   const ruleId = dismissArgs[ruleIdx + 1];
   if (!ruleId || ruleId.startsWith("--")) {
@@ -62,12 +82,12 @@ function parseRuleDismissArgs(dismissArgs: string[]): DismissArgs {
     }
     return { reason: "dismissed by user", error: "Missing value for --reason." };
   }
-  const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && arg.startsWith("--"));
+  const endIdx = dismissArgs.findIndex((arg, i) => i > ruleIdx + 1 && DISMISS_FLAG_REGEX.test(arg));
   const reason = dismissArgs.slice(ruleIdx + 2, endIdx === -1 ? undefined : endIdx).join(" ").trim() || "dismissed by user";
   return { reason, ruleId };
 }
 
-function parseFileDismissArgs(dismissArgs: string[]): DismissArgs {
+export function parseFileDismissArgs(dismissArgs: string[]): DismissArgs {
   const fileIdx = dismissArgs.indexOf("--file");
   const filePath = dismissArgs[fileIdx + 1];
   if (!filePath || filePath.startsWith("--")) {
@@ -85,6 +105,14 @@ function parseFileDismissArgs(dismissArgs: string[]): DismissArgs {
   const ruleIdArgIdx = dismissArgs.indexOf("--rule-id");
   const explicitRuleId = ruleIdArgIdx >= 0 ? dismissArgs[ruleIdArgIdx + 1] : undefined;
   const ruleIdArg = explicitRuleId && !explicitRuleId.startsWith("--") ? explicitRuleId : `${filePath}:${lineNum ?? "all"}`;
+  const reasonIdx = dismissArgs.indexOf("--reason");
+  if (reasonIdx >= 0) {
+    const reasonValue = dismissArgs[reasonIdx + 1];
+    if (reasonValue !== undefined && !reasonValue.startsWith("--")) {
+      return { reason: reasonValue, filePath, lineNum, ruleIdArg };
+    }
+    return { reason: "dismissed by user", error: "Missing value for --reason." };
+  }
   const consumed = Math.max(fileIdx + 2, lineIdx >= 0 ? lineIdx + 2 : 0, ruleIdArgIdx >= 0 ? ruleIdArgIdx + 2 : 0);
   const reason = dismissArgs.slice(consumed).join(" ").trim() || "dismissed by user";
   return { reason, filePath, lineNum, ruleIdArg };
@@ -380,21 +408,29 @@ export const BUILD_WORKFLOW_CONTENT = [
   '            git config user.email "bot@codesentinel.ai"',
   '            git config user.name "CodeSentinel Bot"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
+  "            git config --unset-all http.https://github.com/.extraheader 2>/dev/null || true",
+  "            git config --add http.https://github.com/.extraheader \"AUTHORIZATION: basic ${GIT_PUSH_TOKEN}\"",
   "            git pull --rebase --autostash origin ${{ github.ref_name }} 2>&1 || true",
   "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  "            if [ $? -ne 0 ]; then",
+  "            PUSH_STATUS=$?",
+  "            git config --unset-all http.https://github.com/.extraheader 2>/dev/null || true",
+  "            if [ $PUSH_STATUS -ne 0 ]; then",
   '              echo "⚠️ Push failed, fetching latest and rebasing to recover..."',
+  "              git config --add http.https://github.com/.extraheader \"AUTHORIZATION: basic ${GIT_PUSH_TOKEN}\"",
   "              git fetch origin ${{ github.ref_name }} 2>&1",
   "              git rebase origin/${{ github.ref_name }} 2>&1 || { echo \"❌ Rebase conflict — aborting fix loop\"; git rebase --abort 2>/dev/null || true; echo \"::endgroup::\"; exit 1; }",
   "              git push origin HEAD:${{ github.ref_name }} 2>&1",
+  "              PUSH_STATUS=$?",
+  "              git config --unset-all http.https://github.com/.extraheader 2>/dev/null || true",
+  "              if [ $PUSH_STATUS -ne 0 ]; then",
+  '                echo "❌ Push failed after rebase"',
+  "                echo \"::endgroup::\"",
+  "                exit 1",
+  "              fi",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            else",
   '              echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "            fi",
-  "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
-  "            git push origin HEAD:${{ github.ref_name }} 2>&1",
-  '            echo "✅ Fix pushed to ${{ github.ref_name }}"',
   "          done",
   "",
   '          echo "❌ Build failed after $MAX_ITER iterations"',
@@ -455,7 +491,7 @@ function printSetupNextSteps(): void {
   process.stdout.write("  If the build fails, CodeSentinel auto-fixes and pushes the fix.\n");
   process.stdout.write("  Set these secrets in your repo:\n");
   process.stdout.write("    CODESENTINEL_GITHUB_TOKEN — PAT with repo scope (for git push / higher permissions)\n");
-  process.stdout.write("    OPENAI_APIKEY — OpenAI API key\n");
+  process.stdout.write("    OPENAI_API_KEY — OpenAI API key\n");
   process.stdout.write("    ANTHROPIC_API_KEY — Anthropic API key\n");
   process.stdout.write("    GEMINI_API_KEY — Google Gemini API key\n");
   process.stdout.write("    OPENCODE_API_KEY / OPENCODE_BASE_URL — OpenCode AI provider\n");
@@ -659,6 +695,7 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     } else {
       try {
@@ -666,41 +703,67 @@ async function main(): Promise<void> {
         process.stdout.write(`✅ Dismissed finding: ${parsed.filePath}${parsed.lineNum ? `:${parsed.lineNum}` : ""}\n`);
       } catch (err) {
         process.stderr.write(`Failed to dismiss finding: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
       }
     }
     return;
   }
 
-  const { values, positionals } = parseArgs({
-    options: {
-      mode: { type: "string", short: "m" },
-      config: { type: "string", short: "c" },
-      "max-iterations": { type: "string" },
-      "auto-fix": { type: "boolean", default: false },
-      scoring: { type: "boolean", default: true },
-      "test-gen": { type: "boolean", default: false },
-      provider: { type: "string" },
-      ask: { type: "string" },
-      context: { type: "string" },
-      "log-level": { type: "string" },
-      "dry-run": { type: "boolean", default: false },
-      json: { type: "boolean", default: false },
-      sarif: { type: "boolean", default: false },
-      "min-score": { type: "string" },
-      "max-critical": { type: "string" },
-      "max-high": { type: "string" },
-      help: { type: "boolean", default: false },
-      version: { type: "boolean", default: false },
-      "jsonl": { type: "boolean", default: false },
-      "mcp": { type: "boolean", default: false },
-      "learning-db": { type: "string" },
-      "yaml-config": { type: "boolean", default: false },
-      "improve-type": { type: "string" },
-      "use-opencode-cli": { type: "boolean", default: false },
-    },
-    args: process.argv.slice(2),
-    allowPositionals: true,
-  });
+  // node:util parseArgs does not support `--no-` negation, so strip it up front.
+  const rawArgv = process.argv.slice(2);
+  const wantsNoScoring = rawArgv.includes("--no-scoring");
+  const argsToParse = wantsNoScoring ? rawArgv.filter((arg) => arg !== "--no-scoring") : rawArgv;
+
+  const cliOptions = {
+    mode: { type: "string", short: "m" },
+    config: { type: "string", short: "c" },
+    "max-iterations": { type: "string" },
+    "auto-fix": { type: "boolean", default: false },
+    scoring: { type: "boolean", default: true },
+    "test-gen": { type: "boolean", default: false },
+    provider: { type: "string" },
+    ask: { type: "string" },
+    context: { type: "string" },
+    "log-level": { type: "string" },
+    "dry-run": { type: "boolean", default: false },
+    json: { type: "boolean", default: false },
+    sarif: { type: "boolean", default: false },
+    "min-score": { type: "string" },
+    "max-critical": { type: "string" },
+    "max-high": { type: "string" },
+    help: { type: "boolean", default: false },
+    version: { type: "boolean", default: false },
+    "jsonl": { type: "boolean", default: false },
+    "mcp": { type: "boolean", default: false },
+    "learning-db": { type: "string" },
+    "yaml-config": { type: "boolean", default: false },
+    "improve-type": { type: "string" },
+    "use-opencode-cli": { type: "boolean", default: false },
+  } as const;
+  type CliArgsResult = ReturnType<typeof parseArgs<{ options: typeof cliOptions; args: readonly string[]; allowPositionals: true }>>;
+
+  let values: CliArgsResult["values"];
+  let positionals: CliArgsResult["positionals"];
+  try {
+    const parsed = parseArgs<{ options: typeof cliOptions; args: readonly string[]; allowPositionals: true }>({
+      options: cliOptions,
+      args: argsToParse,
+      allowPositionals: true,
+    });
+    values = parsed.values;
+    positionals = parsed.positionals;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | null)?.code;
+    if (code === "ERR_PARSE_ARGS_UNKNOWN_OPTION") {
+      process.stderr.write("Unknown or unsupported option. See --help below.\n");
+    } else {
+      process.stderr.write(`Invalid arguments: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+    showHelp();
+    process.exitCode = 1;
+    return;
+  }
+  if (wantsNoScoring) values.scoring = false;
 
   // Use positional arg as mode if --mode not provided
   const modeArg = values.mode || positionals[0];
@@ -892,10 +955,13 @@ async function main(): Promise<void> {
         `coverage ${report.score.test_coverage})\n`,
     );
   }
-  if (report.findings.length && (report.mode !== "review" && report.mode !== "fix")) {
+  if (report.findings.length) {
     process.stdout.write(`\nFindings (${report.findings.length}):\n`);
     for (const f of report.findings) {
       process.stdout.write(`  [${f.severity}] ${f.file}${f.line ? ":" + f.line : ""} — ${stripAnsi(f.comment)}\n`);
+    }
+    if (report.findings.length > 5) {
+      process.stdout.write("Run with --json for all findings in structured format.\n");
     }
   }
   if (report.generatedTests.length) {
