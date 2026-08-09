@@ -35,18 +35,16 @@ export interface RetryOptions {
   signal?: AbortSignal;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
 const getErrorStatus = (err: unknown): number | undefined => {
-  if (typeof err !== "object" || err === null) return undefined;
-  const record = err as Record<string, unknown>;
-  const direct = record.status ?? record.statusCode;
-  if (typeof direct === "number") return direct;
-  const response = record.response;
-  if (
-    typeof response === "object" &&
-    response !== null &&
-    typeof (response as Record<string, unknown>).status === "number"
-  ) {
-    return (response as Record<string, unknown>).status as number;
+  if (!isRecord(err)) return undefined;
+  const direct = err.status ?? err.statusCode;
+  if (typeof direct === "number" && direct > 0) return direct;
+  const response = err.response;
+  if (isRecord(response) && typeof response.status === "number") {
+    return response.status;
   }
   return undefined;
 };
@@ -111,7 +109,13 @@ export async function retry<T>(
     try {
       return await fn();
     } catch (err) {
-      if (attempt >= maxAttempts || !shouldRetry(err)) {
+      let retryable: boolean;
+      try {
+        retryable = shouldRetry(err);
+      } catch {
+        retryable = false;
+      }
+      if (attempt >= maxAttempts || !retryable) {
         throw err;
       }
       const backoff = baseDelayMs * Math.pow(2, attempt - 1);
