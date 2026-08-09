@@ -11,13 +11,6 @@ const DECIMAL_FRACTION = 25;
 const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
 
 /**
- * Scales the input by a fixed multiplier.
- * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
- */
-
-
-describe("calculate", () => {
   test.each([
     [0, 0],
     [-5, -5 * MULTIPLIER],
@@ -25,7 +18,9 @@ describe("calculate", () => {
     [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
     [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
+[BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
+    // boundary: inputs <= EXTREME_THRESHOLD use MULTIPLIER; inputs > EXTREME_THRESHOLD use EXTREME_MULTIPLIER
+    [EXTREME_THRESHOLD - 1, (EXTREME_THRESHOLD - 1) * MULTIPLIER],
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
     [NaN, NaN],
     [Infinity, Infinity],
