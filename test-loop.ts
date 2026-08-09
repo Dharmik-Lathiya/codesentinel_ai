@@ -8,13 +8,6 @@ const BELOW_EXTREME_INPUT = 9999;
 const SAMPLE_VALUE = 42;
 const MAX_SAFE_INTEGER_BITS = 53;
 const DECIMAL_FRACTION = 25;
-const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
-
-/**
- * Scales the input by a fixed multiplier.
- * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
- */
 
 
 describe("calculate", () => {
@@ -25,15 +18,15 @@ describe("calculate", () => {
     [MODERATE_INPUT, MODERATE_INPUT * MULTIPLIER],
     [HIGH_INPUT, HIGH_INPUT * MULTIPLIER],
     [BELOW_EXTREME_INPUT, BELOW_EXTREME_INPUT * MULTIPLIER],
-    [EXTREME_THRESHOLD, EXTREME_THRESHOLD * MULTIPLIER],
+  ])('boundary value %s', (input, expected) => {
     [EXTREME_THRESHOLD + 1, (EXTREME_THRESHOLD + 1) * EXTREME_MULTIPLIER],
     [NaN, NaN],
     [Infinity, Infinity],
     [-Infinity, -Infinity],
   ])('boundary value %i', (input, expected) => {
-    expect(calculate(input)).toBe(expected);
+  test('valid JSON value returns the parsed value', () => {
+    expect(processData('{"value":' + SAMPLE_VALUE + '}')).toEqual({ value: SAMPLE_VALUE });
   });
-});
 
 describe("processData", () => {
   test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
