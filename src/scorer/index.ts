@@ -112,7 +112,7 @@ export class Scorer {
       default:
         // Keep the more conservative (lower) security number: static analysis
         // is more reliable for security, so we take the stricter assessment.
-        security = Math.min(ai.security ?? MAX_SCORE, baseline.security);
+        security = Math.min(ai.security ?? baseline.security, baseline.security);
         break;
     }
     const test_coverage = ai.test_coverage ?? baseline.test_coverage;
