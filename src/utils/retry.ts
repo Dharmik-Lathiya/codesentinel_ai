@@ -68,6 +68,35 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
   }
   return false;
 };
+function readRetryAfterHeader(headers: unknown): number | undefined {
+  if (headers === null || typeof headers !== "object") return undefined;
+  const record = headers as Record<string, unknown>;
+  const raw = record["retry-after"] ?? record.retryAfter;
+  if (typeof raw === "string" || typeof raw === "number") {
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds)) {
+      return seconds * MILLISECONDS_PER_SECOND;
+    }
+  }
+  return undefined;
+}
+
+function extractRetryAfterMs(err: unknown): number | undefined {
+  if (err === null || typeof err !== "object") return undefined;
+  const record = err as Record<string, unknown>;
+  const retryAfter = record.retryAfter ?? record["retry-after"];
+  if (typeof retryAfter === "number" && Number.isFinite(retryAfter)) {
+    return retryAfter;
+  }
+  const retryAfterMs = readRetryAfterHeader(record.headers);
+  if (retryAfterMs !== undefined) return retryAfterMs;
+  const response = record.response;
+  if (response !== null && typeof response === "object") {
+    return readRetryAfterHeader((response as Record<string, unknown>).headers);
+  }
+  return undefined;
+}
+
 
 const createAbortError = (): Error => {
   const error = new Error("retry aborted by signal");
@@ -114,9 +143,8 @@ export async function retry<T>(
       if (attempt >= maxAttempts || !shouldRetry(err)) {
         throw err;
       }
-      const backoff = baseDelayMs * Math.pow(2, attempt - 1);
-      const capped = Math.min(maxDelayMs, backoff);
-      const delay = capped * (0.5 + Math.random() * 0.5);
+      const computedDelay = baseDelayMs * Math.pow(2, attempt - 1);
+      const delay = extractRetryAfterMs(err) ?? computedDelay;
       logger.warn(
         `Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`,
       );

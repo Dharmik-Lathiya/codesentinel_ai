@@ -120,7 +120,7 @@ export const WORKFLOW_CONTENT = [
   "    types: [created]",
   "",
   "permissions:",
-  "  contents: read",
+  "  contents: write",
   "  pull-requests: write",
   "  issues: write",
   "",
@@ -162,9 +162,25 @@ export const WORKFLOW_CONTENT = [
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
   "        with:",
   "          mode: plan",
-  "          issue_title: ${{ github.event.issue.title }}",
-  "          issue_body: ${{ github.event.issue.body }}",
+  "          issue_title: ${{ github.event.issue.title || '' }}",
+  "          issue_body: ${{ github.event.issue.body || '' }}",
   "          use_opencode_cli: \"false\"",
+  "",
+  "      - name: Update comment on failure",
+  "        if: failure() && steps.loading.outcome == 'success'",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            const body = '❌ **CodeSentinel** failed to generate an implementation plan. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).';",
+  "            try {",
+  "              await github.rest.issues.updateComment({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                comment_id: ${{ steps.loading.outputs.comment_id }},",
+  "                body: body",
+  "              });",
+  "            } catch (err) {",
+  "              core.setFailed(err.message);",
+  "            }",
   "",
 "      - name: Update comment with plan",
 "        uses: actions/github-script@v7",
@@ -274,10 +290,26 @@ export const WORKFLOW_CONTENT = [
   "          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}",
   "        with:",
   "          mode: ${{ steps.cmd.outputs.mode }}",
-  "          issue_title: ${{ steps.issue_info.outputs.title }}",
-  "          issue_body: ${{ steps.issue_info.outputs.body }}",
-  "          ask: ${{ steps.cmd.outputs.question }}",
+  "          issue_title: ${{ steps.issue_info.outputs.title || '' }}",
+  "          issue_body: ${{ steps.issue_info.outputs.body || '' }}",
+  "          ask: ${{ steps.cmd.outputs.question || '' }}",
   "          use_opencode_cli: \"false\"",
+  "",
+  "      - name: Update comment on failure",
+  "        if: failure() && steps.loading.outcome == 'success'",
+  "        uses: actions/github-script@v7",
+  "        with:",
+  "          script: |",
+  "            const body = '❌ **CodeSentinel** failed. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).';",
+  "            try {",
+  "              await github.rest.issues.updateComment({",
+  "                owner: context.repo.owner, repo: context.repo.repo,",
+  "                comment_id: ${{ steps.loading.outputs.comment_id }},",
+  "                body: body",
+  "              });",
+  "            } catch (err) {",
+  "              core.setFailed(err.message);",
+  "            }",
   "",
   "      - name: Update comment",
   "        uses: actions/github-script@v7",
@@ -295,7 +327,13 @@ export const WORKFLOW_CONTENT = [
   "                comment_id: ${{ steps.loading.outputs.comment_id }},",
   "                body: body",
   "              });",
-  "            } catch (err) { core.setFailed(err.message); }",
+  "            } catch (err) {",
+  "              core.setFailed(err.message);",
+  "            }",
+  "              });",
+  "            } catch (err) {",
+  "              core.setFailed(err.message);",
+  "            }",
 ].join("\n");
 
 export const BUILD_WORKFLOW_CONTENT = [
@@ -308,7 +346,7 @@ export const BUILD_WORKFLOW_CONTENT = [
   "",
   "permissions:",
   "  contents: write",
-  "  pull-requests: write",
+  "    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}",
   "",
   "env:",
   "  # Pin CodeSentinel CLI to a release tag, not the default branch",
@@ -368,7 +406,19 @@ export const BUILD_WORKFLOW_CONTENT = [
   "",
   '            echo "❌ Build failed. Running auto-fix..."',
   "",
-  '            node "${RUNNER_TEMP}/codesentinel/dist/index.js" fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
+  "            if [ ! -d \"codesentinel\" ]; then",
+  '              echo "Cloning CodeSentinel..."',
+  "            fi",
+  "",
+  "            if [ ! -f \"codesentinel/dist/index.js\" ]; then",
+  '              echo "❌ CodeSentinel CLI (codesentinel/dist/index.js) missing after install — cannot auto-fix"',
+  "              echo \"::endgroup::\"",
+  "              exit 1",
+  "            fi",
+  "",
+  '            node codesentinel/dist/index.js fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
+  "",
+  '            node codesentinel/dist/index.js fix --auto-fix 2>&1 || echo "Fix step completed with warnings"',
   "",
   "            grep -qxF \"node_modules/\" .gitignore 2>/dev/null || echo \"node_modules/\" >> .gitignore",
   "            git add -A",
@@ -406,28 +456,30 @@ export const BUILD_WORKFLOW_CONTENT = [
   "        uses: actions/github-script@v7",
   "        with:",
   "          script: |",
+  "            let prs = [];",
   "            try {",
-  "              let prs;",
+  "              const { data } = await github.rest.pulls.list({",
+  "                owner: context.repo.owner,",
+  "                repo: context.repo.repo,",
+  '                state: "open",',
+  "                head: context.ref.replace('refs/heads/', ''),",
+  "              });",
+  "              prs = data;",
+  "            } catch (err) {",
+  "              core.setFailed(err.message);",
+  "            }",
+  "            if (prs.length > 0) {",
   "              try {",
-  "                const { data } = await github.rest.pulls.list({",
+  '                await github.rest.issues.createComment({',
   "                  owner: context.repo.owner,",
   "                  repo: context.repo.repo,",
-  '                  state: "open",',
-  "                  head: context.ref.replace('refs/heads/', ''),",
+  "                  issue_number: prs[0].number,",
+  '                  body: "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."',
   "                });",
-  "                prs = data;",
-  "              } catch (err) { core.setFailed(err.message); return; }",
-  "              if (prs.length > 0) {",
-  "                try {",
-  "                  await github.rest.issues.createComment({",
-  "                    owner: context.repo.owner,",
-  "                    repo: context.repo.repo,",
-  "                    issue_number: prs[0].number,",
-  '                body: "❌ **CodeSentinel Build Fix** failed after auto-fix attempts.\\n\\nThe build could not be fixed automatically. Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."',
-  "                  });",
-  "                } catch (err) { core.setFailed(err.message); return; }",
+  "              } catch (err) {",
+  "                core.setFailed(err.message);",
   "              }",
-  "            } catch (err) { core.setFailed(err.message); }",
+  "            }",
 ].join("\n");
 
 function printSetupNextSteps(): void {
@@ -624,10 +676,10 @@ async function main(): Promise<void> {
     dash.start();
     process.stdout.write(`Dashboard running at http://localhost:${engine.config.dashboard.port}\n`);
     process.stdout.write("Press Ctrl+C to stop.\n");
-    for (const signal of ["SIGINT", "SIGTERM"] as const) {
-      process.on(signal, () => {
-        dash.stop();
-      });
+    try {
+      await new Promise(() => {});
+    } catch {
+      process.stdout.write("Dashboard stopped.\n");
     }
     return;
   }
@@ -648,17 +700,22 @@ async function main(): Promise<void> {
       if (parsed.error.startsWith("Options")) {
         process.stderr.write("Options --rule and --file are mutually exclusive.\n");
       }
-      process.exitCode = 1;
-      return;
-    }
-
-    const engine = Engine.fromInputs({ secrets: loadSecrets() });
-    if (parsed.ruleId !== undefined) {
       try {
-        await engine.dismissByRule(parsed.ruleId, parsed.reason);
-        process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
+        await engine.dismissByRule(ruleId, reason);
       } catch (err) {
-        process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
+        process.stdout.write(`Failed to dismiss rule ${ruleId}: ${err}\n`);
+        return;
+      }
+      process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
+    } else if (dismissArgs.includes("--file")) {
+      const fileIdx = dismissArgs.indexOf("--file");
+      const filePath = dismissArgs[fileIdx + 1];
+      const lineIdx = dismissArgs.indexOf("--line");
+      const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
+      const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
+      if (!filePath) {
+        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
+        return;
       }
     } else {
       try {

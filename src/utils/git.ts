@@ -8,8 +8,6 @@ const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER = 64 * MEGABYTE;
-const GIT_TIMEOUT_MS = 60_000;
-const MAX_CONTENT_BYTES = MEGABYTE;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -26,16 +24,10 @@ export async function git(
     });
     return stdout;
   } catch (err) {
-    const timedOut =
-      err instanceof Error && (err as { killed?: boolean }).killed === true;
-    const command = `git ${args.join(" ")}`;
-    if (!options.quiet) {
-      logger.error(
-        timedOut
-          ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-          : `git command failed: ${command}`,
-        err,
-      );
+    if (options.quiet) {
+      logger.debug(`git command failed: git ${args.join(' ')}`, err);
+    } else {
+      logger.error(`git command failed: git ${args.join(' ')}`, err);
     }
     throw err;
   }
@@ -78,10 +70,7 @@ export async function collectDiff(
       cwd,
     );
   } catch (err) {
-    logger.warn(
-      `Failed to collect diff against "${baseRef ?? "working tree"}":`,
-      err,
-    );
+    logger.error(`Failed to collect diff against "${baseRef}":`, err);
     throw err;
   }
 
@@ -111,6 +100,7 @@ export async function collectDiff(
     const status = mapStatus(statusCode);
     if (!status) continue;
     let content = "";
+    let diff = "";
     if (status !== "deleted") {
       const full = resolve(workspaceRoot, path);
       const rel = relative(workspaceRoot, full);
@@ -119,32 +109,23 @@ export async function collectDiff(
         continue;
       }
       try {
-        content = await readContent(full);
+        const raw = readFileSync(resolve(cwd, path));
+        if (raw.includes(0)) {
+          diff = "Binary file (diff not shown)";
+        } else {
+          content = raw.toString("utf8");
+        }
       } catch {
         logger.debug(`Could not read content for ${path}`);
       }
     }
-    const diff = diffByPath.get(path) ?? "";
-    if (!diff && status !== "deleted") {
-      logger.warn(`Could not collect diff for ${path}`);
-    }
-
-  if (baseRef === undefined) {
-    const untracked = await listUntrackedFiles(cwd);
-    for (const untrackedPath of untracked) {
-      const full = resolve(workspaceRoot, untrackedPath);
-      const rel = relative(workspaceRoot, full);
-      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-        logger.warn(`Skipping path outside workspace: ${untrackedPath}`);
+    if (!diff) {
+      try {
+        diff = await git(["diff", baseRef + "...", "--", path], cwd);
+      } catch {
+        logger.debug(`Could not collect diff for ${path}`);
         continue;
       }
-      let content = "";
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${untrackedPath}`);
-      }
-      files.push({ path: untrackedPath, status: "added", content, diff: "" });
     }
   }
     files.push({ path, status, content, diff });
@@ -303,20 +284,16 @@ async function defaultBaseRef(cwd: string): Promise<string | undefined> {
   // In GitHub Actions, use the PR base branch
   const githubBaseRef = process.env.GITHUB_BASE_REF;
   if (githubBaseRef) {
-    const remoteBase = `origin/${githubBaseRef}`;
     try {
+      const remoteBase = `origin/${githubBaseRef}`;
       if (await refExists(remoteBase, cwd)) return remoteBase;
-    } catch {
-      logger.debug(`Failed to resolve base ref: ${remoteBase}`);
-    }
-    try {
       if (await refExists(githubBaseRef, cwd)) return githubBaseRef;
-    } catch {
-      logger.debug(`Failed to resolve base ref: ${githubBaseRef}`);
+    } catch (err) {
+      logger.warn(`Failed to resolve GitHub base ref ${githubBaseRef}`, err);
     }
   }
 
-  const candidates = ["origin/main", "origin/master", "main", "master"];
+  const candidates = ["origin/main", "origin/master", "origin/develop", "main", "master"];
   for (const ref of candidates) {
     try {
       if (await refExists(ref, cwd)) return ref;
@@ -341,7 +318,5 @@ async function refExists(ref: string, cwd: string): Promise<boolean> {
 function mapStatus(code: string): DiffFile["status"] | null {
   if (code.startsWith("A")) return "added";
   if (code.startsWith("D")) return "deleted";
-  if (code === "M") return "modified";
-  logger.warn(`Unknown git status code: ${code}`);
-  return null;
+  return "modified";
 }

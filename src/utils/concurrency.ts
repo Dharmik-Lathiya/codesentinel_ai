@@ -1,6 +1,7 @@
 /**
  * Execute async operations with bounded concurrency. Returns results in input order.
  * Errors are collected per-item; the caller is responsible for filtering.
+ * Sparse arrays: holes are preserved, and fn(undefined, i) is invoked for each hole.
  */
 export async function concurrentMap<T, R>(
   items: T[],
@@ -18,7 +19,7 @@ export async function concurrentMap<T, R>(
       try {
         results[index] = await fn(items[index], index);
       } catch (error) {
-        results[index] = error instanceof Error ? error : new Error(String(error));
+        results[index] = error instanceof Error ? error : new Error(typeof error === 'string' ? error : JSON.stringify(error));
       }
     }
   }
