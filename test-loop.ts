@@ -11,13 +11,6 @@ const DECIMAL_FRACTION = 25;
 const DECIMAL_SAMPLE_VALUE = -(7 + DECIMAL_FRACTION / 100);
 
 /**
- * Scales the input by a fixed multiplier.
- * NaN and ±Infinity inputs remain NaN/±Infinity after scaling.
- * Results above Number.MAX_SAFE_INTEGER lose integer precision.
- */
-
-
-describe("calculate", () => {
   test.each([
     [0, 0],
     [-5, -5 * MULTIPLIER],
@@ -37,9 +30,9 @@ describe("calculate", () => {
 
 describe("processData", () => {
   test.each([SAMPLE_VALUE])('valid JSON value %d returns the parsed value', (value) => {
-    expect(processData('{"value":' + value + "}")).toEqual({ value });
+  test('valid JSON value returns the parsed value', () => {
+    expect(processData('{"value":42}')).toEqual({ value: 42 });
   });
-
   test(`inputs above 2^${MAX_SAFE_INTEGER_BITS} lose integer precision (documented limitation)`, () => {
     const input = 2 ** MAX_SAFE_INTEGER_BITS + 1;
     const expected = BigInt(input) * BigInt(EXTREME_MULTIPLIER);
@@ -53,7 +46,9 @@ describe("processData", () => {
     ["{}"],
     ['{"value":null}'],
     ['{"value":1e999}'],
-  ])('invalid input %s returns the default result', (input) => {
+    ['{"value":1e999}'],
+    ['{"value":1e-999}'],
+    ['{"value":-0}'],
     expect(processData(input)).toEqual({ value: 0 });
   });
   test('explicit value 0 is a valid parsed value (documented sentinel)', () => {
