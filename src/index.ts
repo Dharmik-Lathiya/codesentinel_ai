@@ -809,6 +809,10 @@ async function main(): Promise<void> {
   const runMode = modeArg ?? engine.config.mode;
   process.stdout.write(`[codesentinel:info] Starting mode: ${runMode}\n`);
 
+  if (values["ask"] && modeArg && modeArg !== "chat") {
+    logger.warn(`--ask is only used in chat mode; ignoring --ask for mode '${modeArg}'`);
+  }
+
   if (values["ask"] && (modeArg === "chat" || !modeArg)) {
     try {
       const answer = await engine.ask(values["ask"]);

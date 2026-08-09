@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { isAbsolute, relative, resolve } from "node:path";
 import { logger } from "./logger.js";
@@ -85,7 +85,12 @@ export async function collectDiff(
     throw err;
   }
 
-  const workspaceRoot = resolve(cwd);
+  let workspaceRoot = resolve(cwd);
+  try {
+    workspaceRoot = await realpath(workspaceRoot);
+  } catch {
+    logger.debug(`Could not resolve real workspace root: ${cwd}`);
+  }
 
   let diffText: string;
   try {
@@ -103,6 +108,7 @@ export async function collectDiff(
   const diffByPath = splitDiffByPath(diffText);
 
   const files: DiffFile[] = [];
+  const pending: Array<{ path: string; full: string }> = [];
   const nameStatusEntries = nameStatus.split("\0");
   for (let i = 0; i < nameStatusEntries.length - 1; i += 2) {
     const statusCode = nameStatusEntries[i];
@@ -110,7 +116,10 @@ export async function collectDiff(
     if (!statusCode || !path) continue;
     const status = mapStatus(statusCode);
     if (!status) continue;
-    let content = "";
+    const diff = diffByPath.get(path) ?? "";
+    if (!diff && status !== "deleted") {
+      logger.warn(`Could not collect diff for ${path}`);
+    }
     if (status !== "deleted") {
       const full = resolve(workspaceRoot, path);
       const rel = relative(workspaceRoot, full);
@@ -118,16 +127,10 @@ export async function collectDiff(
         logger.warn(`Skipping path outside workspace: ${path}`);
         continue;
       }
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${path}`);
-      }
+      pending.push({ path, full });
     }
-    const diff = diffByPath.get(path) ?? "";
-    if (!diff && status !== "deleted") {
-      logger.warn(`Could not collect diff for ${path}`);
-    }
+    files.push({ path, status, content: "", diff });
+  }
 
   if (baseRef === undefined) {
     const untracked = await listUntrackedFiles(cwd);
@@ -138,16 +141,37 @@ export async function collectDiff(
         logger.warn(`Skipping path outside workspace: ${untrackedPath}`);
         continue;
       }
-      let content = "";
-      try {
-        content = await readContent(full);
-      } catch {
-        logger.debug(`Could not read content for ${untrackedPath}`);
-      }
-      files.push({ path: untrackedPath, status: "added", content, diff: "" });
+      pending.push({ path: untrackedPath, full });
+      files.push({ path: untrackedPath, status: "added", content: "", diff: "" });
     }
   }
-    files.push({ path, status, content, diff });
+
+  const contentByPath = new Map<string, string>();
+  await Promise.all(
+    pending.map(async ({ path, full }) => {
+      try {
+        let resolved = full;
+        try {
+          resolved = await realpath(full);
+        } catch {
+          logger.debug(`Could not resolve real path for ${path}`);
+        }
+        const rel = relative(workspaceRoot, resolved);
+        if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+          logger.warn(`Skipping path outside workspace: ${path}`);
+          return;
+        }
+        contentByPath.set(path, await readContent(resolved));
+      } catch {
+        logger.debug(`Could not read content for ${path}`);
+      }
+    }),
+  );
+
+  for (const file of files) {
+    if (file.status !== "deleted") {
+      file.content = contentByPath.get(file.path) ?? "";
+    }
   }
   return files;
 }
