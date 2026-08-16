@@ -92,3 +92,48 @@ describe("I7: opencode-cli provider is registered", () => {
     expect(provider.name).toBe("opencode-cli");
   });
 });
+
+describe("I8: audit issues are labeled and deduped", () => {
+  it("passes labels when creating an issue", async () => {
+    const calls: Array<{ method: string; url: string; body?: Record<string, unknown> }> = [];
+    const reporter = new GitHubReporter({ token: "t", owner: "o", repo: "r" });
+    (reporter as any).request = async (method: string, url: string, body?: Record<string, unknown>) => {
+      calls.push({ method, url, body });
+      return { number: 1 };
+    };
+    await reporter.createIssue("[high] src/a.ts", "msg", ["audit", "autofix-trigger"]);
+    expect(calls[0].method).toBe("POST");
+    expect(calls[0].url).toContain("/issues");
+    expect(calls[0].body).toMatchObject({ title: "[high] src/a.ts", body: "msg", labels: ["audit", "autofix-trigger"] });
+  });
+
+  it("creates an issue when no open issue has the same title", async () => {
+    const calls: Array<{ method: string; url: string; body?: Record<string, unknown> }> = [];
+    const reporter = new GitHubReporter({ token: "t", owner: "o", repo: "r" });
+    (reporter as any).request = async (method: string, url: string, body?: Record<string, unknown>) => {
+      calls.push({ method, url, body });
+      if (method === "GET") return [{ number: 5, title: "[high] other.ts" }];
+      return { number: 9 };
+    };
+    const num = await reporter.createOrUpdateIssue("[high] src/a.ts", "msg", ["audit"]);
+    expect(calls.filter((c) => c.method === "POST").length).toBe(1);
+    expect(calls.filter((c) => c.method === "PATCH").length).toBe(0);
+    expect(num).toBe(9);
+  });
+
+  it("updates an existing open issue with the same title instead of duplicating", async () => {
+    const calls: Array<{ method: string; url: string; body?: Record<string, unknown> }> = [];
+    const reporter = new GitHubReporter({ token: "t", owner: "o", repo: "r" });
+    (reporter as any).request = async (method: string, url: string, body?: Record<string, unknown>) => {
+      calls.push({ method, url, body });
+      if (method === "GET") return [{ number: 5, title: "[high] src/a.ts" }];
+      return { number: 5 };
+    };
+    const num = await reporter.createOrUpdateIssue("[high] src/a.ts", "updated msg", ["audit"]);
+    expect(calls.filter((c) => c.method === "POST").length).toBe(0);
+    const patch = calls.find((c) => c.method === "PATCH")!;
+    expect(patch.url).toContain("/issues/5");
+    expect(patch.body).toMatchObject({ body: "updated msg" });
+    expect(num).toBe(5);
+  });
+});
