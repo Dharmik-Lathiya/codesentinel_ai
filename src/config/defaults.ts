@@ -159,13 +159,19 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
 
   include: ["**/*.{ts,tsx,js,jsx,py,go,java,rb}"],
   exclude: [
-    "node_modules/**",
-    "dist/**",
-    "build/**",
-    "coverage/**",
-    ".git/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/coverage/**",
+    "**/.git/**",
     "**/*.test.*",
     "**/*.spec.*",
+    "**/.next/**",
+    "**/.vercel/**",
+    "**/.turbo/**",
+    "**/.cache/**",
+    "**/out/**",
+    "**/.expo/**",
   ],
 
   output: {
