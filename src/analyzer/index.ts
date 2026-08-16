@@ -2,6 +2,7 @@ import { languageOf } from "../utils/files.js";
 import type { Severity, AnalyzerConfig, SeverityAdjustmentConfig, ConfidenceThresholds, CustomRule } from "../config/types.js";
 import { DEFAULT_ANALYZER_CONFIG } from "../config/defaults.js";
 import { EnhancedAnalyzer, type FileHistory } from "./enhanced.js";
+import { isDataFile, maskLiterals } from "./strings.js";
 import { AnalysisCache, type AnalysisCacheEntry, type AnalysisComparison, generateConfigHash } from "./cache.js";
 import { ProgressiveAnalyzer, type AnalysisDepth, type ProgressiveAnalysisResult, type MultiFileAnalysisResult } from "./progressive.js";
 
@@ -462,15 +463,17 @@ export class StaticAnalyzer {
   /** Detect magic numbers (numeric literals other than 0, 1, -1). */
   private detectMagicNumbers(path: string, lines: string[]): Finding[] {
     const findings: Finding[] = [];
-    const magicNumberRegex = /(?<![a-zA-Z_])\b(?!0\b|1\b|-1\b|2\b)\d{2,}\b(?![a-zA-Z_])/g;
+    if (isDataFile(path)) return findings;
+    const magicNumberRegex = /(?<![a-zA-Z_.])\b(?!0\b|1\b|-1\b|2\b)\d{2,}\b(?![a-zA-Z_])/g;
 
     lines.forEach((line, idx) => {
-      if (line.trim().startsWith("//") || line.trim().startsWith("import") || line.trim().startsWith("export")) {
+      if (line.trim().startsWith("import") || line.trim().startsWith("export")) {
         return;
       }
 
+      const code = maskLiterals(line);
       let match;
-      while ((match = magicNumberRegex.exec(line)) !== null) {
+      while ((match = magicNumberRegex.exec(code)) !== null) {
         findings.push({
           severity: "low",
           category: "smell",
