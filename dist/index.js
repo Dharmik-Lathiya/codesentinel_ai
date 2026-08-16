@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Engine } from "./engine/index.js";
@@ -107,7 +107,7 @@ export const WORKFLOW_CONTENT = [
     "",
     "env:",
     "  # Pin to latest published version for fast composite action setup",
-    "  CODESENTINEL_VERSION: v0.11.0",
+    "  CODESENTINEL_VERSION: v0.11.1",
     "",
     "jobs:",
     "  plan-on-issue:",
@@ -331,7 +331,7 @@ export const BUILD_WORKFLOW_CONTENT = [
     "",
     "env:",
     "  # Pin CodeSentinel CLI to a release tag, not the default branch",
-    "  CODESENTINEL_VERSION: v0.11.0",
+    "  CODESENTINEL_VERSION: v0.11.1",
     "",
     "jobs:",
     "  build-fix:",
@@ -926,7 +926,11 @@ async function main() {
         process.exitCode = 1;
     }
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] &&
+    // realpathSync resolves npm's .bin symlink to the real dist/index.js —
+    // without it the CLI silently exits when invoked via `npx codesentinel`
+    (realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)) ||
+        resolve(process.argv[1]) === fileURLToPath(import.meta.url))) {
     main().catch((err) => {
         logger.error("Fatal:", err);
         process.exitCode = 1;

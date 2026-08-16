@@ -14,7 +14,7 @@ import { parseJsonc } from "../utils/jsonc.js";
 const userConfigSchema = z
   .object({
     mode: z
-      .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan"])
+      .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"])
       .optional(),
     max_iterations: z.number().int().positive().optional(),
     enable_auto_fix: z.boolean().optional(),
@@ -245,6 +245,7 @@ function validateConfig(config: CodeSentinelConfig): void {
     "describe",
     "improve",
     "plan",
+    "deadcode",
   ];
   if (!validModes.includes(config.mode)) {
     throw new Error(`Invalid mode: ${config.mode}`);

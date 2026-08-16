@@ -1,8 +1,8 @@
 # CodeSentinel AI — Advanced Example (Full Suite)
 #
 # SHIPPED: Use reusable workflows (no copy needed):
-#   review  → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.0
-#   autofix → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/autofix.yml@v0.11.0
+#   review  → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.1
+#   autofix → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/autofix.yml@v0.11.1
 #
 # CUSTOM: Copy this file to your repo: .github/workflows/ai-suite.yml
 
@@ -37,7 +37,7 @@ jobs:
         github.event_name == 'pull_request' ||
         contains(github.event.comment.body || '', '/review')
       )
-    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.0
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.1
     secrets: inherit
     with:
       mode: review
@@ -49,7 +49,7 @@ jobs:
     if: |
       github.event_name != 'schedule' &&
       contains(github.event.pull_request.labels.*.name, 'autofix')
-    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/autofix.yml@v0.11.0
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/autofix.yml@v0.11.1
     secrets: inherit
     with:
       max_iterations: 3
@@ -66,7 +66,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - uses: Dharmik-Lathiya/CodeSentinel_AI@v0.11.0
+      - uses: Dharmik-Lathiya/CodeSentinel_AI@v0.11.1
         with:
           mode: audit
           provider: opencode

@@ -3,7 +3,7 @@
 # SHIPPED: Use the reusable workflow (no copy needed):
 #   jobs:
 #     review:
-#       uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.0
+#       uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.1
 #       secrets: inherit
 #
 # CUSTOM: Copy this file to your repo: .github/workflows/ai-review.yml
@@ -42,7 +42,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.ref }}
 
-      - uses: Dharmik-Lathiya/CodeSentinel_AI@v0.11.0
+      - uses: Dharmik-Lathiya/CodeSentinel_AI@v0.11.1
         id: ai-review
         with:
           mode: review

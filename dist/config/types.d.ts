@@ -6,7 +6,7 @@
  * and pick different AI providers/models for different tasks.
  */
 /** Supported operational modes. */
-export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe" | "improve" | "plan";
+export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe" | "improve" | "plan" | "deadcode";
 /** Supported AI providers. */
 export type Provider = "openai" | "anthropic" | "gemini" | "opencode" | "opencode-cli";
 /** Supported test runners targeted by the test generation module. */
