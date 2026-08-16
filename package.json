@@ -29,6 +29,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:action": "tsc -p tsconfig.json && ncc build dist/github/action.js -o dist/action-bundle --target es2022 && node scripts/postbundle.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -39,11 +40,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/codesentinel-ai.git"
+    "url": "https://github.com/Dharmik-Lathiya/codesentinel_ai.git"
   },
-  "homepage": "https://github.com/your-org/codesentinel-ai#readme",
+  "homepage": "https://github.com/Dharmik-Lathiya/codesentinel_ai#readme",
   "bugs": {
-    "url": "https://github.com/your-org/codesentinel-ai/issues"
+    "url": "https://github.com/Dharmik-Lathiya/codesentinel_ai/issues"
   },
   "publishConfig": {
     "access": "public"
@@ -76,6 +77,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
+    "@vercel/ncc": "^0.45.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   },

@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { load as parseYaml } from "js-yaml";
 import { parseJsonc } from "../utils/jsonc.js";
 
 export interface ConfigOverride {
@@ -46,8 +47,7 @@ export function loadYamlConfig(filePath: string): Record<string, unknown> {
     return parseJsonc(raw) as Record<string, unknown>;
   }
   try {
-    const yamlModule = require("js-yaml") as typeof import("js-yaml");
-    return yamlModule.load(raw) as Record<string, unknown>;
+    return parseYaml(raw) as Record<string, unknown>;
   } catch (err) {
     throw new Error(`Failed to parse YAML config ${filePath}: ${err}`);
   }

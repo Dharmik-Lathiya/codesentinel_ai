@@ -144,11 +144,17 @@ export class GitHubReporter {
     /** Enable auto-merge on a PR (merges when all required checks pass). */
     async enableAutoMerge(pullNumber, mergeMethod = "squash") {
         try {
-            const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/pulls/${pullNumber}/merge`;
-            await this.request("PUT", url, { merge_method: mergeMethod });
+            // GitHub's native auto-merge — the PR merges only when required checks pass.
+            // Deliberately NOT the /pulls/{n}/merge endpoint, which force-merges immediately.
+            const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/pulls/${pullNumber}/auto_merge`;
+            await this.request("PUT", url, {
+                merge_method: mergeMethod,
+                commit_title: `chore: merge PR #${pullNumber} (CodeSentinel)`,
+            });
+            logger.info(`enableAutoMerge: enabled auto-merge on PR #${pullNumber}`);
         }
         catch {
-            logger.warn("enableAutoMerge: auto-merge not available, trying squash");
+            logger.warn(`enableAutoMerge: auto-merge unavailable on PR #${pullNumber} (repo may not allow it)`);
         }
     }
     /** Get the default branch name and its latest commit SHA. */

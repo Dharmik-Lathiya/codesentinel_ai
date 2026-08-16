@@ -2,6 +2,7 @@ import { openaiFactory } from "./openai.js";
 import { anthropicFactory } from "./anthropic.js";
 import { geminiFactory } from "./gemini.js";
 import { opencodeFactory } from "./opencode.js";
+import { createOpencodeProvider } from "./providers/opencode-cli.js";
 import { ProviderUnavailableError } from "./provider.js";
 import { retry } from "../utils/retry.js";
 import { logger } from "../utils/logger.js";
@@ -21,6 +22,7 @@ export class AIHub {
         anthropic: anthropicFactory,
         gemini: geminiFactory,
         opencode: opencodeFactory,
+        "opencode-cli": (_s, root) => createOpencodeProvider(root),
     };
     constructor(config, secrets, 
     /** Repository root — used as the CLI working directory (e.g. opencode run). */

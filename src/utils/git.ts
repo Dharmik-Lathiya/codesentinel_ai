@@ -8,6 +8,8 @@ const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER = 64 * MEGABYTE;
+const MAX_CONTENT_BYTES = MEGABYTE;
+const GIT_TIMEOUT_MS = 60_000;
 
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(
@@ -109,7 +111,7 @@ export async function collectDiff(
         continue;
       }
       try {
-        const raw = readFileSync(resolve(cwd, path));
+        const raw = await readFile(resolve(cwd, path));
         if (raw.includes(0)) {
           diff = "Binary file (diff not shown)";
         } else {
@@ -127,7 +129,6 @@ export async function collectDiff(
         continue;
       }
     }
-  }
     files.push({ path, status, content, diff });
   }
   return files;

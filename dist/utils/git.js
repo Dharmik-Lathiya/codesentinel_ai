@@ -7,8 +7,8 @@ const exec = promisify(execFile);
 const KILOBYTE = 1024;
 const MEGABYTE = KILOBYTE * KILOBYTE;
 const MAX_BUFFER = 64 * MEGABYTE;
-const GIT_TIMEOUT_MS = 60_000;
 const MAX_CONTENT_BYTES = MEGABYTE;
+const GIT_TIMEOUT_MS = 60_000;
 /** Run a git command in the given cwd, returning stdout. */
 export async function git(args, cwd = process.cwd(), options = {}) {
     try {
@@ -21,12 +21,11 @@ export async function git(args, cwd = process.cwd(), options = {}) {
         return stdout;
     }
     catch (err) {
-        const timedOut = err instanceof Error && err.killed === true;
-        const command = `git ${args.join(" ")}`;
-        if (!options.quiet) {
-            logger.error(timedOut
-                ? `git command timed out after ${GIT_TIMEOUT_MS}ms: ${command}`
-                : `git command failed: ${command}`, err);
+        if (options.quiet) {
+            logger.debug(`git command failed: git ${args.join(' ')}`, err);
+        }
+        else {
+            logger.error(`git command failed: git ${args.join(' ')}`, err);
         }
         throw err;
     }
@@ -38,7 +37,7 @@ export async function git(args, cwd = process.cwd(), options = {}) {
  */
 export async function collectDiff(base, cwd = process.cwd()) {
     const baseRef = base ?? (await defaultBaseRef(cwd));
-    const rangeArgs = baseRef ? [baseRef + "..."] : [];
+    const rangeArgs = baseRef ? [baseRef + "..."] : ["HEAD"];
     let nameStatus;
     try {
         nameStatus = await git([
@@ -52,7 +51,7 @@ export async function collectDiff(base, cwd = process.cwd()) {
         ], cwd);
     }
     catch (err) {
-        logger.warn(`Failed to collect diff against "${baseRef ?? "working tree"}":`, err);
+        logger.error(`Failed to collect diff against "${baseRef}":`, err);
         throw err;
     }
     const workspaceRoot = resolve(cwd);
@@ -76,6 +75,7 @@ export async function collectDiff(base, cwd = process.cwd()) {
         if (!status)
             continue;
         let content = "";
+        let diff = "";
         if (status !== "deleted") {
             const full = resolve(workspaceRoot, path);
             const rel = relative(workspaceRoot, full);
@@ -84,15 +84,26 @@ export async function collectDiff(base, cwd = process.cwd()) {
                 continue;
             }
             try {
-                content = await readContent(full);
+                const raw = await readFile(resolve(cwd, path));
+                if (raw.includes(0)) {
+                    diff = "Binary file (diff not shown)";
+                }
+                else {
+                    content = raw.toString("utf8");
+                }
             }
             catch {
                 logger.debug(`Could not read content for ${path}`);
             }
         }
-        const diff = diffByPath.get(path) ?? "";
-        if (!diff && status !== "deleted") {
-            logger.warn(`Could not collect diff for ${path}`);
+        if (!diff) {
+            try {
+                diff = await git(["diff", baseRef + "...", "--", path], cwd);
+            }
+            catch {
+                logger.debug(`Could not collect diff for ${path}`);
+                continue;
+            }
         }
         files.push({ path, status, content, diff });
     }
@@ -104,13 +115,119 @@ function splitDiffByPath(diffText) {
         if (!part.startsWith("diff --git "))
             continue;
         const firstLine = part.slice("diff --git ".length).split("\n", 1)[0];
-        const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(firstLine);
-        if (!match)
+        const paths = diffHeaderPaths(firstLine);
+        if (!paths)
             continue;
-        const path = match[2] === "dev/null" ? match[1] : match[2];
+        const path = paths.b === "dev/null" ? paths.a : paths.b;
         byPath.set(path, part);
     }
     return byPath;
+}
+/**
+ * Extract the `a/<path>` and `b/<path>` paths from a `diff --git` header
+ * line, decoding Git's C-style quoting so the returned paths are raw bytes
+ * that align with `--name-status` / `--name-status -z` output.
+ */
+function diffHeaderPaths(header) {
+    const quoted = header.includes('"');
+    if (!quoted) {
+        const match = /^(?:a\/)?(.*) b\/(.*)$/.exec(header);
+        if (!match)
+            return null;
+        return { a: match[1], b: match[2] };
+    }
+    const tokens = [];
+    let i = 0;
+    while (i < header.length) {
+        if (header[i] === " ") {
+            i++;
+            continue;
+        }
+        if (header[i] === '"') {
+            const token = unquoteGitToken(header, i);
+            tokens.push(token.value);
+            i = token.end;
+        }
+        else {
+            const next = header.indexOf(" ", i);
+            tokens.push(header.slice(i, next === -1 ? undefined : next));
+            i = next === -1 ? header.length : next;
+        }
+    }
+    if (tokens.length !== 2)
+        return null;
+    const a = tokens[0];
+    const b = tokens[1];
+    return {
+        a: a.startsWith("a/") ? a.slice(2) : a,
+        b: b.startsWith("b/") ? b.slice(2) : b,
+    };
+}
+/** Decode a single Git C-quoted token starting at the opening double quote. */
+function unquoteGitToken(source, start) {
+    let value = "";
+    let i = start + 1;
+    while (i < source.length && source[i] !== '"') {
+        const ch = source[i];
+        if (ch !== "\\") {
+            value += ch;
+            i++;
+            continue;
+        }
+        const next = source[i + 1];
+        let consumed = 2;
+        if (next !== undefined && next >= "0" && next <= "7") {
+            let octal = "";
+            let j = i + 1;
+            while (j < source.length &&
+                octal.length < 3 &&
+                source[j] >= "0" &&
+                source[j] <= "7") {
+                octal += source[j];
+                j++;
+            }
+            value += String.fromCharCode(parseInt(octal, 8));
+            consumed = j - i;
+        }
+        else {
+            const escapes = {
+                a: "\x07",
+                b: "\b",
+                f: "\f",
+                n: "\n",
+                r: "\r",
+                t: "\t",
+                v: "\v",
+                "\\": "\\",
+                '"': '"',
+            };
+            value += escapes[next] ?? next;
+        }
+        i += consumed;
+    }
+    return {
+        // Quoted tokens hold one character per raw byte; re-decode those bytes as
+        // UTF-8 so the key matches the (UTF-8 decoded) --name-status output.
+        value: Buffer.from(value, "latin1").toString("utf8"),
+        end: Math.min(i + 1, source.length),
+    };
+}
+async function listUntrackedFiles(cwd) {
+    try {
+        const output = await git([
+            "-c",
+            "core.quotepath=false",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ], cwd, { quiet: true });
+        return output.split("\0").filter((p) => p.length > 0);
+    }
+    catch {
+        logger.debug("Failed to list untracked files");
+        return [];
+    }
 }
 async function readContent(full) {
     const fileStat = await stat(full);
@@ -118,7 +235,14 @@ async function readContent(full) {
         logger.debug(`Skipping oversized file content: ${full}`);
         return "";
     }
-    const text = await readFile(full, { encoding: "utf8" });
+    let text;
+    try {
+        text = await readFile(full, { encoding: "utf8" });
+    }
+    catch {
+        logger.debug(`Failed to read content of: ${full}`);
+        return "";
+    }
     if (text.includes("\0")) {
         logger.debug(`Skipping binary file content: ${full}`);
         return "";
@@ -130,16 +254,26 @@ async function defaultBaseRef(cwd) {
     // In GitHub Actions, use the PR base branch
     const githubBaseRef = process.env.GITHUB_BASE_REF;
     if (githubBaseRef) {
-        const remoteBase = `origin/${githubBaseRef}`;
-        if (await refExists(remoteBase, cwd))
-            return remoteBase;
-        if (await refExists(githubBaseRef, cwd))
-            return githubBaseRef;
+        try {
+            const remoteBase = `origin/${githubBaseRef}`;
+            if (await refExists(remoteBase, cwd))
+                return remoteBase;
+            if (await refExists(githubBaseRef, cwd))
+                return githubBaseRef;
+        }
+        catch (err) {
+            logger.warn(`Failed to resolve GitHub base ref ${githubBaseRef}`, err);
+        }
     }
-    const candidates = ["origin/main", "origin/master", "main", "master"];
+    const candidates = ["origin/main", "origin/master", "origin/develop", "main", "master"];
     for (const ref of candidates) {
-        if (await refExists(ref, cwd))
-            return ref;
+        try {
+            if (await refExists(ref, cwd))
+                return ref;
+        }
+        catch {
+            logger.debug(`Failed to resolve base ref: ${ref}`);
+        }
     }
     // No base ref found: fall back to a plain working-tree diff.
     return undefined;
@@ -159,9 +293,6 @@ function mapStatus(code) {
         return "added";
     if (code.startsWith("D"))
         return "deleted";
-    if (code === "M")
-        return "modified";
-    logger.warn(`Unknown git status code: ${code}`);
-    return null;
+    return "modified";
 }
 //# sourceMappingURL=git.js.map

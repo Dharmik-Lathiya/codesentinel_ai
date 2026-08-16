@@ -1,0 +1,74 @@
+# CodeSentinel AI — Advanced Example (Full Suite)
+#
+# SHIPPED: Use reusable workflows (no copy needed):
+#   review  → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.0
+#   autofix → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/autofix.yml@v0.11.0
+#
+# CUSTOM: Copy this file to your repo: .github/workflows/ai-suite.yml
+
+name: AI Code Quality Suite
+
+on:
+  pull_request:
+    types: [opened, synchronize, labeled]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: '0 */6 * * *'  # Audit every 6 hours
+  workflow_dispatch:
+    inputs:
+      audit_category:
+        description: 'Specific audit category (omit for random)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+# ─── Human PR Review (via shipped reusable workflow) ───
+jobs:
+  review:
+    if: |
+      github.event_name != 'schedule' &&
+      github.actor != 'github-actions[bot]' &&
+      (
+        github.event_name == 'pull_request' ||
+        contains(github.event.comment.body || '', '/review')
+      )
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.0
+    secrets: inherit
+    with:
+      mode: review
+      provider: opencode
+
+  # ─── Label-driven Autofix Loop ───
+  # Tag a PR with the `autofix` label to have CodeSentinel fix issues and push back.
+  autofix:
+    if: |
+      github.event_name != 'schedule' &&
+      contains(github.event.pull_request.labels.*.name, 'autofix')
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/autofix.yml@v0.11.0
+    secrets: inherit
+    with:
+      max_iterations: 3
+      provider: opencode
+      run_checks_after_fix: 'npm run lint && npm run typecheck'
+
+  # ─── Scheduled Audit ───
+  audit:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: Dharmik-Lathiya/CodeSentinel_AI@v0.11.0
+        with:
+          mode: audit
+          provider: opencode
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

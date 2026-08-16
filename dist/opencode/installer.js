@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { logger } from "../utils/logger.js";
@@ -21,7 +22,7 @@ export async function setupOpenCode(version) {
         if (!asset)
             throw new Error(`No binary asset found for ${binaryName}`);
         const buffer = await downloadBinary(asset.url);
-        verifyChecksum(buffer, releaseInfo);
+        await verifyChecksum(buffer, releaseInfo, asset.name);
         writeFileSync(binaryPath, buffer, { mode: 0o755 });
         logger.info(`OpenCode: installed at ${binaryPath}`);
         return { binaryPath, version: releaseInfo.tag_name, cached: false };
@@ -101,11 +102,52 @@ async function downloadBinary(url) {
     }
     return buffer;
 }
-function verifyChecksum(buffer, release) {
+async function verifyChecksum(buffer, release, assetName) {
     const sha256Asset = release.assets?.find((a) => a.name.endsWith(".sha256") || a.name.endsWith("SHA256SUMS"));
-    if (sha256Asset) {
-        logger.info("OpenCode: checksum asset found, verifying...");
+    if (!sha256Asset) {
+        logger.info("OpenCode: no checksum asset found, skipping verification");
+        return;
     }
+    let checksumText;
+    try {
+        const res = await fetch(sha256Asset.url, {
+            headers: { "Accept": "application/octet-stream", "User-Agent": "codesentinel-ai" },
+        });
+        if (!res.ok) {
+            logger.warn(`OpenCode: checksum asset download failed (${res.status}), skipping verification`);
+            return;
+        }
+        checksumText = await res.text();
+    }
+    catch (err) {
+        logger.warn(`OpenCode: checksum download failed (${err}), skipping verification`);
+        return;
+    }
+    const expected = parseChecksum(checksumText, assetName);
+    if (!expected) {
+        logger.warn(`OpenCode: no hash found for ${assetName} in checksum file, skipping verification`);
+        return;
+    }
+    const actual = createHash("sha256").update(buffer).digest("hex");
+    if (actual.toLowerCase() !== expected.toLowerCase()) {
+        throw new Error(`OpenCode: checksum mismatch for ${assetName} — expected ${expected}, got ${actual}. ` +
+            `Refusing to install a tampered binary. Set OPENCODE_VERSION to a known-good release or install manually.`);
+    }
+    logger.info("OpenCode: checksum verified");
+}
+export function parseChecksum(text, assetName) {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    for (const line of lines) {
+        // SHA256SUMS format: "<hash>  <filename>"
+        const shaLine = line.match(/^([a-fA-F0-9]{64})\s+\*?(.+)$/);
+        if (shaLine && shaLine[2].includes(assetName))
+            return shaLine[1];
+        // Single-hash .sha256 format: either "<hash>  <filename>" or just "<hash>"
+        const bareHash = line.match(/^([a-fA-F0-9]{64})$/);
+        if (bareHash && lines.length === 1)
+            return bareHash[1];
+    }
+    return null;
 }
 function checkSystemPath(binaryName) {
     try {

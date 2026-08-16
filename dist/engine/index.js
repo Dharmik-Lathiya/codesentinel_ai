@@ -336,18 +336,20 @@ export class Engine {
             const staticFindings = this.analyzer.analyzeMany([file]);
             const pluginFindings = await this.plugins.runAnalyze([file]);
             const secretFindings = scanSecrets(file.path, file.content, this.config.secretPatterns);
+            // Repo-wide linter/scanner findings are appended once after the loop,
+            // not per file — otherwise each one would be duplicated N times.
             const fileFindings = [
                 ...staticFindings,
                 ...pluginFindings,
                 ...secretFindings,
-                ...linterResults,
-                ...scannerResults,
             ];
             if (this.config.enable_cache) {
                 this.cache.set("static", cacheKey, fileFindings);
             }
             allFindings.push(...fileFindings);
         }
+        // Repo-wide findings (linters, third-party secret scanners) exactly once.
+        allFindings.push(...linterResults, ...scannerResults);
         const filtered = this.dismissals.filterDismissed(allFindings);
         // Auto-mute rules with persistently high false-positive rates
         if (this.learning && this.config.learning.enabled) {
@@ -755,14 +757,24 @@ export class Engine {
     }
     /** Create a PR from the fix branch and optionally enable auto-merge. */
     async createFixPR(fixBranch) {
-        if (!fixBranch || !process.env.GITHUB_TOKEN)
+        // PAT (higher permissions) overrides the default GITHUB_TOKEN
+        const token = process.env.CODESENTINEL_GITHUB_TOKEN || process.env.GITHUB_TOKEN;
+        if (!fixBranch || !token)
             return;
         const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
         const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
         if (!owner || !repo)
             return;
-        const reporter = new GitHubReporter({ token: process.env.GITHUB_TOKEN, owner, repo });
-        const defaultBranch = process.env.GITHUB_BASE_REF || "main";
+        const reporter = new GitHubReporter({ token, owner, repo });
+        // Resolve the repo's actual default branch instead of assuming "main"
+        let defaultBranch = process.env.GITHUB_BASE_REF;
+        try {
+            const { name } = await reporter.getDefaultBranch();
+            defaultBranch = name;
+        }
+        catch {
+            defaultBranch = defaultBranch || "main";
+        }
         try {
             const prNumber = await reporter.createPR({
                 title: "CodeSentinel: auto-fix issues",

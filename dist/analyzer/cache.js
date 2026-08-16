@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../utils/logger.js";
 /**
@@ -160,9 +160,13 @@ export class AnalysisCache {
     /**
      * Load entry from disk cache.
      */
+    /** Cache key → filesystem-safe filename (keys embed file paths with `/`). */
+    diskPath(key) {
+        return join(this.cacheDir, `${key.replace(/[^a-zA-Z0-9_.-]/g, "_")}.json`);
+    }
     loadFromDisk(key) {
         try {
-            const filePath = join(this.cacheDir, `${key}.json`);
+            const filePath = this.diskPath(key);
             if (!existsSync(filePath))
                 return null;
             const content = readFileSync(filePath, "utf8");
@@ -178,7 +182,7 @@ export class AnalysisCache {
      */
     saveToDisk(key, entry) {
         try {
-            const filePath = join(this.cacheDir, `${key}.json`);
+            const filePath = this.diskPath(key);
             writeFileSync(filePath, JSON.stringify(entry), "utf8");
         }
         catch {
@@ -190,7 +194,7 @@ export class AnalysisCache {
      */
     loadMemoryCache() {
         try {
-            const files = require("node:fs").readdirSync(this.cacheDir);
+            const files = readdirSync(this.cacheDir);
             for (const file of files) {
                 if (!file.endsWith(".json"))
                     continue;
@@ -220,9 +224,9 @@ export class AnalysisCache {
         for (const entry of toRemove) {
             this.memoryCache.delete(entry.key);
             try {
-                const filePath = join(this.cacheDir, `${entry.key}.json`);
+                const filePath = this.diskPath(entry.key);
                 if (existsSync(filePath)) {
-                    require("node:fs").unlinkSync(filePath);
+                    unlinkSync(filePath);
                 }
             }
             catch {
@@ -236,12 +240,12 @@ export class AnalysisCache {
     clear() {
         this.memoryCache.clear();
         try {
-            const files = require("node:fs").readdirSync(this.cacheDir);
+            const files = readdirSync(this.cacheDir);
             for (const file of files) {
                 if (!file.endsWith(".json"))
                     continue;
                 const filePath = join(this.cacheDir, file);
-                require("node:fs").unlinkSync(filePath);
+                unlinkSync(filePath);
             }
         }
         catch {
@@ -255,7 +259,7 @@ export class AnalysisCache {
         let diskEntries = 0;
         let totalSizeBytes = 0;
         try {
-            const files = require("node:fs").readdirSync(this.cacheDir);
+            const files = readdirSync(this.cacheDir);
             for (const file of files) {
                 if (!file.endsWith(".json"))
                     continue;
