@@ -860,8 +860,10 @@ export class Engine {
       }
 
       const msg = tag ? `CodeSentinel: auto-fix issues ${tag}` : 'CodeSentinel: auto-fix issues [skip ci]';
-      execFileSync("git", ["config", "user.email", "bot@codesentinel.ai"], { cwd: this.root, stdio: "pipe" });
-      execFileSync("git", ["config", "user.name", "CodeSentinel Bot"], { cwd: this.root, stdio: "pipe" });
+      const gitName = process.env.CODESENTINEL_GIT_NAME || "CodeSentinel Bot";
+      const gitEmail = process.env.CODESENTINEL_GIT_EMAIL || "bot@codesentinel.ai";
+      execFileSync("git", ["config", "user.email", gitEmail], { cwd: this.root, stdio: "pipe" });
+      execFileSync("git", ["config", "user.name", gitName], { cwd: this.root, stdio: "pipe" });
       execFileSync("git", ["commit", "-m", msg], { cwd: this.root, stdio: "pipe" });
       try {
         execFileSync("git", ["fetch", "origin", target], { cwd: this.root, stdio: "pipe", timeout: 30000 });

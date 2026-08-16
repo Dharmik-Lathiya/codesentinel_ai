@@ -428,8 +428,8 @@ export const BUILD_WORKFLOW_CONTENT = [
   "              continue",
   "            fi",
   "",
-  '            git config user.email "bot@codesentinel.ai"',
-  '            git config user.name "CodeSentinel Bot"',
+  '            git config user.email "${CODESENTINEL_GIT_EMAIL:-bot@codesentinel.ai}"',
+  '            git config user.name "${CODESENTINEL_GIT_NAME:-CodeSentinel Bot}"',
   "            GIT_PUSH_TOKEN=\"${CODESENTINEL_GITHUB_TOKEN:-${GITHUB_TOKEN}}\"",
   "            git remote set-url origin \"https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git\" 2>&1",
   "            git pull --rebase --autostash origin ${{ github.ref_name }} 2>&1 || true",
@@ -701,22 +701,16 @@ async function main(): Promise<void> {
       if (parsed.error.startsWith("Options")) {
         process.stderr.write("Options --rule and --file are mutually exclusive.\n");
       }
+      return;
+    }
+
+    const engine = Engine.fromInputs({ secrets: loadSecrets() });
+    if (parsed.ruleId !== undefined) {
       try {
-        await engine.dismissByRule(ruleId, reason);
+        await engine.dismissByRule(parsed.ruleId, parsed.reason);
+        process.stdout.write(`✅ Dismissed rule: ${parsed.ruleId}\n`);
       } catch (err) {
-        process.stdout.write(`Failed to dismiss rule ${ruleId}: ${err}\n`);
-        return;
-      }
-      process.stdout.write(`✅ Dismissed rule: ${ruleId}\n`);
-    } else if (dismissArgs.includes("--file")) {
-      const fileIdx = dismissArgs.indexOf("--file");
-      const filePath = dismissArgs[fileIdx + 1];
-      const lineIdx = dismissArgs.indexOf("--line");
-      const rawLine = lineIdx >= 0 ? dismissArgs[lineIdx + 1] : undefined;
-      const lineNum = rawLine !== undefined && /^\d+$/.test(rawLine.trim()) ? parseInt(rawLine, PARSE_INT_RADIX) : null;
-      if (!filePath) {
-        process.stdout.write("Usage: codesentinel dismiss --file <path> --line <n> [reason]\n");
-        return;
+        process.stderr.write(`Failed to dismiss rule ${parsed.ruleId}: ${err instanceof Error ? err.message : String(err)}\n`);
       }
     } else {
       try {

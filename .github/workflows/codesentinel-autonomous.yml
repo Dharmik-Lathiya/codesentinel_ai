@@ -36,8 +36,8 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL || 'https://opencode.ai/zen' }}
         run: |
-          git config user.name "CodeSentinel Bot"
-          git config user.email "bot@codesentinel.dev"
+          git config user.name "${CODESENTINEL_GIT_NAME:-Dharmik Lathiya}"
+          git config user.email "${CODESENTINEL_GIT_EMAIL:-dharmiklathiya.it@gmail.com}"
           node dist/index.js fix --auto-fix 2>&1 || true
           if [[ -n "$(git status --porcelain)" ]]; then
             git add -A
@@ -80,8 +80,8 @@ jobs:
             TIMESTAMP=$(date +%Y%m%d%H%M)
             BRANCH="codesentinel/improve/${TIMESTAMP}"
             TYPE="${{ steps.feature-gen.outputs.type }}"
-            git config user.name "CodeSentinel Bot"
-            git config user.email "bot@codesentinel.dev"
+            git config user.name "${CODESENTINEL_GIT_NAME:-Dharmik Lathiya}"
+            git config user.email "${CODESENTINEL_GIT_EMAIL:-dharmiklathiya.it@gmail.com}"
             git checkout -b "${BRANCH}"
             git add -A
             git commit -m "CodeSentinel: ${TYPE} improvement [skip ci]"

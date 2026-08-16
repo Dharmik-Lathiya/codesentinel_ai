@@ -16362,51 +16362,120 @@ const logger_logger = new Logger(process.env.CODESENTINEL_LOG_LEVEL || "info");
 
 const MILLISECONDS_PER_SECOND = 1000;
 const DEFAULT_BASE_DELAY_MS = MILLISECONDS_PER_SECOND;
-const HTTP_STATUS_429 = "429";
-const HTTP_STATUS_RATE_LIMIT = HTTP_STATUS_429;
-const HTTP_STATUS_503 = "503";
-const HTTP_STATUS_SERVICE_UNAVAILABLE = HTTP_STATUS_503;
-const HTTP_STATUS_502 = "502";
-const HTTP_STATUS_BAD_GATEWAY = HTTP_STATUS_502;
+const HTTP_STATUS_RATE_LIMIT = 429;
+const HTTP_STATUS_SERVICE_UNAVAILABLE = 503;
+const HTTP_STATUS_BAD_GATEWAY = 502;
+const RETRYABLE_STATUS_CODES = new Set([
+    HTTP_STATUS_RATE_LIMIT,
+    HTTP_STATUS_SERVICE_UNAVAILABLE,
+    HTTP_STATUS_BAD_GATEWAY,
+]);
+const getErrorStatus = (err) => {
+    if (typeof err !== "object" || err === null)
+        return undefined;
+    const record = err;
+    const direct = record.status ?? record.statusCode;
+    if (typeof direct === "number")
+        return direct;
+    const response = record.response;
+    if (typeof response === "object" &&
+        response !== null &&
+        typeof response.status === "number") {
+        return response.status;
+    }
+    return undefined;
+};
 const DEFAULT_SHOULD_RETRY = (err) => {
+    const status = getErrorStatus(err);
+    if (status !== undefined) {
+        return RETRYABLE_STATUS_CODES.has(status);
+    }
     if (err instanceof Error) {
-        const msg = err.message.toLowerCase();
-        return (msg.includes("rate limit") ||
-            msg.includes("rate-limited") ||
-            msg.includes(HTTP_STATUS_RATE_LIMIT) ||
-            msg.includes(HTTP_STATUS_SERVICE_UNAVAILABLE) ||
-            msg.includes(HTTP_STATUS_BAD_GATEWAY) ||
-            msg.includes("timeout") ||
-            msg.includes("econnreset") ||
-            msg.includes("overloaded"));
+        const msg = err.message;
+        return (/\brate[\s-]*limit(?:ed)?\b/i.test(msg) ||
+            /\b(?:429|502|503)\b/.test(msg) ||
+            /\btimeout\b/i.test(msg) ||
+            /\beconnreset\b/i.test(msg) ||
+            /\boverloaded\b/i.test(msg));
     }
     return false;
 };
+function readRetryAfterHeader(headers) {
+    if (headers === null || typeof headers !== "object")
+        return undefined;
+    const record = headers;
+    const raw = record["retry-after"] ?? record.retryAfter;
+    if (typeof raw === "string" || typeof raw === "number") {
+        const seconds = Number(raw);
+        if (Number.isFinite(seconds)) {
+            return seconds * MILLISECONDS_PER_SECOND;
+        }
+    }
+    return undefined;
+}
+function extractRetryAfterMs(err) {
+    if (err === null || typeof err !== "object")
+        return undefined;
+    const record = err;
+    const retryAfter = record.retryAfter ?? record["retry-after"];
+    if (typeof retryAfter === "number" && Number.isFinite(retryAfter)) {
+        return retryAfter;
+    }
+    const retryAfterMs = readRetryAfterHeader(record.headers);
+    if (retryAfterMs !== undefined)
+        return retryAfterMs;
+    const response = record.response;
+    if (response !== null && typeof response === "object") {
+        return readRetryAfterHeader(response.headers);
+    }
+    return undefined;
+}
+const createAbortError = () => {
+    const error = new Error("retry aborted by signal");
+    error.name = "AbortError";
+    return error;
+};
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+        reject(createAbortError());
+        return;
+    }
+    let timer;
+    const onAbort = () => {
+        clearTimeout(timer);
+        reject(createAbortError());
+    };
+    timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+});
 /**
  * Retry an async operation with exponential backoff. Only retries on transient
  * errors (rate limits, 5xx, timeouts). Throws the original error on permanent
  * failures or after exhausting attempts.
  */
 async function retry(fn, opts = {}) {
-    const maxAttempts = opts.maxAttempts ?? 3;
+    const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
     const baseDelayMs = opts.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     const shouldRetry = opts.shouldRetry ?? DEFAULT_SHOULD_RETRY;
-    let lastError;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const maxDelayMs = opts.maxDelayMs ?? baseDelayMs * Math.pow(2, 5);
+    const signal = opts.signal;
+    for (let attempt = 1;; attempt++) {
         try {
             return await fn();
         }
         catch (err) {
-            lastError = err;
-            if (attempt === maxAttempts || !shouldRetry(err)) {
+            if (attempt >= maxAttempts || !shouldRetry(err)) {
                 throw err;
             }
-            const delay = baseDelayMs * Math.pow(2, attempt - 1) * Math.random();
+            const computedDelay = baseDelayMs * Math.pow(2, attempt - 1);
+            const delay = extractRetryAfterMs(err) ?? computedDelay;
             logger_logger.warn(`Attempt ${attempt}/${maxAttempts} failed, retrying in ${delay}ms: ${err instanceof Error ? err.message : String(err)}`);
-            await new Promise((r) => setTimeout(r, delay));
+            await sleep(delay, signal);
         }
     }
-    throw lastError;
 }
 //# sourceMappingURL=retry.js.map
 ;// CONCATENATED MODULE: ./dist/github/reporter.js
@@ -20639,6 +20708,7 @@ const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
 const SCORE_RED_THRESHOLD = 40;
 const APOSTROPHE_ENTITY = "&#39;";
+const SCORE_RING_RADIUS_PERCENT = "50%";
 const REPORT_STYLES = `  <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
@@ -20651,10 +20721,10 @@ const REPORT_STYLES = `  <style>
     .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
-    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
+    .score-ring { width: 80px; height: 80px; border-radius: ${SCORE_RING_RADIUS_PERCENT}; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: ${BOLD_FONT_WEIGHT}; color: #fff; }
     table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
-    td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
+    td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; white-space: pre-wrap; word-break: break-word; }
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
@@ -20762,7 +20832,7 @@ function renderScoreCard(score) {
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+<div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -20770,12 +20840,14 @@ function renderScoreCard(score) {
 function renderBarChart(title, items) {
     if (items.length === 0)
         return "";
-    const maxCount = Math.max(...items.map((item) => item.value));
+    let maxCount = 0;
+    for (const it of items)
+        maxCount = Math.max(maxCount, it.value);
     return `<h2>${escapeHtml(title)}</h2>
   <div class="bar-chart">
     ${items
         .map((item) => {
-        const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
+        const height = barHeightPercent(item.value, maxCount);
         return `<div class="bar">
         <div class="bar-value">${item.value}</div>
         <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
@@ -20784,6 +20856,9 @@ function renderBarChart(title, items) {
     })
         .join("\n    ")}
   </div>`;
+}
+function barHeightPercent(value, max) {
+    return max > 0 ? Math.round((value / max) * BAR_HEIGHT_PERCENT) : 0;
 }
 function renderFindingsTable(count, rows) {
     if (count === 0)
@@ -21490,6 +21565,7 @@ function runThirdPartySecrets(root) {
 /**
  * Execute async operations with bounded concurrency. Returns results in input order.
  * Errors are collected per-item; the caller is responsible for filtering.
+ * Sparse arrays: holes are preserved, and fn(undefined, i) is invoked for each hole.
  */
 async function concurrentMap(items, fn, concurrency = 5) {
     if (!Array.isArray(items))
@@ -21505,7 +21581,7 @@ async function concurrentMap(items, fn, concurrency = 5) {
                 results[index] = await fn(items[index], index);
             }
             catch (error) {
-                results[index] = error instanceof Error ? error : new Error(String(error));
+                results[index] = error instanceof Error ? error : new Error(typeof error === 'string' ? error : JSON.stringify(error));
             }
         }
     }
@@ -36318,8 +36394,10 @@ class Engine {
                 execFileSync("git", ["checkout", "-b", target], { cwd: this.root, stdio: "pipe" });
             }
             const msg = tag ? `CodeSentinel: auto-fix issues ${tag}` : 'CodeSentinel: auto-fix issues [skip ci]';
-            execFileSync("git", ["config", "user.email", "bot@codesentinel.ai"], { cwd: this.root, stdio: "pipe" });
-            execFileSync("git", ["config", "user.name", "CodeSentinel Bot"], { cwd: this.root, stdio: "pipe" });
+            const gitName = process.env.CODESENTINEL_GIT_NAME || "CodeSentinel Bot";
+            const gitEmail = process.env.CODESENTINEL_GIT_EMAIL || "bot@codesentinel.ai";
+            execFileSync("git", ["config", "user.email", gitEmail], { cwd: this.root, stdio: "pipe" });
+            execFileSync("git", ["config", "user.name", gitName], { cwd: this.root, stdio: "pipe" });
             execFileSync("git", ["commit", "-m", msg], { cwd: this.root, stdio: "pipe" });
             try {
                 execFileSync("git", ["fetch", "origin", target], { cwd: this.root, stdio: "pipe", timeout: 30000 });

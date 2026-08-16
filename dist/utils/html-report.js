@@ -13,6 +13,7 @@ const SCORE_GREEN_THRESHOLD = 80;
 const SCORE_ORANGE_THRESHOLD = 60;
 const SCORE_RED_THRESHOLD = 40;
 const APOSTROPHE_ENTITY = "&#39;";
+const SCORE_RING_RADIUS_PERCENT = "50%";
 const REPORT_STYLES = `  <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
@@ -25,10 +26,10 @@ const REPORT_STYLES = `  <style>
     .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
     .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
     .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
-    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
+    .score-ring { width: 80px; height: 80px; border-radius: ${SCORE_RING_RADIUS_PERCENT}; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: ${BOLD_FONT_WEIGHT}; color: #fff; }
     table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
     th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
-    td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
+    td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; white-space: pre-wrap; word-break: break-word; }
     tr:hover td { background: #f8fafc; }
     .empty { text-align: center; color: #94a3b8; padding: 2rem; }
     .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
@@ -136,7 +137,7 @@ function renderScoreCard(score) {
       <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
       <div>
         <div class="label">Quality Score</div>
-        <div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability}</div>
+<div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
 
       </div>
     </div>`;
@@ -144,12 +145,14 @@ function renderScoreCard(score) {
 function renderBarChart(title, items) {
     if (items.length === 0)
         return "";
-    const maxCount = Math.max(...items.map((item) => item.value));
+    let maxCount = 0;
+    for (const it of items)
+        maxCount = Math.max(maxCount, it.value);
     return `<h2>${escapeHtml(title)}</h2>
   <div class="bar-chart">
     ${items
         .map((item) => {
-        const height = maxCount > 0 ? Math.round((item.value / maxCount) * BAR_HEIGHT_PERCENT) : 0;
+        const height = barHeightPercent(item.value, maxCount);
         return `<div class="bar">
         <div class="bar-value">${item.value}</div>
         <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
@@ -158,6 +161,9 @@ function renderBarChart(title, items) {
     })
         .join("\n    ")}
   </div>`;
+}
+function barHeightPercent(value, max) {
+    return max > 0 ? Math.round((value / max) * BAR_HEIGHT_PERCENT) : 0;
 }
 function renderFindingsTable(count, rows) {
     if (count === 0)
