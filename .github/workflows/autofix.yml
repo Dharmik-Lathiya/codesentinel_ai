@@ -7,7 +7,7 @@ on:
         description: "CodeSentinel action tag to use (e.g. v0.11.0). Pinned to a release, never a branch."
         required: false
         type: string
-        default: "v0.11.1"
+        default: "v0.12.0"
       max_iterations:
         description: "Max fix iterations"
         required: false

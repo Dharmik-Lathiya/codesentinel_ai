@@ -100,10 +100,33 @@ export class GitHubReporter {
         }
         return comments;
     }
-    /** Create a GitHub issue (used by audit mode). */
-    async createIssue(title, body) {
+    /** Find an open issue whose title matches exactly (used for dedup). */
+    async findOpenIssueByTitle(title) {
+        const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues?state=open&per_page=100`;
+        const issues = await this.request("GET", url);
+        if (!Array.isArray(issues))
+            return null;
+        const match = issues.find((i) => i.title === title);
+        return match ? match.number : null;
+    }
+    /** Create a GitHub issue (used by audit mode), optionally with labels. */
+    async createIssue(title, body, labels) {
         const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues`;
-        await this.request("POST", url, { title, body });
+        const payload = { title, body };
+        if (labels && labels.length > 0)
+            payload.labels = labels;
+        const result = await this.request("POST", url, payload);
+        return result?.number ?? 0;
+    }
+    /** Create an issue, or update the existing open issue with the same title (dedup). */
+    async createOrUpdateIssue(title, body, labels) {
+        const existing = await this.findOpenIssueByTitle(title);
+        if (existing !== null) {
+            const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues/${existing}`;
+            await this.request("PATCH", url, { body });
+            return existing;
+        }
+        return this.createIssue(title, body, labels);
     }
     /** Create a GitHub Check Run with annotations. */
     async createCheckRun(opts) {

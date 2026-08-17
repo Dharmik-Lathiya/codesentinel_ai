@@ -16291,6 +16291,9 @@ function configFromInputs(inputs) {
     }
     if (inputs.auto_merge)
         out.autoMerge = inputs.auto_merge === "true";
+    if (inputs.audit_target_dirs) {
+        out.auditTargetDirs = inputs.audit_target_dirs.split(",").map((s) => s.trim()).filter(Boolean);
+    }
     if (inputs.jsonl_output)
         out.jsonl_output = inputs.jsonl_output === "true";
     if (inputs.mcp_enabled)
@@ -16588,10 +16591,33 @@ class GitHubReporter {
         }
         return comments;
     }
-    /** Create a GitHub issue (used by audit mode). */
-    async createIssue(title, body) {
+    /** Find an open issue whose title matches exactly (used for dedup). */
+    async findOpenIssueByTitle(title) {
+        const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues?state=open&per_page=100`;
+        const issues = await this.request("GET", url);
+        if (!Array.isArray(issues))
+            return null;
+        const match = issues.find((i) => i.title === title);
+        return match ? match.number : null;
+    }
+    /** Create a GitHub issue (used by audit mode), optionally with labels. */
+    async createIssue(title, body, labels) {
         const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues`;
-        await this.request("POST", url, { title, body });
+        const payload = { title, body };
+        if (labels && labels.length > 0)
+            payload.labels = labels;
+        const result = await this.request("POST", url, payload);
+        return result?.number ?? 0;
+    }
+    /** Create an issue, or update the existing open issue with the same title (dedup). */
+    async createOrUpdateIssue(title, body, labels) {
+        const existing = await this.findOpenIssueByTitle(title);
+        if (existing !== null) {
+            const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues/${existing}`;
+            await this.request("PATCH", url, { body });
+            return existing;
+        }
+        return this.createIssue(title, body, labels);
     }
     /** Create a GitHub Check Run with annotations. */
     async createCheckRun(opts) {
@@ -18270,7 +18296,48 @@ function backupFile(filePath) {
     return backupPath;
 }
 //# sourceMappingURL=files.js.map
+;// CONCATENATED MODULE: ./dist/analyzer/strings.js
+/** Mask string literal contents and line comments so literal text never matches code patterns. */
+function maskLiterals(line) {
+    let out = "";
+    let i = 0;
+    while (i < line.length) {
+        const c = line[i];
+        if (c === '"' || c === "'" || c === "`") {
+            const quote = c;
+            i += 1;
+            while (i < line.length) {
+                if (line[i] === "\\") {
+                    i += 2;
+                    continue;
+                }
+                if (line[i] === quote) {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        if (c === "/" && line[i + 1] === "/")
+            break;
+        if (c === "/" && line[i + 1] === "*") {
+            const end = line.indexOf("*/", i + 2);
+            i = end === -1 ? line.length : end + 2;
+            continue;
+        }
+        out += c;
+        i += 1;
+    }
+    return out;
+}
+/** True for data files where numeric literals are values, not magic numbers. */
+function isDataFile(path) {
+    return /seed|fixture|mock|factory/i.test(path);
+}
+//# sourceMappingURL=strings.js.map
 ;// CONCATENATED MODULE: ./dist/analyzer/enhanced.js
+
 /**
  * Enhanced static analyzer with dynamic severity adjustment, confidence
  * thresholds, custom rules, and analysis context tracking.
@@ -18487,13 +18554,16 @@ class EnhancedAnalyzer {
      */
     detectMagicNumbers(path, lines, severityMultiplier) {
         const findings = [];
-        const magicNumberRegex = /(?<![a-zA-Z_])\b(?!0\b|1\b|-1\b|2\b)\d{2,}\b(?![a-zA-Z_])/g;
+        if (isDataFile(path))
+            return findings;
+        const magicNumberRegex = /(?<![a-zA-Z_.])\b(?!0\b|1\b|-1\b|2\b)\d{2,}\b(?![a-zA-Z_])/g;
         lines.forEach((line, idx) => {
-            if (line.trim().startsWith("//") || line.trim().startsWith("import") || line.trim().startsWith("export")) {
+            if (line.trim().startsWith("import") || line.trim().startsWith("export")) {
                 return;
             }
+            const code = maskLiterals(line);
             let match;
-            while ((match = magicNumberRegex.exec(line)) !== null) {
+            while ((match = magicNumberRegex.exec(code)) !== null) {
                 findings.push(this.createFinding(this.adjustSeverity("low", severityMultiplier), "smell", path, idx + 1, `Magic number ${match[0]} detected.`, "Consider extracting to a named constant.", 0.7));
             }
         });
@@ -19444,6 +19514,7 @@ class ProgressiveAnalyzer {
 
 
 
+
 /**
  * StaticAnalyzer runs cheap, deterministic, offline heuristic checks that do
  * not require an AI call. These act as a fast first pass and also power the
@@ -19843,13 +19914,16 @@ class StaticAnalyzer {
     /** Detect magic numbers (numeric literals other than 0, 1, -1). */
     detectMagicNumbers(path, lines) {
         const findings = [];
-        const magicNumberRegex = /(?<![a-zA-Z_])\b(?!0\b|1\b|-1\b|2\b)\d{2,}\b(?![a-zA-Z_])/g;
+        if (isDataFile(path))
+            return findings;
+        const magicNumberRegex = /(?<![a-zA-Z_.])\b(?!0\b|1\b|-1\b|2\b)\d{2,}\b(?![a-zA-Z_])/g;
         lines.forEach((line, idx) => {
-            if (line.trim().startsWith("//") || line.trim().startsWith("import") || line.trim().startsWith("export")) {
+            if (line.trim().startsWith("import") || line.trim().startsWith("export")) {
                 return;
             }
+            const code = maskLiterals(line);
             let match;
-            while ((match = magicNumberRegex.exec(line)) !== null) {
+            while ((match = magicNumberRegex.exec(code)) !== null) {
                 findings.push({
                     severity: "low",
                     category: "smell",
@@ -36826,7 +36900,23 @@ ${promptBody}
     // AUDIT
     // ---------------------------------------------------------------------------
     async runAudit() {
-        const files = await this.collectedFiles();
+        let files = await this.collectedFiles();
+        const targetDirs = this.config.auditTargetDirs;
+        if (targetDirs && targetDirs.length > 0) {
+            files = files.filter((f) => targetDirs.some((d) => f.path.startsWith(d)));
+            if (files.length === 0) {
+                return {
+                    mode: "audit",
+                    summary: "No files matched the configured audit target directories.",
+                    findings: [],
+                    score: null,
+                    comments: [],
+                    generatedTests: [],
+                    fixAttempts: [],
+                    metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
+                };
+            }
+        }
         const staticFindings = await this.analyzeFiles(files);
         const snapshot = files
             .map((f) => `### ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
@@ -37559,6 +37649,10 @@ async function runAction() {
         issue_body: get("issue_body"),
         ask: get("ask"),
         use_opencode_cli: get("use_opencode_cli"),
+        audit_create_issues: get("audit_create_issues"),
+        audit_auto_fix: get("audit_auto_fix"),
+        audit_labels: get("audit_labels"),
+        audit_target_dirs: get("audit_target_dirs"),
     };
     const useOpencodeCliFlag = inputs.use_opencode_cli === "true";
     const opencodeVersion = get("opencode_version") || "latest";
@@ -37619,10 +37713,14 @@ async function runAction() {
             `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
             `security ${report.score.security}, coverage ${report.score.test_coverage})\n`);
     }
-    await publishOutputs(report, secrets, autoMerge);
+    await publishOutputs(report, secrets, autoMerge, {
+        createIssues: inputs.audit_create_issues !== "false",
+        autoFix: inputs.audit_auto_fix === "true",
+        labels: (inputs.audit_labels || "audit").split(",").map((s) => s.trim()).filter(Boolean),
+    });
 }
 /** Post comments / issues and write the step summary + metrics outputs. */
-async function publishOutputs(report, secrets, autoMerge = false) {
+async function publishOutputs(report, secrets, autoMerge = false, auditOpts) {
     const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
     const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
     const pullNumber = process.env.GITHUB_PR_NUMBER
@@ -37638,9 +37736,12 @@ async function publishOutputs(report, secrets, autoMerge = false) {
                 line: c.line,
             });
         }
-        if (report.mode === "audit") {
+        if (report.mode === "audit" && auditOpts?.createIssues) {
+            const labels = [...(auditOpts.labels ?? [])];
+            if (auditOpts.autoFix)
+                labels.push("autofix-trigger");
             for (const f of report.findings) {
-                await reporter.createIssue(`[${f.severity}] ${f.file}`, f.comment);
+                await reporter.createOrUpdateIssue(`[${f.severity}] ${f.file}`, f.comment, labels);
             }
         }
         // Create Check Run for gate mode

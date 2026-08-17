@@ -34,7 +34,7 @@ AI-powered code quality orchestrator. Review PRs, auto-fix issues, audit repos, 
   - Zero setup: no `npm ci`, no build at runtime — runs the committed ncc bundle directly (~0s vs ~30s before)
   - Build: `npm run build:action`; committed to the repo (action references it by path)
   - Bundle notes: `better-sqlite3` is a native module — keep its import computed (`"better-" + "sqlite3"` in `src/learning/db.ts`) so ncc doesn't inline 17MB of prebuilds; avoid `resolve(root, x.test.ts)` in bundler-reachable code (ncc rewrites it to a bundle-relative path — use `join`)
-- Reusable workflows shipped in `.github/workflows/` (`review.yml`, `autofix.yml`): users wire with 5 lines — `uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.1` + `secrets: inherit`. Ready-to-copy templates in `examples/`
+- Reusable workflows shipped in `.github/workflows/` (`review.yml`, `autofix.yml`): users wire with 5 lines — `uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.12.0` + `secrets: inherit`. Ready-to-copy templates in `examples/`
 - Slash commands on PRs/issues (via `codesentinel.yml`): `/review`, `/fix`, `/audit`, `/score`, `/testgen`, `/gate`, `/deadcode`, `/describe`, `/plan`, `/ask`
 - Auto-analyzes new issues: posts implementation plan + clarifying questions, then `Reply with /fix to start implementation`
 - PR comment posting needs `GITHUB_PR_NUMBER` env — set from `github.event.pull_request.number || github.event.issue.number` (issue_comment events carry the PR number in `issue.number`)

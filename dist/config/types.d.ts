@@ -173,6 +173,8 @@ export interface CodeSentinelConfig {
     /** Files / globs to include and ignore. */
     include: string[];
     exclude: string[];
+    /** Restrict audit findings to these directories (relative paths, empty = whole repo). */
+    auditTargetDirs?: string[];
     /** Output / side-effect configuration. */
     output: OutputConfig;
     /** Enable on-disk caching of AI responses to avoid repeat calls. */
