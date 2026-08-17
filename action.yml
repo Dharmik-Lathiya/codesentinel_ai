@@ -79,6 +79,22 @@ inputs:
   ask:
     description: "Question to ask (chat mode)"
     required: false
+  audit_create_issues:
+    description: "Create GitHub issues for audit findings (true/false)"
+    required: false
+    default: "true"
+  audit_auto_fix:
+    description: "Add the autofix-trigger label so the fix loop picks up audit issues (true/false)"
+    required: false
+    default: "false"
+  audit_labels:
+    description: "Comma-separated labels for audit issues"
+    required: false
+    default: "audit"
+  audit_target_dirs:
+    description: "Comma-separated directories to audit (empty = whole repo)"
+    required: false
+    default: ""
 
 outputs:
   score:

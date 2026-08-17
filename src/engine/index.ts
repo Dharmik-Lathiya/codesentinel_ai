@@ -1300,7 +1300,24 @@ ${promptBody}
   // AUDIT
   // ---------------------------------------------------------------------------
   private async runAudit(): Promise<EngineReport> {
-    const files = await this.collectedFiles();
+    let files = await this.collectedFiles();
+    const targetDirs = this.config.auditTargetDirs;
+    if (targetDirs && targetDirs.length > 0) {
+      files = files.filter((f) => targetDirs.some((d) => f.path.startsWith(d)));
+      if (files.length === 0) {
+        return {
+          mode: "audit",
+          summary: "No files matched the configured audit target directories.",
+          findings: [],
+          score: null,
+          comments: [],
+          generatedTests: [],
+          fixAttempts: [],
+          metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
+        };
+      }
+    }
+
     const staticFindings = await this.analyzeFiles(files);
 
     const snapshot = files

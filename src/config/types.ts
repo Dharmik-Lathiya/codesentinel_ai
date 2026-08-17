@@ -190,6 +190,9 @@ export interface CodeSentinelConfig {
   include: string[];
   exclude: string[];
 
+  /** Restrict audit findings to these directories (relative paths, empty = whole repo). */
+  auditTargetDirs?: string[];
+
   /** Output / side-effect configuration. */
   output: OutputConfig;
 
