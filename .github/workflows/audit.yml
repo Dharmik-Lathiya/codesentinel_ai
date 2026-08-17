@@ -7,7 +7,7 @@ on:
         description: "CodeSentinel action tag to use. Pinned to a release, never a branch."
         required: false
         type: string
-        default: "v0.12.0"
+        default: "v0.12.1"
       audit_labels:
         description: "Comma-separated labels for audit issues"
         required: false

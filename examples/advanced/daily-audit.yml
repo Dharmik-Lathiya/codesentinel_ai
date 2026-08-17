@@ -10,7 +10,7 @@ on:
 
 jobs:
   audit:
-    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/audit.yml@v0.12.0
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/audit.yml@v0.12.1
     with:
       audit_auto_fix: "true"
       audit_labels: "audit,autofix-trigger"
