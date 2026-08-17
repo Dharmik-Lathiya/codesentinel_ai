@@ -1,0 +1,17 @@
+# Daily scheduled audit — copies the same 5-line wiring as review.yml/autofix.yml.
+# The reusable audit.yml runs lint/test/build and files labeled, deduped GitHub
+# issues for AI-audit findings; autofix-trigger labels start the fix loop.
+name: Daily Audit
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  audit:
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/audit.yml@v0.12.0
+    with:
+      audit_auto_fix: "true"
+      audit_labels: "audit,autofix-trigger"
+    secrets: inherit

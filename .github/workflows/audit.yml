@@ -1,0 +1,156 @@
+name: "CodeSentinel Audit (reusable)"
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "CodeSentinel action tag to use. Pinned to a release, never a branch."
+        required: false
+        type: string
+        default: "v0.12.0"
+      audit_labels:
+        description: "Comma-separated labels for audit issues"
+        required: false
+        type: string
+        default: "audit"
+      audit_auto_fix:
+        description: "Add autofix-trigger label so the fix loop picks up audit issues (true/false)"
+        required: false
+        type: string
+        default: "false"
+      run_verification:
+        description: "Run lint/test/build verification before the audit (true/false)"
+        required: false
+        type: string
+        default: "true"
+    secrets:
+      CODESENTINEL_GITHUB_TOKEN:
+        description: "Optional PAT for git push (overrides GITHUB_TOKEN)"
+        required: false
+      GITHUB_TOKEN:
+        required: true
+      OPENAI_API_KEY:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      GEMINI_API_KEY:
+        required: false
+      OPENCODE_API_KEY:
+        required: false
+      OPENCODE_BASE_URL:
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: codesentinel-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+        continue-on-error: true
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Verification suite
+        if: inputs.run_verification == 'true'
+        id: verify
+        run: |
+          FAILED=0
+          echo "npm run lint..."
+          npm run lint > /tmp/lint.log 2>&1 || { echo "LINT=failed" >> "$GITHUB_ENV"; FAILED=1; }
+          echo "npm test..."
+          npm test > /tmp/test.log 2>&1 || { echo "TESTS=failed" >> "$GITHUB_ENV"; FAILED=1; }
+          echo "npm run build..."
+          npm run build > /tmp/build.log 2>&1 || { echo "BUILD=failed" >> "$GITHUB_ENV"; FAILED=1; }
+          if [ "$FAILED" = "1" ]; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            echo "Verification suite reported failures (see issue for logs)"
+          else
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report verification failures as issue
+        if: steps.verify.outputs.status == 'failed'
+        env:
+          GH_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="[Audit] Daily verification failed — $(date -u '+%Y-%m-%d')"
+          EXISTING=$(gh issue list --repo "${{ github.repository }}" --state open --search "in:title \"Daily verification failed\"" --json number --jq '.[0].number // empty')
+          BODY="## Daily Verification Failed
+
+          | Check | Status |
+          |-------|--------|
+          | Lint (npm run lint) | ${{ env.LINT == 'failed' && '❌' || '✅' }} |
+          | Tests (npm test) | ${{ env.TESTS == 'failed' && '❌' || '✅' }} |
+          | Build (npm run build) | ${{ env.BUILD == 'failed' && '❌' || '✅' }} |
+
+          <details><summary>Lint output</summary>
+
+          \`\`\`
+          $(tail -100 /tmp/lint.log 2>/dev/null)
+          \`\`\`
+          </details>
+
+          <details><summary>Test output</summary>
+
+          \`\`\`
+          $(tail -100 /tmp/test.log 2>/dev/null)
+          \`\`\`
+          </details>
+
+          <details><summary>Build output</summary>
+
+          \`\`\`
+          $(tail -100 /tmp/build.log 2>/dev/null)
+          \`\`\`
+          </details>
+
+          See [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for full logs."
+          if [ -n "$EXISTING" ]; then
+            gh issue edit "$EXISTING" --body "$BODY" --repo "${{ github.repository }}"
+          else
+            gh issue create --title "$TITLE" --body "$BODY" --label "audit" --repo "${{ github.repository }}"
+          fi
+
+      - name: Ensure labels exist
+        env:
+          GH_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          for L in audit autofix autofix-trigger; do
+            gh label create "$L" --force --repo "${{ github.repository }}" 2>/dev/null || true
+          done
+
+      - name: Run CodeSentinel audit
+        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ inputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
+        with:
+          mode: audit
+          audit_create_issues: "true"
+          audit_auto_fix: ${{ inputs.audit_auto_fix }}
+          audit_labels: ${{ inputs.audit_labels }}

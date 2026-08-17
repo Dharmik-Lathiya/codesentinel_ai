@@ -1,8 +1,9 @@
 # CodeSentinel AI — Advanced Example (Full Suite)
 #
 # SHIPPED: Use reusable workflows (no copy needed):
-#   review  → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.1
-#   autofix → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/autofix.yml@v0.11.1
+#   review  → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.12.0
+#   autofix → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/autofix.yml@v0.12.0
+#   audit   → Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/audit.yml@v0.12.0
 #
 # CUSTOM: Copy this file to your repo: .github/workflows/ai-suite.yml
 
@@ -37,7 +38,7 @@ jobs:
         github.event_name == 'pull_request' ||
         contains(github.event.comment.body || '', '/review')
       )
-    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.11.1
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.12.0
     secrets: inherit
     with:
       mode: review
@@ -49,26 +50,18 @@ jobs:
     if: |
       github.event_name != 'schedule' &&
       contains(github.event.pull_request.labels.*.name, 'autofix')
-    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/autofix.yml@v0.11.1
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/autofix.yml@v0.12.0
     secrets: inherit
     with:
       max_iterations: 3
       provider: opencode
       run_checks_after_fix: 'npm run lint && npm run typecheck'
 
-  # ─── Scheduled Audit ───
+  # ─── Scheduled Audit (reusable audit.yml: verification + labeled issues) ───
   audit:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - uses: Dharmik-Lathiya/CodeSentinel_AI@v0.11.1
-        with:
-          mode: audit
-          provider: opencode
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/audit.yml@v0.12.0
+    secrets: inherit
+    with:
+      audit_auto_fix: "true"
+      audit_labels: "audit,autofix-trigger"
