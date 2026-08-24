@@ -49,6 +49,7 @@ jobs:
       - name: Run self-improvement fix
         env:
           GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           node dist/index.js fix --auto-fix --use-opencode-cli 2>&1 || true
           if [ -z "$(git status --porcelain)" ]; then

@@ -39,6 +39,7 @@ jobs:
       - name: Auto-Fix Issues
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           git config user.name "${CODESENTINEL_GIT_NAME:-Dharmik Lathiya}"
           git config user.email "${CODESENTINEL_GIT_EMAIL:-dharmiklathiya.it@gmail.com}"
@@ -56,6 +57,7 @@ jobs:
         id: feature-gen
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           DAY_OF_YEAR=$(date +%j)
           HOUR=$(date +%H)

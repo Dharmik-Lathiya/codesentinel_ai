@@ -66,6 +66,7 @@ jobs:
       - name: Run review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: node dist/index.js review --use-opencode-cli 2>&1 | tee /tmp/cs-out.txt; true
 
   autofix:
@@ -111,6 +112,7 @@ jobs:
       - name: Run fix
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: node dist/index.js fix --auto-fix --use-opencode-cli 2>&1 | tee /tmp/cs-out.txt; true
 
   scheduled-review:
@@ -135,6 +137,7 @@ jobs:
       - name: Run review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: node dist/index.js review --use-opencode-cli 2>&1 | tee /tmp/cs-out.txt; true
 
   audit:
@@ -159,6 +162,7 @@ jobs:
       - name: Run audit
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: node dist/index.js audit --use-opencode-cli 2>&1 | tee /tmp/cs-out.txt; true
 
   auto-merge:

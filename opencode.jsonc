@@ -40,27 +40,6 @@
 
   "instructions": ["AGENTS.md", ".opencode/skills/**/SKILL.md"],
 
-  "agent": {
-    "build": {
-      "model": "opencode/default",
-      "tools": {
-        "skill": true
-      }
-    },
-    "plan": {
-      "model": "opencode/default",
-      "tools": {
-        "skill": true
-      }
-    },
-    "explore": {
-      "model": "opencode/default",
-      "tools": {
-        "skill": true
-      }
-    }
-  },
-
   "tools": {
     "skill": true
   },
