@@ -89,8 +89,8 @@ jobs:
                 echo "You are an AI conflict resolution agent. Resolve the merge conflicts on branch ${HEAD} in this repo." > /tmp/conflict-prompt.txt
                 echo "Inspect git status and the conflicted files, resolve all conflict markers (<<<<<<< ======= >>>>>>>)," >> /tmp/conflict-prompt.txt
                 echo "keep the code coherent and type-safe, then run the project's build and tests. Do not commit or push." >> /tmp/conflict-prompt.txt
-                if opencode run --auto --format json -m opencode/big-pickle "$(cat /tmp/conflict-prompt.txt)" \
-                  && npm run build >/tmp/build.log 2>&1 && npm test >/tmp/test.log 2>&1; then
+                if opencode run --auto --format json -m opencode/big-pickle "$(cat /tmp/conflict-prompt.txt)" </dev/null \
+                  && npm run build >/tmp/build.log 2>&1 </dev/null && npm test >/tmp/test.log 2>&1 </dev/null; then
                   git add -A
                   git commit -m "CodeSentinel: resolve merge conflicts on ${HEAD} [skip ci]"
                   git push origin "$HEAD" 2>/dev/null || true
