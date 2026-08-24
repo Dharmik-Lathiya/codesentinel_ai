@@ -2,6 +2,7 @@ import { openaiFactory } from "./openai.js";
 import { anthropicFactory } from "./anthropic.js";
 import { geminiFactory } from "./gemini.js";
 import { opencodeFactory } from "./opencode.js";
+import { createOpencodeProvider } from "./providers/opencode-cli.js";
 import { ProviderUnavailableError } from "./provider.js";
 import { retry } from "../utils/retry.js";
 import { logger } from "../utils/logger.js";
@@ -14,16 +15,21 @@ import { logger } from "../utils/logger.js";
 export class AIHub {
     config;
     secrets;
+    root;
     providers = new Map();
     factories = {
         openai: openaiFactory,
         anthropic: anthropicFactory,
         gemini: geminiFactory,
         opencode: opencodeFactory,
+        "opencode-cli": (_s, root) => createOpencodeProvider(root),
     };
-    constructor(config, secrets) {
+    constructor(config, secrets, 
+    /** Repository root — used as the CLI working directory (e.g. opencode run). */
+    root) {
         this.config = config;
         this.secrets = secrets;
+        this.root = root;
     }
     /** Resolve the model configuration for a task, falling back to default. */
     modelForTask(task) {
@@ -38,7 +44,7 @@ export class AIHub {
         if (!factory) {
             throw new Error(`Unknown provider: "${model.provider}". Supported providers: openai, anthropic, gemini, opencode.`);
         }
-        const provider = factory(this.secrets);
+        const provider = factory(this.secrets, this.root);
         if (!provider) {
             const keyEnvMap = {
                 openai: "OPENAI_API_KEY",

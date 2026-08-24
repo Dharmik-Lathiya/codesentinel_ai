@@ -26,7 +26,7 @@ describe("parseOpencodeOutput", () => {
     const result = parseOpencodeOutput(lines);
 
     expect(result.summary).toBe("Great PR overall");
-    expect(result.verdict).toEqual({ ready: false, reasoning: "Has critical issues" });
+    expect(result.verdict).toEqual({ ready: false, reasoning: "Has critical issues", autoFixable: true, confidence: "medium" });
     expect(result.strengths).toHaveLength(2);
     expect(result.strengths[0]).toEqual<Strength>({ message: "Clean architecture", file: undefined, line: undefined });
     expect(result.strengths[1]).toEqual<Strength>({ message: "Well documented", file: "src/index.ts", line: 10 });

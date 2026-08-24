@@ -100,6 +100,8 @@ export declare class AnalysisCache {
     /**
      * Load entry from disk cache.
      */
+    /** Cache key → filesystem-safe filename (keys embed file paths with `/`). */
+    private diskPath;
     private loadFromDisk;
     /**
      * Save entry to disk cache.

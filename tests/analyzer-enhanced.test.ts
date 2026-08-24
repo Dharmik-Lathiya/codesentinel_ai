@@ -84,6 +84,32 @@ function test() {
     expect(findings[0].comment).toContain("Magic number 123");
   });
 
+  it("should not flag numbers inside string literals", () => {
+    const analyzer = new StaticAnalyzer();
+    const findings = analyzer.analyze("test.ts", 'const phone = "+919811223344"; const time = "09:00";');
+    expect(findings.filter((f) => f.comment.includes("Magic number"))).toHaveLength(0);
+  });
+
+  it("should not flag decimal fractions as magic numbers", () => {
+    const analyzer = new StaticAnalyzer();
+    const findings = analyzer.analyze("test.ts", "const lat = 0.0556;");
+    expect(findings.filter((f) => f.comment.includes("Magic number"))).toHaveLength(0);
+  });
+
+  it("should still flag the integer part of a decimal", () => {
+    const analyzer = new StaticAnalyzer();
+    const findings = analyzer.analyze("test.ts", "const lat = 23.0556;");
+    const magic = findings.filter((f) => f.comment.includes("Magic number"));
+    expect(magic.map((f) => f.comment)).toContain("Magic number 23 detected.");
+    expect(magic.map((f) => f.comment)).not.toContain("Magic number 0556 detected.");
+  });
+
+  it("should skip magic numbers in data files", () => {
+    const analyzer = new StaticAnalyzer();
+    const findings = analyzer.analyze("prisma/seed.ts", "lat: 23.0556, lng: 72.5282, phone: 919876543210");
+    expect(findings.filter((f) => f.comment.includes("Magic number"))).toHaveLength(0);
+  });
+
   it("should detect missing error handling", () => {
     const analyzer = new StaticAnalyzer();
     const content = `

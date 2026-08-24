@@ -2,6 +2,7 @@ import { openaiFactory } from "./openai.js";
 import { anthropicFactory } from "./anthropic.js";
 import { geminiFactory } from "./gemini.js";
 import { opencodeFactory } from "./opencode.js";
+import { createOpencodeProvider } from "./providers/opencode-cli.js";
 import type {
   AIProvider,
   CompletionRequest,
@@ -26,16 +27,19 @@ export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat"
  */
 export class AIHub {
   private providers = new Map<string, AIProvider>();
-  private factories: Record<string, (s: RuntimeSecrets) => AIProvider | null> = {
+  private factories: Record<string, (s: RuntimeSecrets, root?: string) => AIProvider | null> = {
     openai: openaiFactory,
     anthropic: anthropicFactory,
     gemini: geminiFactory,
     opencode: opencodeFactory,
+    "opencode-cli": (_s, root) => createOpencodeProvider(root),
   };
 
   constructor(
     private readonly config: CodeSentinelConfig,
     private readonly secrets: RuntimeSecrets,
+    /** Repository root — used as the CLI working directory (e.g. opencode run). */
+    private readonly root?: string,
   ) {}
 
   /** Resolve the model configuration for a task, falling back to default. */
@@ -52,7 +56,7 @@ export class AIHub {
     if (!factory) {
       throw new Error(`Unknown provider: "${model.provider}". Supported providers: openai, anthropic, gemini, opencode.`);
     }
-    const provider = factory(this.secrets);
+    const provider = factory(this.secrets, this.root);
     if (!provider) {
       const keyEnvMap: Record<string, string> = {
         openai: "OPENAI_API_KEY",

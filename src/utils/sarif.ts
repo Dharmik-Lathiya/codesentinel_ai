@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import type { EngineReport } from "../engine/index.js";
 
 interface SarifResult {
@@ -13,7 +14,7 @@ interface SarifResult {
 }
 
 interface SarifRun {
-  tool: { driver: { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } };
+  tool: { driver: { name: string; version: string; rules: ReportingDescriptor[] } };
   results: SarifResult[];
 }
 
@@ -22,6 +23,18 @@ interface SarifLog {
   version: string;
   runs: SarifRun[];
 }
+interface ReportingDescriptor {
+  id: string;
+  shortDescription: { text: string };
+}
+
+const PKG_VERSION = (() => {
+  try {
+    return (createRequire(import.meta.url)("../../package.json") as { version: string }).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   critical: "error",
@@ -31,29 +44,81 @@ const SEVERITY_MAP: Record<string, "error" | "warning" | "note"> = {
   info: "note",
 };
 
-const RULE_ID_MAX_LENGTH = 40;
+const COMMENT_TRUNCATION_LENGTH = 40;
+const HASH_RADIX = 36;
+
+function simpleHash(s: string): string {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    const char = s.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(HASH_RADIX);
+}
+
+function truncateComment(text: string): string {
+  return text.length > COMMENT_TRUNCATION_LENGTH
+    ? `${text.slice(0, COMMENT_TRUNCATION_LENGTH)}...`
+    : text;
+}
+
+const encodePathSegment = (segment: string): string => encodeURIComponent(segment);
+
+function createRuleId(
+  base: string,
+  comment: string,
+  rules: Map<string, ReportingDescriptor>
+): string {
+  const hash = simpleHash(comment);
+  let ruleId = `${base}:${hash}`;
+  for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== comment; n++) {
+    ruleId = `${base}:${hash}:${n}`;
+  }
+  return ruleId;
+}
+
+function createArtifactUri(file: string): string {
+  const normalized = file.replace(/\\/g, "/");
+  const driveMatch = /^([A-Za-z]):\/?(.*)$/.exec(normalized);
+  const isAbsolute = normalized.startsWith("/");
+
+  const tail = (driveMatch ? driveMatch[2] : normalized)
+    .split("/")
+    .filter(Boolean)
+    .map(encodePathSegment)
+    .join("/");
+
+  if (driveMatch) {
+    return `file:///${driveMatch[1]}:${tail ? `/${tail}` : "/"}`;
+  }
+  if (isAbsolute) {
+    return `file:///${tail}`;
+  }
+  return tail;
+}
 
 function createSarifLocation(file: string, line?: number | null): SarifResult["locations"][number] {
   return {
     physicalLocation: {
-      artifactLocation: { uri: file },
-      ...(line ? { region: { startLine: line } } : {}),
+      artifactLocation: { uri: createArtifactUri(file) },
+      ...(line != null ? { region: { startLine: line } } : {}),
     },
   };
 }
 
 function createToolDriver(
-  rules: Map<string, { id: string; shortDescription: { text: string } }>
-): { name: string; version: string; rules: Array<{ id: string; shortDescription: { text: string } }> } {
+  rules: Map<string, ReportingDescriptor>
+): { name: string; version: string; rules: ReportingDescriptor[] } {
   return {
     name: "CodeSentinel AI",
-    version: "0.1.6",
-    rules: [...rules.values()],
+    version: PKG_VERSION,
+    rules: Array.from(rules.values()),
   };
 }
 
 function createSarifRun(
-  rules: Map<string, { id: string; shortDescription: { text: string } }>,
+  rules: Map<string, ReportingDescriptor>,
   results: SarifResult[]
 ): SarifRun {
   return {
@@ -65,15 +130,15 @@ function createSarifRun(
 }
 
 export function renderSarif(report: EngineReport): string {
-  const rules = new Map<string, { id: string; shortDescription: { text: string } }>();
+  const rules = new Map<string, ReportingDescriptor>();
   const results: SarifResult[] = [];
 
   for (const f of report.findings) {
-    const ruleId = f.category.slice(0, RULE_ID_MAX_LENGTH);
+    const ruleId = createRuleId(f.category, f.comment, rules);
     if (!rules.has(ruleId)) {
       rules.set(ruleId, {
         id: ruleId,
-        shortDescription: { text: f.comment },
+        shortDescription: { text: truncateComment(f.comment) },
       });
     }
     results.push({

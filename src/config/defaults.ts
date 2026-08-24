@@ -143,29 +143,38 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   issue_title: undefined,
   issue_body: undefined,
 
-  default_model: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
+  // big-pickle: current Zen free-tier model. The "default" sentinel resolves
+  // server-side to a PAID model when OPENCODE_API_KEY is set, which fails on
+  // accounts without a payment method ("APIError: No payment method").
+  default_model: { provider: "opencode", model: "big-pickle" },
   models: {
-    review: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },
-    fix: { provider: "openai", model: "gpt-4o-mini", maxTokens: 4096 },
-    audit: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
-    score: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
-    testgen: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },
-    chat: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
-    describe: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 4096 },
-    plan: { provider: "opencode", model: "deepseek-v4-flash-free", maxTokens: 8192 },
+    review: { provider: "opencode", model: "big-pickle" },
+    fix: { provider: "opencode", model: "big-pickle" },
+    audit: { provider: "opencode", model: "big-pickle" },
+    score: { provider: "opencode", model: "big-pickle" },
+    testgen: { provider: "opencode", model: "big-pickle" },
+    chat: { provider: "opencode", model: "big-pickle" },
+    describe: { provider: "opencode", model: "big-pickle" },
+    plan: { provider: "opencode", model: "big-pickle" },
   },
 
   test_runner: "vitest",
 
   include: ["**/*.{ts,tsx,js,jsx,py,go,java,rb}"],
   exclude: [
-    "node_modules/**",
-    "dist/**",
-    "build/**",
-    "coverage/**",
-    ".git/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/coverage/**",
+    "**/.git/**",
     "**/*.test.*",
     "**/*.spec.*",
+    "**/.next/**",
+    "**/.vercel/**",
+    "**/.turbo/**",
+    "**/.cache/**",
+    "**/out/**",
+    "**/.expo/**",
   ],
 
   output: {

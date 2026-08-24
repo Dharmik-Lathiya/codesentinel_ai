@@ -11,6 +11,7 @@ export interface PluginContext {
     logger: {
         info: (...a: unknown[]) => void;
         warn: (...a: unknown[]) => void;
+        error: (...a: unknown[]) => void;
     };
 }
 export interface CodeSentinelPlugin {
@@ -39,15 +40,18 @@ export declare class PluginManager {
     /** Dynamically import and register plugins listed in config. */
     load(paths: string[]): Promise<void>;
     private loadPlugin;
+    private validatePlugin;
     get all(): CodeSentinelPlugin[];
     /** Run all plugins' analyze hooks and merge their findings. */
     runAnalyze(files: {
         path: string;
         content: string;
     }[]): Promise<Finding[]>;
+    private runPluginAnalyze;
     /** Run all plugins' score hooks sequentially. */
     runScore(breakdown: ScoreBreakdown, files: {
         path: string;
         content: string;
     }[]): Promise<ScoreBreakdown>;
+    private runPluginScore;
 }

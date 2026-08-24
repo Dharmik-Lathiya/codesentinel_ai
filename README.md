@@ -166,6 +166,9 @@ export GEMINI_API_KEY=...            # Google's contender
 
 # CLI override — one flag to rule them all
 codesentinel review --provider anthropic
+
+# CLI mode (opencode run) — default timeout 20 min per run
+export OPENCODE_CLI_TIMEOUT_MINUTES=20   # override the agentic run timeout
 ```
 
 ```jsonc
