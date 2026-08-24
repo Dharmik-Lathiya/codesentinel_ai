@@ -21,6 +21,7 @@ export declare function buildCacheKey(filePath: string, pattern: string): string
 export declare class LearningCache {
     private backend;
     private locks;
+    private static LOCK_TIMEOUT;
     constructor(backendOrDir?: CacheBackend | string);
     private withLock;
     get(key: string): Promise<Lesson[]>;

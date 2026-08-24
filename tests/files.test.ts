@@ -58,7 +58,7 @@ describe("mergeConfig array merging", () => {
     const merged = mergeConfig(DEFAULT_CONFIG, {
       exclude: ["**/*.d.ts"],
     });
-    expect(merged.exclude).toContain("node_modules/**");
+    expect(merged.exclude).toContain("**/node_modules/**");
     expect(merged.exclude).toContain("**/*.d.ts");
   });
 

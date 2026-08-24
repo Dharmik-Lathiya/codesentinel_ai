@@ -40,7 +40,10 @@ async function connectMysql(url) {
 async function connectSqlite(url) {
     let BetterSqlite3;
     try {
-        BetterSqlite3 = (await import("better-sqlite3")).default;
+        // Computed specifier keeps bundlers (ncc) from inlining this native module.
+        // Resolves at runtime only when the learning store is actually enabled.
+        const betterSqlite3 = "better-" + "sqlite3";
+        BetterSqlite3 = (await import(betterSqlite3)).default;
     }
     catch {
         throw new Error("better-sqlite3 is not installed. Run: npm install better-sqlite3");

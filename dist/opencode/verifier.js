@@ -27,7 +27,7 @@ function applyRuleBasedFilter(findings) {
         return true;
     });
 }
-function buildAiPrompt(findings) {
+function buildAIPrompt(findings) {
     const lines = findings.map((f, i) => `${i}: [${f.severity}] ${f.file}:${f.line} — ${f.message}`);
     return [
         "You are verifying code review findings. Return a JSON array of indices that represent genuine, actionable issues worth reporting.",
@@ -37,11 +37,14 @@ function buildAiPrompt(findings) {
         'Respond with ONLY a JSON array of numbers, e.g. [0, 2, 3].',
     ].join("\n");
 }
+function filterValidIndices(arr, max) {
+    return arr.filter((i) => typeof i === "number" && Number.isInteger(i) && i >= 0 && i < max);
+}
 function parseAiResponse(content, maxIndex) {
     try {
         const parsed = JSON.parse(content);
         if (Array.isArray(parsed)) {
-            const indices = parsed.filter((i) => typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex);
+            const indices = filterValidIndices(parsed, maxIndex);
             return indices.length > 0 ? indices : null;
         }
     }
@@ -53,7 +56,7 @@ function parseAiResponse(content, maxIndex) {
         try {
             const parsed = JSON.parse(extracted[0]);
             if (Array.isArray(parsed)) {
-                const indices = parsed.filter((i) => typeof i === "number" && Number.isInteger(i) && i >= 0 && i < maxIndex);
+                const indices = filterValidIndices(parsed, maxIndex);
                 return indices.length > 0 ? indices : null;
             }
         }
@@ -64,7 +67,7 @@ function parseAiResponse(content, maxIndex) {
     return null;
 }
 async function aiVerify(afterRules, aiHub) {
-    const prompt = buildAiPrompt(afterRules);
+    const prompt = buildAIPrompt(afterRules);
     let result;
     try {
         result = await aiHub.complete("review", [{ role: "user", content: prompt }], { maxTokens: 1024 });

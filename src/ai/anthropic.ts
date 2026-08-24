@@ -3,7 +3,7 @@ import { ProviderUnavailableError } from "./provider.js";
 import type { RuntimeSecrets } from "../config/types.js";
 
 const KILOBYTE = 1024;
-const DEFAULT_ANTHROPIC_MAX_TOKENS = 4 * KILOBYTE;
+const DEFAULT_ANTHROPIC_MAX_TOKENS = 128 * KILOBYTE;
 
 /**
  * Anthropic (Claude) provider. Maps our role-based messages to Anthropic's

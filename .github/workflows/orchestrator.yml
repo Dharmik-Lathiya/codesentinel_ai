@@ -1,0 +1,129 @@
+name: CodeSentinel PR Orchestrator
+
+# Manual one-shot: auto-merge mergeable PRs; drive open issues to /fix (the fix
+# loop creates branch → PR → review → merge). AI conflict resolution runs only
+# when a PR is DIRTY or behind main.
+# Dispatch-only by design — scheduled runs of this workflow caused runaway
+# multi-hour CI burns (see run #645).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+
+concurrency:
+  group: codesentinel-orchestrator
+  cancel-in-progress: false
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Setup OpenCode
+        run: |
+          chmod +x .github/scripts/setup-opencode.sh
+          .github/scripts/setup-opencode.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Ensure labels exist
+        env:
+          GH_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: gh label create "autofix:skipped" --repo "${{ github.repository }}" --color E99695 --force || true
+
+      - name: Process open PRs
+        id: prs
+        env:
+          GH_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          PRS=$(gh pr list --repo "${{ github.repository }}" --state open \
+            --json number,title,headRefName,mergeable \
+            | jq -c '.[]')
+          if [ -z "$PRS" ]; then
+            echo "has_open_prs=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "has_open_prs=true" >> "$GITHUB_OUTPUT"
+          while IFS= read -r PR; do
+            [ -z "$PR" ] && continue
+            # Reset any leftover conflicted state from a previous PR attempt,
+            # otherwise the next checkout fails with "needs merge"
+            git merge --abort 2>/dev/null || true
+            git reset --hard HEAD >/dev/null 2>&1 || true
+            git clean -fdq
+            NUM=$(echo "$PR" | jq -r '.number')
+            HEAD=$(echo "$PR" | jq -r '.headRefName')
+            MERGEABLE=$(echo "$PR" | jq -r '.mergeable')
+            echo "PR #${NUM} (${HEAD}, mergeable=${MERGEABLE})"
+            if ! git check-ref-format --branch "$HEAD" >/dev/null 2>&1 || [[ "$HEAD" == -* ]]; then
+              echo "::warning::Invalid head ref ${HEAD} on PR #${NUM}"
+              continue
+            fi
+            git fetch origin "${HEAD}:${HEAD}" 2>/dev/null || git checkout -b "$HEAD" "origin/$HEAD"
+            git checkout "$HEAD"
+            if [ "$MERGEABLE" = "DIRTY" ] || ! git merge-base --is-ancestor origin/main HEAD; then
+              echo "PR #${NUM} dirty/behind — attempting merge..."
+              if ! git merge origin/main --no-commit --no-ff 2>/tmp/merge-err.log; then
+                echo "Merge conflict on PR #${NUM} — attempting AI resolution..."
+                echo "You are an AI conflict resolution agent. Resolve the merge conflicts on branch ${HEAD} in this repo." > /tmp/conflict-prompt.txt
+                echo "Inspect git status and the conflicted files, resolve all conflict markers (<<<<<<< ======= >>>>>>>)," >> /tmp/conflict-prompt.txt
+                echo "keep the code coherent and type-safe, then run the project's build and tests. Do not commit or push." >> /tmp/conflict-prompt.txt
+                if opencode run --auto --format json -m opencode/big-pickle "$(cat /tmp/conflict-prompt.txt)" </dev/null \
+                  && npm run build >/tmp/build.log 2>&1 </dev/null && npm test >/tmp/test.log 2>&1 </dev/null; then
+                  git add -A
+                  git commit -m "CodeSentinel: resolve merge conflicts on ${HEAD} [skip ci]"
+                  git push origin "$HEAD" 2>/dev/null || true
+                  echo "PR #${NUM} conflict resolved"
+                else
+                  gh pr edit "$NUM" --add-label "autofix:skipped" --repo "${{ github.repository }}" || true
+                  echo "::warning::PR #${NUM} conflict resolution failed — labeled autofix:skipped"
+                fi
+              else
+                git add -A
+                git commit -m "CodeSentinel: merge main into ${HEAD} [skip ci]" 2>/dev/null || true
+                git push origin "$HEAD" 2>/dev/null || true
+                echo "PR #${NUM} updated with main"
+              fi
+            else
+              echo "PR #${NUM} mergeable — auto-merging..."
+              gh pr merge "$NUM" --merge --auto --repo "${{ github.repository }}" || \
+                gh pr merge "$NUM" --merge --repo "${{ github.repository }}" || true
+            fi
+          done <<< "$PRS"
+
+      - name: Drive open issues
+        if: steps.prs.outputs.has_open_prs == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUES=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --json number,title --jq 'sort_by(.number) | .[0]')
+          if [ -z "$ISSUES" ] || [ "$ISSUES" = "null" ]; then
+            echo "No open issues"
+            exit 0
+          fi
+          NUM=$(echo "$ISSUES" | jq -r '.number')
+          TITLE=$(echo "$ISSUES" | jq -r '.title')
+          echo "Driving issue #${NUM}: ${TITLE}"
+          gh issue comment "$NUM" --body "/fix" --repo "${{ github.repository }}" || true

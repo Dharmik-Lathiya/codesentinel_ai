@@ -102,8 +102,8 @@ jobs:
           node-version: 22
       - name: Configure git
         run: |
-          git config user.name "CodeSentinel Bot"
-          git config user.email "bot@codesentinel.ai"
+          git config user.name "${CODESENTINEL_GIT_NAME:-Dharmik Lathiya}"
+          git config user.email "${CODESENTINEL_GIT_EMAIL:-dharmiklathiya.it@gmail.com}"
       - name: Build
         run: npm ci && npm run build
       - name: Auto-fix issues

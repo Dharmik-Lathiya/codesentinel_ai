@@ -2,6 +2,10 @@ import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { logger } from "../utils/logger.js";
+const MAX_BUFFER = 10 * 1024 * 1024;
+function shq(s) {
+    return '"' + s.replace(/"/g, '\\"') + '"';
+}
 const eslint = {
     name: "eslint",
     detect(root) {
@@ -9,7 +13,7 @@ const eslint = {
     },
     run(root, extraArgs) {
         try {
-            const out = execSync(`npx eslint --format json --no-color ${extraArgs.join(" ")} . 2>/dev/null || true`, { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+            const out = execSync(`npx eslint --format json --no-color ${extraArgs.map(shq).join(" ")} . 2>/dev/null || true`, { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER });
             if (!out.trim())
                 return [];
             const results = JSON.parse(out);
@@ -36,7 +40,7 @@ const biome = {
     },
     run(root, extraArgs) {
         try {
-            const out = execSync(`npx biome lint --diagnostic-level=warn --max-diagnostics=200 ${extraArgs.join(" ")} . 2>/dev/null || true`, { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+            const out = execSync(`npx biome lint --diagnostic-level=warn --max-diagnostics=200 ${extraArgs.join(" ")} . 2>/dev/null || true`, { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER });
             if (!out.trim())
                 return [];
             const parsed = JSON.parse(out);
@@ -69,7 +73,7 @@ const pylint = {
     },
     run(root, extraArgs) {
         try {
-            const out = execSync(`pylint --output-format=json ${extraArgs.join(" ")} . 2>/dev/null || true`, { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+            const out = execSync(`pylint --output-format=json ${extraArgs.join(" ")} . 2>/dev/null || true`, { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER });
             if (!out.trim())
                 return [];
             const results = JSON.parse(out);

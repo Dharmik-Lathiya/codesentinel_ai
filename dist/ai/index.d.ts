@@ -10,9 +10,13 @@ export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat"
 export declare class AIHub {
     private readonly config;
     private readonly secrets;
+    /** Repository root — used as the CLI working directory (e.g. opencode run). */
+    private readonly root?;
     private providers;
     private factories;
-    constructor(config: CodeSentinelConfig, secrets: RuntimeSecrets);
+    constructor(config: CodeSentinelConfig, secrets: RuntimeSecrets, 
+    /** Repository root — used as the CLI working directory (e.g. opencode run). */
+    root?: string | undefined);
     /** Resolve the model configuration for a task, falling back to default. */
     modelForTask(task: TaskName): ModelConfig;
     /** Get (or lazily build) the provider for a given model. */

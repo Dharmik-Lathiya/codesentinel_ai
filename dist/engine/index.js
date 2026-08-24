@@ -80,7 +80,7 @@ export class Engine {
         if (config.use_opencode_cli && !aiOverride) {
             secrets = { ...secrets, use_opencode_cli: "true" };
         }
-        this.ai = aiOverride ?? new AIHub(config, secrets);
+        this.ai = aiOverride ?? new AIHub(config, secrets, root);
         if (aiOverride)
             this.aiAvailable = true;
         this.prompts = new PromptRegistry(config);
@@ -336,18 +336,20 @@ export class Engine {
             const staticFindings = this.analyzer.analyzeMany([file]);
             const pluginFindings = await this.plugins.runAnalyze([file]);
             const secretFindings = scanSecrets(file.path, file.content, this.config.secretPatterns);
+            // Repo-wide linter/scanner findings are appended once after the loop,
+            // not per file — otherwise each one would be duplicated N times.
             const fileFindings = [
                 ...staticFindings,
                 ...pluginFindings,
                 ...secretFindings,
-                ...linterResults,
-                ...scannerResults,
             ];
             if (this.config.enable_cache) {
                 this.cache.set("static", cacheKey, fileFindings);
             }
             allFindings.push(...fileFindings);
         }
+        // Repo-wide findings (linters, third-party secret scanners) exactly once.
+        allFindings.push(...linterResults, ...scannerResults);
         const filtered = this.dismissals.filterDismissed(allFindings);
         // Auto-mute rules with persistently high false-positive rates
         if (this.learning && this.config.learning.enabled) {
@@ -609,7 +611,6 @@ export class Engine {
                 logger.info("runFix: auto-fix disabled, exiting after review");
                 break;
             }
-            const MAX_FINDINGS_PER_FILE = 5;
             const fileGroups = new Map();
             for (const f of actionable) {
                 const list = fileGroups.get(f.file);
@@ -620,51 +621,65 @@ export class Engine {
                     fileGroups.set(f.file, [f]);
                 }
             }
-            // Split findings per file into chunks of MAX_FINDINGS_PER_FILE
-            const groups = [];
-            for (const [filePath, findings] of fileGroups) {
-                for (let pos = 0; pos < findings.length; pos += MAX_FINDINGS_PER_FILE) {
-                    groups.push([filePath, findings.slice(pos, pos + MAX_FINDINGS_PER_FILE)]);
-                }
-            }
-            const PHASE_SIZE = 5;
             let anyFixed = false;
-            for (let phase = 0; phase < groups.length; phase += PHASE_SIZE) {
-                const phaseGroups = groups.slice(phase, phase + PHASE_SIZE);
-                logger.info(`runFix: phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)} (${phaseGroups.length} files)`);
-                const batchResults = await concurrentMap(phaseGroups, async ([filePath, fileFindings], idx) => {
-                    logger.info(`runFix: batch ${phase + idx + 1}/${fileGroups.size} — ${filePath} (${fileFindings.length} issues)`);
-                    try {
-                        const attempt = await this.batchApplyFix(filePath, fileFindings, phase + idx + 1);
-                        logger.info(`runFix: batch result — fixed=${attempt.fixed} verified=${attempt.verified}`);
-                        return attempt;
-                    }
-                    catch (err) {
-                        logger.warn(`runFix: batch fix failed for ${filePath}: ${err instanceof Error ? err.message : err}`);
-                        return {
-                            iteration: phase + idx + 1,
-                            file: filePath,
-                            fixed: false,
-                            explanation: `Error: ${err instanceof Error ? err.message : err}`,
-                            verified: false,
-                            newIssuesIntroduced: [],
-                        };
-                    }
-                }, 3);
-                for (const attempt of batchResults) {
+            // Try single-pass fix first (all files in one AI call)
+            const singlePassAttempts = await this.batchApplyFixAll(fileGroups);
+            if (singlePassAttempts.length > 0) {
+                for (const attempt of singlePassAttempts) {
                     allFixAttempts.push(attempt);
                     if (attempt.fixed === true && this.config.enable_auto_fix && !this.config.dry_run) {
                         modifiedFiles.add(attempt.file);
                         anyFixed = true;
                     }
                 }
-                if (modifiedFiles.size > 0 && phase + PHASE_SIZE < groups.length) {
-                    const branch = await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)}`);
-                    const isDirectPush = branch === process.env.GITHUB_REF_NAME && !process.env.GITHUB_HEAD_REF;
-                    if (branch && !isDirectPush) {
-                        await this.createFixPR(branch);
+            }
+            else {
+                // Fall back to per-file batching
+                const MAX_FINDINGS_PER_FILE = 5;
+                const groups = [];
+                for (const [filePath, findings] of fileGroups) {
+                    for (let pos = 0; pos < findings.length; pos += MAX_FINDINGS_PER_FILE) {
+                        groups.push([filePath, findings.slice(pos, pos + MAX_FINDINGS_PER_FILE)]);
                     }
-                    modifiedFiles.clear();
+                }
+                const PHASE_SIZE = 5;
+                for (let phase = 0; phase < groups.length; phase += PHASE_SIZE) {
+                    const phaseGroups = groups.slice(phase, phase + PHASE_SIZE);
+                    logger.info(`runFix: phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)} (${phaseGroups.length} files)`);
+                    const batchResults = await concurrentMap(phaseGroups, async ([filePath, fileFindings], idx) => {
+                        logger.info(`runFix: batch ${phase + idx + 1}/${fileGroups.size} — ${filePath} (${fileFindings.length} issues)`);
+                        try {
+                            const attempt = await this.batchApplyFix(filePath, fileFindings, phase + idx + 1);
+                            logger.info(`runFix: batch result — fixed=${attempt.fixed} verified=${attempt.verified}`);
+                            return attempt;
+                        }
+                        catch (err) {
+                            logger.warn(`runFix: batch fix failed for ${filePath}: ${err instanceof Error ? err.message : err}`);
+                            return {
+                                iteration: phase + idx + 1,
+                                file: filePath,
+                                fixed: false,
+                                explanation: `Error: ${err instanceof Error ? err.message : err}`,
+                                verified: false,
+                                newIssuesIntroduced: [],
+                            };
+                        }
+                    }, 3);
+                    for (const attempt of batchResults) {
+                        allFixAttempts.push(attempt);
+                        if (attempt.fixed === true && this.config.enable_auto_fix && !this.config.dry_run) {
+                            modifiedFiles.add(attempt.file);
+                            anyFixed = true;
+                        }
+                    }
+                    if (modifiedFiles.size > 0 && phase + PHASE_SIZE < groups.length) {
+                        const branch = await this.pushFixes(modifiedFiles, `[skip ci] phase ${phase / PHASE_SIZE + 1}/${Math.ceil(groups.length / PHASE_SIZE)}`);
+                        const isDirectPush = branch === process.env.GITHUB_REF_NAME && !process.env.GITHUB_HEAD_REF;
+                        if (branch && !isDirectPush) {
+                            await this.createFixPR(branch);
+                        }
+                        modifiedFiles.clear();
+                    }
                 }
             }
             if (!anyFixed) {
@@ -719,8 +734,10 @@ export class Engine {
                 execFileSync("git", ["checkout", "-b", target], { cwd: this.root, stdio: "pipe" });
             }
             const msg = tag ? `CodeSentinel: auto-fix issues ${tag}` : 'CodeSentinel: auto-fix issues [skip ci]';
-            execFileSync("git", ["config", "user.email", "bot@codesentinel.ai"], { cwd: this.root, stdio: "pipe" });
-            execFileSync("git", ["config", "user.name", "CodeSentinel Bot"], { cwd: this.root, stdio: "pipe" });
+            const gitName = process.env.CODESENTINEL_GIT_NAME || "CodeSentinel Bot";
+            const gitEmail = process.env.CODESENTINEL_GIT_EMAIL || "bot@codesentinel.ai";
+            execFileSync("git", ["config", "user.email", gitEmail], { cwd: this.root, stdio: "pipe" });
+            execFileSync("git", ["config", "user.name", gitName], { cwd: this.root, stdio: "pipe" });
             execFileSync("git", ["commit", "-m", msg], { cwd: this.root, stdio: "pipe" });
             try {
                 execFileSync("git", ["fetch", "origin", target], { cwd: this.root, stdio: "pipe", timeout: 30000 });
@@ -742,14 +759,24 @@ export class Engine {
     }
     /** Create a PR from the fix branch and optionally enable auto-merge. */
     async createFixPR(fixBranch) {
-        if (!fixBranch || !process.env.GITHUB_TOKEN)
+        // PAT (higher permissions) overrides the default GITHUB_TOKEN
+        const token = process.env.CODESENTINEL_GITHUB_TOKEN || process.env.GITHUB_TOKEN;
+        if (!fixBranch || !token)
             return;
         const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
         const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
         if (!owner || !repo)
             return;
-        const reporter = new GitHubReporter({ token: process.env.GITHUB_TOKEN, owner, repo });
-        const defaultBranch = process.env.GITHUB_BASE_REF || "main";
+        const reporter = new GitHubReporter({ token, owner, repo });
+        // Resolve the repo's actual default branch instead of assuming "main"
+        let defaultBranch = process.env.GITHUB_BASE_REF;
+        try {
+            const { name } = await reporter.getDefaultBranch();
+            defaultBranch = name;
+        }
+        catch {
+            defaultBranch = defaultBranch || "main";
+        }
         try {
             const prNumber = await reporter.createPR({
                 title: "CodeSentinel: auto-fix issues",
@@ -817,7 +844,7 @@ Suggestion: ${finding.suggestion ?? ""}
             const res = await this.ai.complete("fix", [
                 { role: "system", content: "You apply minimal, safe code fixes." },
                 { role: "user", content: prompt + (attempt > 0 ? "\n\nIMPORTANT: You MUST output ONLY valid JSON. No explanations, no markdown, no extra text. The JSON must parse correctly." : "") },
-            ], { maxTokens: 16384, responseFormat: "json_object" });
+            ], { responseFormat: "json_object" });
             const snippet = res.content.length > 500 ? res.content.slice(0, 500) + "..." : res.content;
             logger.info(`applyFix[${iteration}]: AI response len=${res.content.length} preview=${JSON.stringify(snippet)}`);
             parsed = extractJson(res.content);
@@ -906,7 +933,7 @@ ${issuesMd}
             const res = await this.ai.complete("fix", [
                 { role: "system", content: "You apply minimal, safe code fixes." },
                 { role: "user", content: prompt + (attempt > 0 ? "\n\nIMPORTANT: You MUST output ONLY valid JSON. No explanations, no markdown, no extra text. The JSON must parse correctly." : "") },
-            ], { maxTokens: 16384, responseFormat: "json_object" });
+            ], { responseFormat: "json_object" });
             const snippet = res.content.length > 500 ? res.content.slice(0, 500) + "..." : res.content;
             logger.info(`batchApplyFix[${iteration}]: AI response len=${res.content.length} preview=${JSON.stringify(snippet)}`);
             parsed = extractJson(res.content);
@@ -940,6 +967,83 @@ ${issuesMd}
             newIssuesIntroduced = findingsAfter.filter((f) => !beforeIds.has(`${f.category}:${f.line}:${f.comment}`));
         }
         return { iteration, file: filePath, fixed: parsed.fixed === true, explanation: parsed.explanation, verified, newIssuesIntroduced };
+    }
+    /** Single-pass fix: one prompt for ALL files, one AI response, then apply every fix. */
+    async batchApplyFixAll(fileGroups) {
+        const MAX_TOTAL_CHARS = 120_000;
+        const fileEntries = [];
+        for (const [filePath, findings] of fileGroups) {
+            const absPath = resolve(this.root, filePath);
+            const rawContent = readText(absPath);
+            if (!rawContent.trim())
+                continue;
+            const numberedContent = rawContent.split("\n").map((line, idx) => `${idx + 1}: ${line}`).join("\n");
+            const redactedContent = redactSecrets(numberedContent, this.config.secretPatterns);
+            const truncatedContent = redactedContent.length > 30000
+                ? redactedContent.slice(0, redactedContent.lastIndexOf("\n", 30000)) + `\n\n// ... [file truncated]`
+                : redactedContent;
+            fileEntries.push({ path: filePath, content: truncatedContent, findings });
+        }
+        const promptBody = fileEntries.map((fe) => {
+            const ext = fe.path.split(".").pop() ?? "text";
+            const issuesMd = fe.findings.map((f, i) => `  ${i + 1}. [${f.severity}] ${f.category}${f.line ? ` (line ${f.line})` : ""}\n     Feedback: ${f.comment}\n     Suggestion: ${f.suggestion ?? ""}`).join("\n");
+            return `## ${fe.path}\n\`\`\`${ext}\n${fe.content}\n\`\`\`\n\nIssues:\n${issuesMd}`;
+        }).join("\n\n---\n\n");
+        if (promptBody.length > MAX_TOTAL_CHARS) {
+            logger.info(`batchApplyFixAll: prompt too large (${promptBody.length} chars > ${MAX_TOTAL_CHARS}), falling back to per-file batching`);
+            return [];
+        }
+        const prompt = `You are an expert engineer fixing issues across ${fileEntries.length} file(s).
+
+${promptBody}
+
+## Rules
+- Fix ALL listed issues with minimal changes.
+- Return changes per file as hunks (line-based patches), NOT complete files.
+- Set "fixed" to false per-file if you cannot safely fix any issue.
+- hunks format: { startLine: <1-indexed>, deleteCount: <lines to remove>, newLines: ["replacement", "lines"] }
+- Output ONLY valid JSON inside \`\`\`json ... \`\`\` with NO other text.
+- JSON format: { "fixed": bool, "explanation": "...", "fileFixes": [ { "file": "...", "explanation": "...", "hunks": [...] } ] }`;
+        logger.info(`batchApplyFixAll: ${fileEntries.length} files, ${promptBody.length} chars`);
+        const res = await this.ai.complete("fix", [
+            { role: "system", content: "You apply minimal, safe code fixes across multiple files." },
+            { role: "user", content: prompt },
+        ], { responseFormat: "json_object" });
+        const parsed = extractJson(res.content);
+        if (!parsed?.fileFixes) {
+            logger.warn(`batchApplyFixAll: unparseable response`);
+            return [];
+        }
+        const allFixes = [];
+        for (const ff of parsed.fileFixes) {
+            if (!ff.hunks?.length) {
+                allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: ff.explanation || "No hunks returned", verified: false, newIssuesIntroduced: [] });
+                continue;
+            }
+            const absPath = resolve(this.root, ff.file);
+            const originalContent = readText(absPath);
+            if (!originalContent.trim()) {
+                allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "File not found", verified: false, newIssuesIntroduced: [] });
+                continue;
+            }
+            const fixedContent = applyHunks(originalContent, ff.hunks ?? []);
+            if (fixedContent === originalContent) {
+                allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "Hunks produced no changes", verified: false, newIssuesIntroduced: [] });
+                continue;
+            }
+            writeFileSync(absPath, fixedContent, "utf8");
+            const verified = await this.runVerification();
+            if (!verified) {
+                writeFileSync(absPath, originalContent, "utf8");
+                allFixes.push({ iteration: 0, file: ff.file, fixed: false, explanation: "Fix failed verification, rolled back", verified: false, newIssuesIntroduced: [] });
+            }
+            else {
+                const newIssues = this.analyzer.analyzeMany([{ path: ff.file, content: fixedContent }])
+                    .filter((f) => !fileGroups.get(ff.file)?.some((of) => `${of.category}:${of.line}:${of.comment}` === `${f.category}:${f.line}:${f.comment}`));
+                allFixes.push({ iteration: 0, file: ff.file, fixed: true, explanation: ff.explanation, verified, newIssuesIntroduced: newIssues });
+            }
+        }
+        return allFixes;
     }
     /** Apply fixes for a batch of findings without the full re-analysis loop. */
     async runFixLoopFor(actionable) {
@@ -1028,7 +1132,23 @@ ${issuesMd}
     // AUDIT
     // ---------------------------------------------------------------------------
     async runAudit() {
-        const files = await this.collectedFiles();
+        let files = await this.collectedFiles();
+        const targetDirs = this.config.auditTargetDirs;
+        if (targetDirs && targetDirs.length > 0) {
+            files = files.filter((f) => targetDirs.some((d) => f.path.startsWith(d)));
+            if (files.length === 0) {
+                return {
+                    mode: "audit",
+                    summary: "No files matched the configured audit target directories.",
+                    findings: [],
+                    score: null,
+                    comments: [],
+                    generatedTests: [],
+                    fixAttempts: [],
+                    metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
+                };
+            }
+        }
         const staticFindings = await this.analyzeFiles(files);
         const snapshot = files
             .map((f) => `### ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
@@ -1463,7 +1583,7 @@ ${issuesMd}
         if (parsed.truncated && !parsed.parsed) {
             this.truncatedCount++;
             const modelConfig = this.ai.modelForTask(task);
-            const currentTokens = maxTokensOverride ?? modelConfig.maxTokens ?? 4096;
+            const currentTokens = maxTokensOverride ?? modelConfig.maxTokens ?? 65536;
             const doubledTokens = Math.min(currentTokens * 2, 32768);
             logger.warn(`callAI: truncated response for ${file.path} — retrying with maxTokens=${doubledTokens} (was ${currentTokens})`);
             const res2 = await this.ai.complete(task, [

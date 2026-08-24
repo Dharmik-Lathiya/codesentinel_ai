@@ -24,4 +24,5 @@ export declare class MCPManager {
     private getClientLibraryDocs;
     getLibraryDocs(libraries: string[], maxTokens?: number): Promise<MCPContextEntry[]>;
     private trimByBudget;
+    private callToolEntry;
 }

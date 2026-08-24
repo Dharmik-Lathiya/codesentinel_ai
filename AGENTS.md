@@ -4,6 +4,7 @@ AI-powered code quality orchestrator. Review PRs, auto-fix issues, audit repos, 
 
 ## Commands
 - `npm run build` — `tsc`, emits to `dist/`
+- `npm run build:action` — `tsc` + `ncc` bundle → `dist/action-bundle/` (ESM, `index.mjs` entry) + `scripts/postbundle.mjs` renames entry/prunes zod test bloat
 - `npm run typecheck` / `npm run lint` — both are `tsc --noEmit` (identical)
 - `npm test` — `vitest run`, tests in `tests/` dir
 - `npm run start` — `node dist/index.js` (requires build first)
@@ -26,25 +27,25 @@ AI-powered code quality orchestrator. Review PRs, auto-fix issues, audit repos, 
 - Name: `@dharmiklathiya/codesentinel_ai` (npm), ESM (`"type": "module"`), Node >=18
 - Dual export: `"."` for library (`dist/lib.js`), `"./cli"` for CLI (`dist/index.js`)
 - Optional deps: `openai`, `@anthropic-ai/sdk`, `@google/generative-ai`, `probot` — only install what you use
-- Runtime env: `OPENCODE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GITHUB_TOKEN`, `OPENCODE_BASE_URL`
+- Runtime env: `OPENCODE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GITHUB_TOKEN`, `OPENCODE_BASE_URL`, `OPENCODE_CLI_TIMEOUT_MINUTES` (opencode run CLI timeout, default 20), `CODESENTINEL_GIT_NAME`/`CODESENTINEL_GIT_EMAIL` (git identity for auto-fix commits; default "Dharmik Lathiya <dharmiklathiya.it@gmail.com>" in this repo's workflows, "CodeSentinel Bot" fallback in engine/templates)
 
 ## GitHub Action
-- `action.yml` — reusable composite action, `node20` runtime, outputs `score` + `findings`
-  - Install step: `npm ci --omit=dev --ignore-scripts --no-audit --no-fund` (fast — ~30s)
-  - Run step: `node "${{ github.action_path }}/dist/github/action.js"` (pre-built dist/ is committed)
+- `action.yml` — pre-built JS action (NOT composite): `using: node20`, `main: dist/action-bundle/index.mjs`, outputs `score` + `findings`
+  - Zero setup: no `npm ci`, no build at runtime — runs the committed ncc bundle directly (~0s vs ~30s before)
+  - Build: `npm run build:action`; committed to the repo (action references it by path)
+  - Bundle notes: `better-sqlite3` is a native module — keep its import computed (`"better-" + "sqlite3"` in `src/learning/db.ts`) so ncc doesn't inline 17MB of prebuilds; avoid `resolve(root, x.test.ts)` in bundler-reachable code (ncc rewrites it to a bundle-relative path — use `join`)
+- Reusable workflows shipped in `.github/workflows/` (`review.yml`, `autofix.yml`): users wire with 5 lines — `uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.12.1` + `secrets: inherit`. Ready-to-copy templates in `examples/`
 - Slash commands on PRs/issues (via `codesentinel.yml`): `/review`, `/fix`, `/audit`, `/score`, `/testgen`, `/gate`, `/deadcode`, `/describe`, `/plan`, `/ask`
 - Auto-analyzes new issues: posts implementation plan + clarifying questions, then `Reply with /fix to start implementation`
-- Uses `Dharmik-Lathiya/CodeSentinel_AI@v0.8.0` composite action directly (no separate checkout+build)
+- PR comment posting needs `GITHUB_PR_NUMBER` env — set from `github.event.pull_request.number || github.event.issue.number` (issue_comment events carry the PR number in `issue.number`)
 - Secret `CODESENTINEL_GITHUB_TOKEN`: optional PAT for git push (higher permissions, overrides GITHUB_TOKEN)
 - Probot app entrypoint: `node dist/github/app.js`
 
 ### Performance (why ~20min vs competitor's ~60min)
-1. **Pre-built dist/ committed** — no `npm run build` (tsc) in CI, saves ~3min
-2. **`npm ci --omit=dev --ignore-scripts`** — installs only production deps (zod, mcp-sdk, better-sqlite3, js-yaml), saves ~3min
-3. **Composite action directly** — no separate checkout of CodeSentinel repo, saves ~1min
-4. **Single AI pass** — batched file reviews instead of per-file loops where possible
-5. **No pnpm** — works with npm, no version compatibility issues
-6. **GitHub token** — `CODESENTINEL_GITHUB_TOKEN` PAT avoids rate limits on protected branches
+1. **Pre-built bundle committed** — no `npm ci`, no tsc in CI (JS action `main: dist/action-bundle/index.mjs`), saves ~30s/run
+2. **Single AI pass** — batched file reviews instead of per-file loops where possible
+3. **No pnpm** — works with npm, no version compatibility issues
+4. **GitHub token** — `CODESENTINEL_GITHUB_TOKEN` PAT avoids rate limits on protected branches
 
 ## Testing
 - Engine tests use `aiOverride` param to inject fake AI — no network required

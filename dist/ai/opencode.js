@@ -1,11 +1,108 @@
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { ProviderUnavailableError } from "./provider.js";
 import { logger } from "../utils/logger.js";
-const DEFAULT_MAX_TOKENS = 4096;
+import { retry } from "../utils/retry.js";
+/** Default CLI timeout in minutes (mirrors opencode-ai-reviewer's runOpenCode default). */
+export const DEFAULT_CLI_TIMEOUT_MINUTES = 20;
+/** Cap retained output to prevent memory exhaustion on verbose or stuck runs. */
+const MAX_CAPTURED_BYTES = 50 * 1024;
+/** Grace period between SIGTERM and SIGKILL when killing a hung CLI process. */
+const FORCE_KILL_GRACE_MS = 5_000;
+/**
+ * Serialise ChatMessages into a single prompt string for `opencode run`.
+ * The CLI takes the prompt as a positional argument (like opencode-ai-reviewer),
+ * not as a JSON payload on stdin.
+ */
+export function messagesToPrompt(messages) {
+    return messages
+        .map((m) => (m.role === "system" ? `[system]\n${m.content}` : `[user]\n${m.content}`))
+        .join("\n\n");
+}
+/**
+ * Build the `opencode run` argument list.
+ * `--auto` auto-approves any permission that is not explicitly "deny" — the
+ * documented CI mechanism (opencode-ai-reviewer uses the same flag).
+ */
+export function buildCliArgs(model, prompt) {
+    // If model is the generic "default" sentinel, omit --model so OpenCode uses
+    // its own configured default (avoids referencing retired models like deepseek-v4-flash-free).
+    if (model === "default") {
+        return ["run", "--auto", "--format", "json", prompt];
+    }
+    return ["run", "--auto", "--format", "json", "--model", model, prompt];
+}
+/** CLI timeout in ms — OPENCODE_CLI_TIMEOUT_MINUTES env override, default 20 minutes. */
+export function cliTimeoutMs() {
+    const minutes = Number(process.env.OPENCODE_CLI_TIMEOUT_MINUTES);
+    const effective = Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_CLI_TIMEOUT_MINUTES;
+    return effective * 60_000;
+}
+/**
+ * CI-safe opencode config injected via OPENCODE_CONFIG_CONTENT (highest-precedence
+ * env var, overrides even a project-level opencode.json):
+ * - "permission": "allow" — enables every tool without prompting
+ * - autoupdate/share disabled, no MCP or plugins (nothing to download in CI)
+ */
+export function buildCIConfig() {
+    return JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        permission: "allow",
+        autoupdate: false,
+        share: "disabled",
+        mcp: {},
+        plugin: [],
+    });
+}
+/** Env keys forwarded to the CLI subprocess (sandboxed, mirrors the reference runner). */
+const WHITELISTED_ENV_KEYS = [
+    "PATH",
+    "HOME",
+    "CI",
+    "GITHUB_ACTIONS",
+    "GITHUB_ACTOR",
+    "GITHUB_REPOSITORY",
+    "GITHUB_REPOSITORY_OWNER",
+    "GITHUB_SHA",
+    "GITHUB_REF",
+    "GITHUB_BASE_REF",
+    "GITHUB_HEAD_REF",
+    "GITHUB_WORKSPACE",
+    "GITHUB_ACTION",
+    "GITHUB_EVENT_NAME",
+    "GITHUB_EVENT_PATH",
+    "GITHUB_OUTPUT",
+    "GITHUB_STEP_SUMMARY",
+    "GITHUB_ENV",
+    "GITHUB_PATH",
+    "RUNNER_OS",
+    "RUNNER_ARCH",
+    "RUNNER_TEMP",
+    "RUNNER_TOOL_CACHE",
+    "NODE_PATH",
+    "DATABASE_URL",
+    "GIT_ASKPASS",
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+    "OPENCODE_CREDENTIAL_TOKEN",
+    "OPENCODE_API_KEY",
+    "OPENCODE_BASE_URL",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+];
 /**
  * OpenCode provider. OpenCode exposes an OpenAI-compatible HTTP API, so we call
  * it directly with `fetch` (no extra SDK dependency). The base URL defaults to
  * the local OpenCode gateway and can be overridden via OPENCODE_BASE_URL.
+ * When the HTTP API is unavailable (or CLI mode is forced), falls back to the
+ * `opencode run` CLI using the same invocation strategy as opencode-ai-reviewer:
+ * --auto, generous configurable timeout, process-group SIGTERM -> SIGKILL.
  */
 export class OpenCodeProvider {
     name = "opencode";
@@ -13,13 +110,37 @@ export class OpenCodeProvider {
     apiKey;
     keyWasSet;
     useCli;
-    constructor(secrets) {
+    cliBinary;
+    /** Working directory for CLI runs (repo root), so opencode can read files. */
+    root;
+    /** Serialise CLI invocations so parallel batch calls don't clobber each other's DB. */
+    static cliLock = Promise.resolve();
+    constructor(secrets, root) {
+        this.root = root ?? process.cwd();
         this.keyWasSet = !!secrets.opencode_api_key;
         this.apiKey = secrets.opencode_api_key || "opencode";
         this.useCli = secrets.use_opencode_cli === "true";
         this.baseUrl = (secrets.opencode_base_url || "http://localhost:4096").replace(/\/v1$/, "").replace(/\/$/, "");
+        // Resolve CLI binary path once at startup (avoid race conditions from parallel installs)
+        this.cliBinary = this.useCli ? this.resolveBinary() : "";
         if (this.useCli) {
-            logger.info(`OpenCodeProvider: using CLI binary — no API key or server needed`);
+            if (this.cliBinary) {
+                logger.info(`OpenCodeProvider: using CLI binary at ${this.cliBinary}`);
+            }
+            else {
+                logger.info(`OpenCodeProvider: CLI binary not found — auto-installing via npm...`);
+                try {
+                    execSync("npm install -g opencode-ai", { encoding: "utf8", timeout: 120_000 });
+                    this.cliBinary = this.resolveBinary();
+                }
+                catch { /* ignore install failure, will fall back */ }
+                if (this.cliBinary) {
+                    logger.info(`OpenCodeProvider: installed CLI binary at ${this.cliBinary}`);
+                }
+                else {
+                    logger.info(`OpenCodeProvider: CLI binary not available — will try npx`);
+                }
+            }
         }
         else if (!this.keyWasSet) {
             logger.info(`OpenCodeProvider: no API key set — trying free tier first, CLI fallback if that fails`);
@@ -30,11 +151,12 @@ export class OpenCodeProvider {
             return this.completeViaCli(req);
         const url = `${this.baseUrl}/v1/chat/completions`;
         logger.info(`OpenCodeProvider.complete: POST ${url} model=${req.model.model}`);
+        const tokens = req.model.maxTokens ?? req.maxTokens;
         const body = JSON.stringify({
             model: req.model.model,
             messages: req.messages,
             temperature: req.temperature ?? 0.2,
-            max_tokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_MAX_TOKENS,
+            ...(tokens ? { max_tokens: tokens } : {}),
             ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
         });
         const doFetch = (auth) => {
@@ -102,40 +224,166 @@ export class OpenCodeProvider {
             },
         };
     }
+    /** Resolve the opencode binary, checking PATH, npm prefix, and via shell. */
+    resolveBinary() {
+        // Check process PATH directly
+        const dirInPath = process.env.PATH?.split(":").find((d) => existsSync(join(d, "opencode")));
+        if (dirInPath)
+            return join(dirInPath, "opencode");
+        // Resolve via shell (handles GITHUB_PATH updates from earlier workflow steps)
+        try {
+            const resolved = execSync("which opencode 2>/dev/null || command -v opencode 2>/dev/null", {
+                encoding: "utf8",
+                timeout: 5000,
+            }).trim();
+            if (resolved && existsSync(resolved))
+                return resolved;
+        }
+        catch { /* not found via shell */ }
+        // Check npm global prefix
+        const npmPrefix = process.env.npm_config_prefix;
+        if (npmPrefix) {
+            const candidate = join(npmPrefix, "bin", "opencode");
+            if (existsSync(candidate))
+                return candidate;
+        }
+        // Check common CI install locations
+        const home = process.env.HOME || "/home/runner";
+        const candidates = [
+            join(home, ".npm-global", "bin", "opencode"),
+            "/usr/local/share/npm-global/bin/opencode",
+            "/usr/local/bin/opencode",
+        ];
+        for (const c of candidates) {
+            if (existsSync(c))
+                return c;
+        }
+        return ""; // not found
+    }
     async completeViaCli(req) {
-        const rawModel = req.model.model === "default" ? "deepseek-v4-flash-free" : req.model.model;
-        logger.info(`OpenCodeProvider.completeViaCli: model=${rawModel}`);
-        const cliModel = rawModel.includes("/") ? rawModel : `opencode/${rawModel}`;
-        const input = JSON.stringify({
-            messages: req.messages,
-            ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
-        });
-        const runChild = (cmd, args, timeout = 120_000) => new Promise((resolve, reject) => {
+        // Wrap with retry for transient server errors (5xx, rate limits, etc.)
+        return retry(() => new Promise((outerResolve, outerReject) => {
+            OpenCodeProvider.cliLock = OpenCodeProvider.cliLock.then(async () => {
+                try {
+                    const result = await this.#doCompleteViaCli(req);
+                    outerResolve(result);
+                }
+                catch (e) {
+                    outerReject(e);
+                }
+            });
+        }), { maxAttempts: 3, baseDelayMs: 2000 });
+    }
+    async #doCompleteViaCli(req) {
+        const rawModel = req.model.model;
+        // If the model is the generic "default" sentinel, let OpenCode pick its own default.
+        const cliModel = rawModel === "default" ? "default" : (rawModel.includes("/") ? rawModel : `opencode/${rawModel}`);
+        logger.info(`OpenCodeProvider.completeViaCli: model=${cliModel}`);
+        const prompt = messagesToPrompt(req.messages);
+        const timeoutMs = cliTimeoutMs();
+        const args = buildCliArgs(cliModel, prompt);
+        if (this.cliBinary) {
+            return await this.runCli(this.cliBinary, args, timeoutMs, cliModel, req.model.model);
+        }
+        // Last resort: npx (auto-installs and runs)
+        logger.info("trying npx opencode-ai...");
+        return await this.runCli("npx", ["--yes", "--package", "opencode-ai", "opencode", ...args], timeoutMs, cliModel, req.model.model);
+    }
+    /** Build a sandboxed environment for the CLI subprocess (whitelist + CI config). */
+    cliEnv() {
+        const env = {};
+        for (const key of WHITELISTED_ENV_KEYS) {
+            const val = process.env[key];
+            if (val !== undefined)
+                env[key] = val;
+        }
+        env.OPENCODE_CONFIG_CONTENT = buildCIConfig();
+        env.OPENCODE_DISABLE_AUTOUPDATE = "true";
+        return env;
+    }
+    /**
+     * Execute the opencode CLI with a given prompt.
+     * Spawns detached so the whole process group can be killed on timeout:
+     * SIGTERM, then SIGKILL after a 5s grace period (same as opencode-ai-reviewer).
+     */
+    runCli(cmd, args, timeoutMs, cliModel, modelName) {
+        return new Promise((resolve, reject) => {
             const child = spawn(cmd, args, {
-                stdio: ["pipe", "pipe", "pipe"],
-                timeout,
+                cwd: this.root,
+                stdio: ["ignore", "pipe", "pipe"],
+                env: this.cliEnv(),
+                detached: true,
             });
             let stdout = "";
             let stderr = "";
+            let settled = false;
             let timedOut = false;
-            const timer = setTimeout(() => {
-                timedOut = true;
-                child.kill();
-                reject(new Error(`OpenCode CLI timed out after ${timeout}ms for model ${cliModel}`));
-            }, timeout);
-            child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-            child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-            child.on("error", (err) => {
-                clearTimeout(timer);
-                if (timedOut)
+            let childExited = false;
+            let forceKillHandle;
+            const appendCaptured = (text, isErr) => {
+                const target = isErr ? "stderr" : "stdout";
+                if (target === "stderr") {
+                    stderr += text;
+                    if (stderr.length > MAX_CAPTURED_BYTES)
+                        stderr = stderr.slice(-MAX_CAPTURED_BYTES);
+                }
+                else {
+                    stdout += text;
+                    if (stdout.length > MAX_CAPTURED_BYTES)
+                        stdout = stdout.slice(-MAX_CAPTURED_BYTES);
+                }
+            };
+            const killProcessGroup = (signal) => {
+                if (!child.pid)
                     return;
+                try {
+                    if (process.platform === "win32") {
+                        execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: "ignore" });
+                    }
+                    else {
+                        process.kill(-child.pid, signal);
+                    }
+                }
+                catch {
+                    /* process group already gone */
+                }
+            };
+            const timeoutHandle = setTimeout(() => {
+                timedOut = true;
+                logger.warn(`OpenCode CLI timed out after ${timeoutMs}ms for model ${cliModel} — sending SIGTERM`);
+                killProcessGroup("SIGTERM");
+                forceKillHandle = setTimeout(() => {
+                    if (!childExited) {
+                        logger.warn("OpenCode CLI did not exit after SIGTERM — sending SIGKILL.");
+                        killProcessGroup("SIGKILL");
+                    }
+                }, FORCE_KILL_GRACE_MS);
+            }, timeoutMs);
+            child.stdout.on("data", (chunk) => appendCaptured(chunk.toString(), false));
+            child.stderr.on("data", (chunk) => appendCaptured(chunk.toString(), true));
+            child.on("error", (err) => {
+                clearTimeout(timeoutHandle);
+                if (forceKillHandle !== undefined)
+                    clearTimeout(forceKillHandle);
+                if (settled)
+                    return;
+                settled = true;
                 reject(err);
             });
             child.on("close", (code) => {
-                clearTimeout(timer);
-                if (timedOut)
+                clearTimeout(timeoutHandle);
+                if (forceKillHandle !== undefined)
+                    clearTimeout(forceKillHandle);
+                childExited = true;
+                if (settled)
                     return;
+                if (timedOut) {
+                    settled = true;
+                    reject(new Error(`OpenCode CLI timed out after ${timeoutMs}ms for model ${cliModel}`));
+                    return;
+                }
                 if (code !== 0) {
+                    settled = true;
                     const errMsg = stderr.trim() || stdout.slice(0, 200);
                     reject(new Error(`opencode CLI exited with code ${code}: ${errMsg}`));
                     return;
@@ -161,43 +409,20 @@ export class OpenCodeProvider {
                 if (!content) {
                     logger.debug(`OpenCodeProvider.completeViaCli: no text found — stdout=${stdout.slice(0, 300)} stderr=${stderr.slice(0, 300)}`);
                 }
+                settled = true;
                 resolve({
                     content,
-                    model: req.model.model,
+                    model: modelName,
                     provider: `${this.name}-cli`,
                     usage: { promptTokens, completionTokens },
                 });
             });
-            child.stdin.write(input);
-            child.stdin.end();
         });
-        try {
-            return await runChild("opencode", ["run", "--model", cliModel, "--format", "json", "--pure"]);
-        }
-        catch (err) {
-            if (err instanceof Error && err.message.includes("ENOENT")) {
-                logger.warn("opencode not in PATH, trying npx opencode-ai...");
-                const npxArgs = [
-                    "--package", "opencode-ai", "opencode",
-                    "run", "--model", cliModel, "--format", "json", "--pure",
-                ];
-                try {
-                    return await runChild("npx", npxArgs, 180_000);
-                }
-                catch (npxErr) {
-                    // Strip npm install warnings from the error message
-                    const msg = npxErr?.message ?? String(npxErr);
-                    const clean = msg.split("\n").filter((l) => !l.includes("npm warn") && !l.includes("npm notice")).join("\n").trim();
-                    throw new ProviderUnavailableError("opencode", `opencode CLI failed. Install it via: npm install -g opencode-ai. ${clean || msg}`);
-                }
-            }
-            throw new ProviderUnavailableError("opencode", `opencode CLI not found. Install it via: npm install -g opencode-ai`);
-        }
     }
 }
-export function opencodeFactory(secrets) {
+export function opencodeFactory(secrets, root) {
     try {
-        return new OpenCodeProvider(secrets);
+        return new OpenCodeProvider(secrets, root);
     }
     catch {
         return null;

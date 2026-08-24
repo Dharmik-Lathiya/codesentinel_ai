@@ -1,6 +1,6 @@
 import { ProviderUnavailableError } from "./provider.js";
 const KILOBYTE = 1024;
-const DEFAULT_ANTHROPIC_MAX_TOKENS = 4 * KILOBYTE;
+const DEFAULT_ANTHROPIC_MAX_TOKENS = 128 * KILOBYTE;
 /**
  * Anthropic (Claude) provider. Maps our role-based messages to Anthropic's
  * `user`/`assistant` roles (system is a top-level field).
