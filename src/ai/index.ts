@@ -2,6 +2,7 @@ import { openaiFactory } from "./openai.js";
 import { anthropicFactory } from "./anthropic.js";
 import { geminiFactory } from "./gemini.js";
 import { opencodeFactory } from "./opencode.js";
+import { createOpencodeProvider } from "./providers/opencode-cli.js";
 import type {
   AIProvider,
   CompletionRequest,
@@ -16,7 +17,7 @@ import type {
 import { retry } from "../utils/retry.js";
 import { logger } from "../utils/logger.js";
 
-export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "describe";
+export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "describe" | "plan";
 
 /**
  * AIHub wires together provider factories and resolves the correct model for a
@@ -26,16 +27,19 @@ export type TaskName = "review" | "fix" | "audit" | "score" | "testgen" | "chat"
  */
 export class AIHub {
   private providers = new Map<string, AIProvider>();
-  private factories: Record<string, (s: RuntimeSecrets) => AIProvider | null> = {
+  private factories: Record<string, (s: RuntimeSecrets, root?: string) => AIProvider | null> = {
     openai: openaiFactory,
     anthropic: anthropicFactory,
     gemini: geminiFactory,
     opencode: opencodeFactory,
+    "opencode-cli": (_s, root) => createOpencodeProvider(root),
   };
 
   constructor(
     private readonly config: CodeSentinelConfig,
     private readonly secrets: RuntimeSecrets,
+    /** Repository root — used as the CLI working directory (e.g. opencode run). */
+    private readonly root?: string,
   ) {}
 
   /** Resolve the model configuration for a task, falling back to default. */
@@ -52,7 +56,7 @@ export class AIHub {
     if (!factory) {
       throw new Error(`Unknown provider: "${model.provider}". Supported providers: openai, anthropic, gemini, opencode.`);
     }
-    const provider = factory(this.secrets);
+    const provider = factory(this.secrets, this.root);
     if (!provider) {
       const keyEnvMap: Record<string, string> = {
         openai: "OPENAI_API_KEY",
@@ -74,17 +78,19 @@ export class AIHub {
   async complete(
     task: TaskName,
     messages: CompletionRequest["messages"],
-    opts: { temperature?: number; maxTokens?: number } = {},
+    opts: { temperature?: number; maxTokens?: number; responseFormat?: "json_object" } = {},
   ): Promise<CompletionResult> {
     const model = this.modelForTask(task);
     const provider = this.providerFor(model);
-    logger.info(`AIHub.complete: task=${task} provider=${provider.name} model=${model.model}`);
+    const maxTokens = opts.maxTokens ?? model.maxTokens;
+    logger.info(`AIHub.complete: task=${task} provider=${provider.name} model=${model.model} maxTokens=${maxTokens}`);
     return retry(() =>
       provider.complete({
         model,
         messages,
         temperature: opts.temperature,
-        maxTokens: opts.maxTokens,
+        maxTokens,
+        responseFormat: opts.responseFormat,
       }),
     );
   }

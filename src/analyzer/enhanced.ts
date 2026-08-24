@@ -1,5 +1,6 @@
 import type { Severity } from "../config/types.js";
 import type { Finding } from "./index.js";
+import { isDataFile, maskLiterals } from "./strings.js";
 
 /**
  * Configuration for dynamic severity adjustment.
@@ -409,24 +410,44 @@ export class EnhancedAnalyzer {
   ): Finding[] {
     const findings: Finding[] = [];
     const maxDepth = 4;
+    let blockStart = -1;
+    let blockDepth = 0;
 
     lines.forEach((line, idx) => {
       const indent = line.search(/\S/);
       if (indent >= 0) {
         const depth = Math.floor(indent / 2);
         if (depth > maxDepth) {
-          findings.push(this.createFinding(
-            this.adjustSeverity("medium", severityMultiplier),
-            "smell",
-            path,
-            idx + 1,
-            `Deep nesting detected (depth: ${depth}).`,
-            "Consider extracting logic into separate functions.",
-            Math.min(0.5 + (depth - maxDepth) * 0.1, 0.9), // Higher depth = higher confidence
-          ));
+          if (blockStart === -1) { blockStart = idx + 1; blockDepth = depth; }
+          if (depth > blockDepth) blockDepth = depth;
+          return;
         }
       }
+      if (blockStart !== -1) {
+        findings.push(this.createFinding(
+          this.adjustSeverity("medium", severityMultiplier),
+          "smell",
+          path,
+          blockStart,
+          `Deep nesting detected (depth: ${blockDepth}, lines ${blockStart}-${idx}).`,
+          "Consider extracting logic into separate functions.",
+          Math.min(0.5 + (blockDepth - maxDepth) * 0.1, 0.9),
+        ));
+        blockStart = -1;
+        blockDepth = 0;
+      }
     });
+    if (blockStart !== -1) {
+      findings.push(this.createFinding(
+        this.adjustSeverity("medium", severityMultiplier),
+        "smell",
+        path,
+        blockStart,
+        `Deep nesting detected (depth: ${blockDepth}, lines ${blockStart}-${lines.length}).`,
+        "Consider extracting logic into separate functions.",
+        Math.min(0.5 + (blockDepth - maxDepth) * 0.1, 0.9),
+      ));
+    }
 
     return findings;
   }
@@ -440,15 +461,17 @@ export class EnhancedAnalyzer {
     severityMultiplier: number,
   ): Finding[] {
     const findings: Finding[] = [];
-    const magicNumberRegex = /(?<![a-zA-Z_])\b(?!0\b|1\b|-1\b|2\b)\d{2,}\b(?![a-zA-Z_])/g;
+    if (isDataFile(path)) return findings;
+    const magicNumberRegex = /(?<![a-zA-Z_.])\b(?!0\b|1\b|-1\b|2\b)\d{2,}\b(?![a-zA-Z_])/g;
 
     lines.forEach((line, idx) => {
-      if (line.trim().startsWith("//") || line.trim().startsWith("import") || line.trim().startsWith("export")) {
+      if (line.trim().startsWith("import") || line.trim().startsWith("export")) {
         return;
       }
 
+      const code = maskLiterals(line);
       let match;
-      while ((match = magicNumberRegex.exec(line)) !== null) {
+      while ((match = magicNumberRegex.exec(code)) !== null) {
         findings.push(this.createFinding(
           this.adjustSeverity("low", severityMultiplier),
           "smell",

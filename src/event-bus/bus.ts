@@ -7,7 +7,12 @@ interface SubscriberHealth {
   cooldownUntil: number;
 }
 
+const DEFAULT_MAX_CONCURRENCY_LIMIT = 10;
+const DEFAULT_MAX_HISTORY_COUNT = 100;
+
 export class EventBus {
+  static readonly MAX_CONCURRENCY_LIMIT = DEFAULT_MAX_CONCURRENCY_LIMIT;
+  static readonly MAX_HISTORY_COUNT = DEFAULT_MAX_HISTORY_COUNT;
   private subscribers = new Map<string, Subscriber>();
   private health = new Map<string, SubscriberHealth>();
   private history: GitHubEvent[] = [];
@@ -17,7 +22,7 @@ export class EventBus {
   private readonly cooldownMs: number;
 
   constructor(opts?: { maxConcurrency?: number; subscriberTimeoutMs?: number; maxFailures?: number; cooldownMs?: number }) {
-    this.maxConcurrency = opts?.maxConcurrency ?? 10;
+    this.maxConcurrency = opts?.maxConcurrency ?? EventBus.MAX_CONCURRENCY_LIMIT;
     this.subscriberTimeoutMs = opts?.subscriberTimeoutMs ?? 120_000;
     this.maxFailures = opts?.maxFailures ?? 5;
     this.cooldownMs = opts?.cooldownMs ?? 30_000;
@@ -39,16 +44,23 @@ export class EventBus {
 
   async emit(event: GitHubEvent): Promise<void> {
     this.history.push(event);
-    if (this.history.length > 100) this.history.shift();
+    if (this.history.length > EventBus.MAX_HISTORY_COUNT) this.history.shift();
 
     const matching = Array.from(this.subscribers.values()).filter((s) =>
       s.eventTypes.includes(event.type),
     );
+    try {
+      const results = await Promise.allSettled(
+        matching.map((s) => this.dispatch(s, event)),
+      );
+      this.handleEmitResults(matching, results);
+    } catch (error) {
+      logger.error(`EventBus: emit failed unexpectedly: ${error}`);
+      throw error;
+    }
+  }
 
-    const results = await Promise.allSettled(
-      matching.map((s) => this.dispatch(s, event)),
-    );
-
+  private handleEmitResults(matching: Subscriber[], results: PromiseSettledResult<void>[]): void {
     for (let i = 0; i < matching.length; i++) {
       const result = results[i];
       if (result.status === "rejected") {

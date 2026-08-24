@@ -14,7 +14,7 @@ import { parseJsonc } from "../utils/jsonc.js";
 const userConfigSchema = z
   .object({
     mode: z
-      .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve"])
+      .enum(["review", "fix", "audit", "score", "testgen", "chat", "gate", "describe", "improve", "plan", "deadcode"])
       .optional(),
     max_iterations: z.number().int().positive().optional(),
     enable_auto_fix: z.boolean().optional(),
@@ -149,6 +149,7 @@ const userConfigSchema = z
         maxLinesPerFile: z.number().optional(),
       })
       .optional(),
+    use_opencode_cli: z.boolean().optional(),
   })
   .passthrough();
 
@@ -204,30 +205,10 @@ export function loadConfig(opts: {
 
 /** Convert a ZodError into a concise, human-readable list of issues. */
 function formatZodErrors(error: ZodError): string {
-  const LABELS: Record<string, string> = {
-    mode: "mode",
-    max_iterations: "max_iterations",
-    enable_auto_fix: "enable_auto_fix",
-    enable_scoring: "enable_scoring",
-    enable_test_generation: "enable_test_generation",
-    test_runner: "test_runner",
-    include: "include",
-    exclude: "exclude",
-    plugins: "plugins",
-    gate: "gate",
-    analyzer: "analyzer",
-    default_model: "default_model",
-    cache_dir: "cache_dir",
-    enable_cache: "enable_cache",
-    secretPatterns: "secretPatterns",
-    dismissalsFile: "dismissalsFile",
-    dashboard: "dashboard",
-  };
-
   const lines: string[] = [];
   for (const issue of error.issues) {
     const path = issue.path.map((p) => (typeof p === "number" ? `[${p}]` : p)).join(".");
-    const label = path ? (LABELS[path] ?? path) : "(root)";
+    const label = path || "(root)";
 
     if (issue.code === "invalid_type") {
       const expected = issue.received === "undefined" ? "optional" : `type ${issue.expected}`;
@@ -263,6 +244,8 @@ function validateConfig(config: CodeSentinelConfig): void {
     "gate",
     "describe",
     "improve",
+    "plan",
+    "deadcode",
   ];
   if (!validModes.includes(config.mode)) {
     throw new Error(`Invalid mode: ${config.mode}`);
@@ -286,16 +269,18 @@ export function configFromInputs(
   if (inputs.project_context) out.project_context = inputs.project_context;
   if (inputs.test_runner) out.test_runner = inputs.test_runner as "jest" | "vitest";
   if (inputs.provider) {
-    const providerModel = { provider: inputs.provider, model: "default" };
-    out.default_model = providerModel;
-    out.models = {
-      review: providerModel,
-      fix: providerModel,
-      audit: providerModel,
-      score: providerModel,
-      testgen: providerModel,
-      chat: providerModel,
-    };
+    const taskKeys = Object.keys(DEFAULT_CONFIG.models) as (keyof typeof DEFAULT_CONFIG.models)[];
+    const models: Record<string, { provider: string; model?: string; maxTokens?: number }> = {};
+    for (const key of taskKeys) {
+      const base = DEFAULT_CONFIG.models[key];
+      models[key] = { ...base, provider: inputs.provider };
+    }
+    out.models = models;
+    out.default_model = { ...DEFAULT_CONFIG.default_model, provider: inputs.provider };
+  }
+  if (inputs.auto_merge) out.autoMerge = inputs.auto_merge === "true";
+  if (inputs.audit_target_dirs) {
+    out.auditTargetDirs = inputs.audit_target_dirs.split(",").map((s) => s.trim()).filter(Boolean);
   }
   if (inputs.jsonl_output) out.jsonl_output = inputs.jsonl_output === "true";
   if (inputs.mcp_enabled) out.mcp = { enabled: inputs.mcp_enabled === "true", servers: [] };
@@ -305,5 +290,9 @@ export function configFromInputs(
       dbPath: inputs.learning_db_path ?? DEFAULT_CONFIG.learning.dbPath,
     };
   }
+  if (inputs.issue_title) out.issue_title = inputs.issue_title;
+  if (inputs.issue_body) out.issue_body = inputs.issue_body;
+  if (inputs.use_opencode_cli !== undefined)
+    out.use_opencode_cli = inputs.use_opencode_cli === "true";
   return out as Partial<CodeSentinelConfig>;
 }

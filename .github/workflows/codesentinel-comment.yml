@@ -1,4 +1,4 @@
-name: CodeSentinel AI
+name: CodeSentinel Comment Commands
 
 on:
   issue_comment:
@@ -20,6 +20,8 @@ jobs:
       startsWith(github.event.comment.body, '/gate') ||
       startsWith(github.event.comment.body, '/deadcode')
     runs-on: ubuntu-latest
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
     steps:
       - name: Extract command
         id: cmd
@@ -50,6 +52,7 @@ jobs:
               });
               core.setOutput('ref', repo.default_branch);
               core.setOutput('base_ref', repo.default_branch);
+              core.setOutput('head_ref', '');
             }
 
       - name: Checkout target
@@ -68,7 +71,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Build CodeSentinel
         working-directory: codesentinel
@@ -87,22 +90,44 @@ jobs:
             core.setOutput('comment_id', comment.id);
 
       - name: Run CodeSentinel
+        id: run
         env:
           GITHUB_BASE_REF: ${{ steps.target.outputs.base_ref }}
           GITHUB_HEAD_REF: ${{ steps.target.outputs.head_ref }}
+          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          FLAGS=""
-          if [ "${{ steps.cmd.outputs.mode }}" = "fix" ]; then FLAGS="--auto-fix"; fi
-          node codesentinel/dist/index.js ${{ steps.cmd.outputs.mode }} $FLAGS 2>&1 | tee /tmp/cs-out.txt || true
+          FLAGS="--provider opencode"
+          if [ "${{ steps.cmd.outputs.mode }}" = "fix" ]; then FLAGS="$FLAGS --auto-fix"; fi
+          node codesentinel/dist/index.js ${{ steps.cmd.outputs.mode }} $FLAGS 2>&1 | tee /tmp/cs-out.txt; true
 
       - name: Update comment
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            let out = ''; try { out = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}
             const mode = '${{ steps.cmd.outputs.mode }}';
-            const body = '### CodeSentinel \u2014 ' + mode + '\n\n```\n' + out + '\n```';
+            const MAX_BODY = 63000;
+            let body = '### CodeSentinel — ' + mode + '\n\n';
+            let logs = '';
+            try { logs = fs.readFileSync('/tmp/cs-out.txt','utf8'); } catch {}
+            try {
+              const report = JSON.parse(fs.readFileSync('codesentinel-reports/codesentinel-' + mode + '.json', 'utf8'));
+              if (report.summary) {
+                let summary = report.summary;
+                if (summary.length > 50000) summary = summary.slice(0, 50000) + '\n\n_… truncated …_';
+                body += summary;
+              }
+            } catch {
+              if (logs) {
+                let trimmed = logs.trim();
+                if (trimmed.length > 50000) trimmed = trimmed.slice(0, 50000) + '\n… truncated';
+                body += '```\n' + trimmed + '\n```';
+              }
+            }
+            const logSection = '\n\n<details><summary>Raw logs</summary>\n\n```\n' + (logs.length > 10000 ? logs.trim().slice(0, 10000) + '\n…' : logs.trim()) + '\n```\n\n</details>';
+            if ((body + logSection).length < MAX_BODY) body += logSection;
             await github.rest.issues.updateComment({
               owner: context.repo.owner, repo: context.repo.repo,
               comment_id: ${{ steps.loading.outputs.comment_id }},

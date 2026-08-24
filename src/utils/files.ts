@@ -1,5 +1,6 @@
-import { readFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { logger } from "./logger.js";
 
 /** Convert a glob pattern (subset) into a RegExp. Supports **, *, ?, {a,b}. */
 export function globToRegExp(glob: string): RegExp {
@@ -44,6 +45,8 @@ function escapeRe(s: string): string {
   return s.replace(/[.+^$*?{}|\\]/g, "\\$&");
 }
 
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".cache", ".codesentinel-cache", "coverage", "codesentinel"]);
+
 /** Recursively walk a directory yielding file paths (relative to root). */
 export function walk(root: string): string[] {
   const out: string[] = [];
@@ -54,14 +57,17 @@ export function walk(root: string): string[] {
     try {
       entries = readdirSync(dir);
     } catch {
+      logger.debug(`Cannot read directory ${dir}`);
       continue;
     }
     for (const entry of entries) {
+      if (SKIP_DIRS.has(entry)) continue;
       const full = join(dir, entry);
       let st;
       try {
         st = statSync(full);
       } catch {
+        logger.debug(`Cannot stat ${full}`);
         continue;
       }
       if (st.isDirectory()) stack.push(full);
@@ -82,6 +88,7 @@ export function readIgnoreFile(root: string): string[] {
       .map((l) => l.trim())
       .filter((l) => l.length > 0 && !l.startsWith("#"));
   } catch {
+    logger.debug("Cannot read .codesentinelignore");
     return [];
   }
 }
@@ -110,6 +117,7 @@ export function readText(path: string): string {
   try {
     return readFileSync(path, "utf8");
   } catch {
+    logger.debug(`Cannot read ${path}`);
     return "";
   }
 }
@@ -137,4 +145,12 @@ export function languageOf(path: string): string {
 /** Ensure a directory (and parents) exists. */
 export function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
+}
+
+/** Backup a file with a timestamp suffix. Returns the backup path. */
+export function backupFile(filePath: string): string {
+  const backupPath = `${filePath}.${Date.now()}.bak`;
+  const content = readFileSync(filePath, "utf8");
+  writeFileSync(backupPath, content, "utf8");
+  return backupPath;
 }

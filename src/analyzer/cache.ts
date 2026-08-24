@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { logger } from "../utils/logger.js";
 import type { Finding } from "../analyzer/index.js";
 
 /**
@@ -279,14 +280,20 @@ export class AnalysisCache {
   /**
    * Load entry from disk cache.
    */
+  /** Cache key → filesystem-safe filename (keys embed file paths with `/`). */
+  private diskPath(key: string): string {
+    return join(this.cacheDir, `${key.replace(/[^a-zA-Z0-9_.-]/g, "_")}.json`);
+  }
+
   private loadFromDisk(key: string): AnalysisCacheEntry | null {
     try {
-      const filePath = join(this.cacheDir, `${key}.json`);
+      const filePath = this.diskPath(key);
       if (!existsSync(filePath)) return null;
 
       const content = readFileSync(filePath, "utf8");
       return JSON.parse(content) as AnalysisCacheEntry;
     } catch {
+      logger.debug("Cache load failed");
       return null;
     }
   }
@@ -296,10 +303,10 @@ export class AnalysisCache {
    */
   private saveToDisk(key: string, entry: AnalysisCacheEntry): void {
     try {
-      const filePath = join(this.cacheDir, `${key}.json`);
+      const filePath = this.diskPath(key);
       writeFileSync(filePath, JSON.stringify(entry), "utf8");
     } catch {
-      // Cache failures must never break the run
+      logger.debug("Cache save failed");
     }
   }
 
@@ -308,7 +315,7 @@ export class AnalysisCache {
    */
   private loadMemoryCache(): void {
     try {
-      const files = require("node:fs").readdirSync(this.cacheDir);
+      const files = readdirSync(this.cacheDir);
       for (const file of files) {
         if (!file.endsWith(".json")) continue;
         
@@ -321,7 +328,7 @@ export class AnalysisCache {
         }
       }
     } catch {
-      // Ignore errors during cache loading
+      logger.debug("Memory cache load failed");
     }
   }
 
@@ -340,12 +347,12 @@ export class AnalysisCache {
     for (const entry of toRemove) {
       this.memoryCache.delete(entry.key);
       try {
-        const filePath = join(this.cacheDir, `${entry.key}.json`);
+        const filePath = this.diskPath(entry.key);
         if (existsSync(filePath)) {
-          require("node:fs").unlinkSync(filePath);
+          unlinkSync(filePath);
         }
       } catch {
-        // Ignore errors during cleanup
+        logger.debug("Cache eviction cleanup failed");
       }
     }
   }
@@ -356,14 +363,14 @@ export class AnalysisCache {
   clear(): void {
     this.memoryCache.clear();
     try {
-      const files = require("node:fs").readdirSync(this.cacheDir);
+      const files = readdirSync(this.cacheDir);
       for (const file of files) {
         if (!file.endsWith(".json")) continue;
         const filePath = join(this.cacheDir, file);
-        require("node:fs").unlinkSync(filePath);
+        unlinkSync(filePath);
       }
     } catch {
-      // Ignore errors during cleanup
+      logger.debug("Cache clear failed");
     }
   }
 
@@ -379,7 +386,7 @@ export class AnalysisCache {
     let totalSizeBytes = 0;
 
     try {
-      const files = require("node:fs").readdirSync(this.cacheDir);
+      const files = readdirSync(this.cacheDir);
       for (const file of files) {
         if (!file.endsWith(".json")) continue;
         diskEntries++;
@@ -388,7 +395,7 @@ export class AnalysisCache {
         totalSizeBytes += stat.size;
       }
     } catch {
-      // Ignore errors
+      logger.debug("Cache stats failed");
     }
 
     return {

@@ -1,5 +1,6 @@
 export { Engine } from "./engine/index.js";
-export type { EngineReport, ReviewComment, FixAttempt } from "./engine/index.js";
+export type { EngineReport, ReviewComment, FixAttempt, Hunk } from "./engine/index.js";
+export { applyHunks } from "./engine/index.js";
 
 export { loadConfig, configFromInputs } from "./config/index.js";
 export type {
@@ -37,6 +38,7 @@ export type { ScoreBreakdown } from "./scorer/index.js";
 export type { CodeSentinelPlugin, PluginContext } from "./plugins/index.js";
 export type { GeneratedTest, DetectedFunction } from "./testgen/index.js";
 
+export { scanSecrets, redactSecrets } from "./secrets/index.js";
 export { renderHtmlReport } from "./utils/html-report.js";
 export { renderSarif } from "./utils/sarif.js";
 export { concurrentMap } from "./utils/concurrency.js";

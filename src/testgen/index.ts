@@ -1,9 +1,9 @@
 import { writeFileSync, existsSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, isAbsolute } from "node:path";
 
 import { languageOf, ensureDir } from "../utils/files.js";
 import type { CodeSentinelConfig } from "../config/types.js";
-import type { AIHub } from "../ai/index.js";
+import type { EngineAI } from "../ai/providers/opencode-cli.js";
 import { PromptRegistry } from "../prompts/index.js";
 import { extractJson } from "../ai/provider.js";
 
@@ -65,7 +65,7 @@ export interface GeneratedTest {
 export class TestGenerator {
   constructor(
     private config: CodeSentinelConfig,
-    private ai: AIHub,
+    private ai: EngineAI,
     private prompts: PromptRegistry,
   ) {}
 
@@ -87,7 +87,13 @@ export class TestGenerator {
     for (const rel of uniqueFiles) {
       const file = files.find((f) => f.path === rel);
       if (!file) continue;
-      const gen = await this.generateForFile(root, file);
+      let gen: GeneratedTest | null;
+      try {
+        gen = await this.generateForFile(root, file);
+      } catch (e) {
+        console.error(`Failed to generate tests for ${rel}:`, e);
+        continue;
+      }
       if (gen) results.push(gen);
     }
     return results;
@@ -112,10 +118,16 @@ export class TestGenerator {
       project_context: this.config.project_context || "(none)",
     });
 
-    const res = await this.ai.complete("testgen", [
-      { role: "system", content: "You generate precise unit tests." },
-      { role: "user", content: prompt },
-    ]);
+    let res: any;
+    try {
+      res = await this.ai.complete("testgen", [
+        { role: "system", content: "You generate precise unit tests." },
+        { role: "user", content: prompt },
+      ]);
+    } catch (e) {
+      console.error(`AI completion failed for ${file.path}:`, e);
+      return null;
+    }
 
     const parsed = extractJson<{ test_file_path?: string; content: string }>(
       res.content,
@@ -125,6 +137,10 @@ export class TestGenerator {
     const outPath = parsed.test_file_path
       ? resolve(root, parsed.test_file_path)
       : targetPath;
+    if (!isWithinRoot(root, outPath)) {
+      console.error(`Rejected test path outside project root: ${parsed.test_file_path}`);
+      return null;
+    }
     ensureDir(dirname(outPath));
     writeFileSync(outPath, parsed.content, "utf8");
     return { file: file.path, testFilePath: relative(root, outPath), content: parsed.content };
@@ -146,5 +162,14 @@ export class TestGenerator {
 /** Determine if a path's test already exists on disk. */
 export function testExists(root: string, srcPath: string): boolean {
   const base = srcPath.replace(/\.[^.]+$/, "");
-  return existsSync(resolve(root, base + ".test.ts"));
+  // join (not resolve) — bundlers (ncc) rewrite resolve(root, x.test.ts)
+  // into a bundle-relative asset path, breaking this check in the action.
+  return existsSync(join(root, base + ".test.ts"));
+}
+
+/** Guard against AI-supplied paths escaping the project root (../ traversal). */
+export function isWithinRoot(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  // relative() is empty for identical paths, absolute for cross-drive (Windows)
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }

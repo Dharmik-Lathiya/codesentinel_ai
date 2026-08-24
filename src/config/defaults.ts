@@ -106,7 +106,7 @@ export const DEFAULT_LINTER_CONFIG: LinterConfig = {
 };
 
 export const DEFAULT_LEARNING_CONFIG: LearningConfig = {
-  enabled: true,
+  enabled: false,
   dbPath: ".codesentinel/learning.db",
   metaReview: true,
   patternDiscovery: true,
@@ -119,9 +119,9 @@ export const DEFAULT_MCP_CONFIG: MCPConfig = {
 };
 
 export const DEFAULT_BATCH_CONFIG: BatchConfig = {
-  enabled: false,
-  batchSize: 3,
-  maxFilesPerBatch: 3,
+  enabled: true,
+  batchSize: 2,
+  maxFilesPerBatch: 5,
   maxLinesPerFile: 500,
 };
 
@@ -132,7 +132,7 @@ export const DEFAULT_BATCH_CONFIG: BatchConfig = {
 export const DEFAULT_CONFIG: CodeSentinelConfig = {
   mode: "review",
   max_iterations: 5,
-  enable_auto_fix: true,
+  enable_auto_fix: false,
   enable_scoring: true,
   enable_test_generation: false,
   include_positive_feedback: true,
@@ -140,28 +140,41 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   custom_prompt_paths: {},
   project_context: "",
 
-  default_model: { provider: "opencode", model: "opencode/default" },
+  issue_title: undefined,
+  issue_body: undefined,
+
+  // big-pickle: current Zen free-tier model. The "default" sentinel resolves
+  // server-side to a PAID model when OPENCODE_API_KEY is set, which fails on
+  // accounts without a payment method ("APIError: No payment method").
+  default_model: { provider: "opencode", model: "big-pickle" },
   models: {
-    review: { provider: "opencode", model: "opencode/default" },
-    fix: { provider: "opencode", model: "opencode/default" },
-    audit: { provider: "opencode", model: "opencode/default" },
-    score: { provider: "opencode", model: "opencode/default" },
-    testgen: { provider: "opencode", model: "opencode/default" },
-    chat: { provider: "opencode", model: "opencode/default" },
-    describe: { provider: "opencode", model: "opencode/default" },
+    review: { provider: "opencode", model: "big-pickle" },
+    fix: { provider: "opencode", model: "big-pickle" },
+    audit: { provider: "opencode", model: "big-pickle" },
+    score: { provider: "opencode", model: "big-pickle" },
+    testgen: { provider: "opencode", model: "big-pickle" },
+    chat: { provider: "opencode", model: "big-pickle" },
+    describe: { provider: "opencode", model: "big-pickle" },
+    plan: { provider: "opencode", model: "big-pickle" },
   },
 
   test_runner: "vitest",
 
   include: ["**/*.{ts,tsx,js,jsx,py,go,java,rb}"],
   exclude: [
-    "node_modules/**",
-    "dist/**",
-    "build/**",
-    "coverage/**",
-    ".git/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/coverage/**",
+    "**/.git/**",
     "**/*.test.*",
     "**/*.spec.*",
+    "**/.next/**",
+    "**/.vercel/**",
+    "**/.turbo/**",
+    "**/.cache/**",
+    "**/out/**",
+    "**/.expo/**",
   ],
 
   output: {
@@ -190,6 +203,8 @@ export const DEFAULT_CONFIG: CodeSentinelConfig = {
   learning: DEFAULT_LEARNING_CONFIG,
   mcp: DEFAULT_MCP_CONFIG,
   batch: DEFAULT_BATCH_CONFIG,
+  autoMerge: false,
+  use_opencode_cli: true,
 };
 
 /** Deep-merge two configs (shallow per top-level key, special-cased objects/arrays). */
@@ -266,6 +281,9 @@ export function mergeConfig(
     if (override.analyzer.customRules) {
       merged.analyzer.customRules = [...base.analyzer.customRules, ...override.analyzer.customRules];
     }
+  }
+  if (override.autoMerge !== undefined) {
+    merged.autoMerge = override.autoMerge;
   }
   return merged;
 }

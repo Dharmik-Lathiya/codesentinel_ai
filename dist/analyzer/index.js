@@ -1,0 +1,516 @@
+import { languageOf } from "../utils/files.js";
+import { DEFAULT_ANALYZER_CONFIG } from "../config/defaults.js";
+import { EnhancedAnalyzer } from "./enhanced.js";
+import { isDataFile, maskLiterals } from "./strings.js";
+import { AnalysisCache, generateConfigHash } from "./cache.js";
+import { ProgressiveAnalyzer } from "./progressive.js";
+/**
+ * StaticAnalyzer runs cheap, deterministic, offline heuristic checks that do
+ * not require an AI call. These act as a fast first pass and also power the
+ * scoring breakdown even when AI is unavailable.
+ */
+export class StaticAnalyzer {
+    enhancedAnalyzer;
+    progressiveAnalyzer;
+    analysisCache = null;
+    analyzerConfig;
+    configHash;
+    constructor(config, cacheDir) {
+        this.analyzerConfig = {
+            ...DEFAULT_ANALYZER_CONFIG,
+            ...config,
+        };
+        this.configHash = generateConfigHash(this.analyzerConfig);
+        this.enhancedAnalyzer = new EnhancedAnalyzer(this.analyzerConfig.severityAdjustment, this.analyzerConfig.confidenceThresholds, this.analyzerConfig.customRules);
+        this.progressiveAnalyzer = new ProgressiveAnalyzer(this.analyzerConfig.progressiveAnalysis, this.analyzerConfig.multiFileAnalysis);
+        // Initialize cache if cache directory is provided
+        if (cacheDir) {
+            this.analysisCache = new AnalysisCache(cacheDir);
+        }
+    }
+    analyze(path, content) {
+        // Check cache first if enabled
+        if (this.analysisCache) {
+            const cached = this.analysisCache.get(path, content, this.configHash);
+            if (cached) {
+                return cached.findings;
+            }
+        }
+        let findings;
+        if (this.analyzerConfig.enableEnhancedAnalysis) {
+            // Use enhanced analyzer with dynamic severity adjustment
+            findings = this.enhancedAnalyzer.analyze(path, content);
+        }
+        else {
+            // Use basic analyzer
+            findings = this.analyzeBasic(path, content);
+        }
+        // Cache results if cache is available
+        if (this.analysisCache) {
+            this.analysisCache.set(path, content, this.configHash, findings, {
+                durationMs: 0, // Would need to track this properly
+                rulesApplied: ["basic"],
+            });
+        }
+        return findings;
+    }
+    /**
+     * Basic analysis without enhanced features (original logic).
+     */
+    analyzeBasic(path, content) {
+        const findings = [];
+        const lines = content.split("\n");
+        lines.forEach((line, idx) => {
+            const trimmed = line.trim();
+            const isComment = trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*");
+            // 1. Hardcoded secrets / API keys.
+            if (/api[_-]?key\s*=\s*["'][A-Za-z0-9_\-]{16,}/i.test(line)) {
+                findings.push({
+                    severity: "high",
+                    category: "security",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Possible hardcoded API key detected.",
+                    suggestion: "Move secrets to environment variables or a secrets manager.",
+                    source: "static",
+                });
+            }
+            // 2. console.log left in source (smell, not for tests).
+            if (!isComment && /\bconsole\.(log|debug)\(/.test(line) && !path.includes(".test.")) {
+                findings.push({
+                    severity: "low",
+                    category: "smell",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Debug logging left in source.",
+                    suggestion: "Remove or replace with a proper logger.",
+                    source: "static",
+                });
+            }
+            // 3. eval usage (security).
+            if (!isComment && /\beval\s*\(/.test(line)) {
+                findings.push({
+                    severity: "critical",
+                    category: "security",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Use of eval() is dangerous and can lead to code injection.",
+                    suggestion: "Avoid eval; parse structured input instead.",
+                    source: "static",
+                });
+            }
+            // 4. TODO/FIXME without tracking.
+            if (/(TODO|FIXME|XXX)\b/.test(line)) {
+                findings.push({
+                    severity: "info",
+                    category: "smell",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Tech-debt marker (TODO/FIXME) found.",
+                    suggestion: "Link to a tracked issue where possible.",
+                    source: "static",
+                });
+            }
+            // 5. Hardcoded passwords.
+            if (!isComment && /password\s*=\s*["'][^"']+["']/i.test(line)) {
+                findings.push({
+                    severity: "high",
+                    category: "security",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Possible hardcoded password detected.",
+                    suggestion: "Use environment variables or a secrets manager.",
+                    source: "static",
+                });
+            }
+            // 6. process.exit() usage.
+            if (!isComment && /\bprocess\.exit\s*\(/.test(line)) {
+                findings.push({
+                    severity: "medium",
+                    category: "smell",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Direct process.exit() call found.",
+                    suggestion: "Use exceptions or return codes for cleaner shutdown.",
+                    source: "static",
+                });
+            }
+            // 7. == instead of === (loose equality).
+            if (!isComment && /[^!=!]==[^=]/.test(line) && !/===/.test(line)) {
+                findings.push({
+                    severity: "medium",
+                    category: "bug",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Loose equality (==) used instead of strict equality (===).",
+                    suggestion: "Use === to avoid unexpected type coercion.",
+                    source: "static",
+                });
+            }
+            // 8. var usage (should use let/const).
+            if (!isComment && /\bvar\s+\w+/.test(line)) {
+                findings.push({
+                    severity: "low",
+                    category: "smell",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Use of 'var' detected.",
+                    suggestion: "Use 'let' or 'const' for block scoping.",
+                    source: "static",
+                });
+            }
+            // 9. typeof without quotes (typeof x === undefined).
+            if (!isComment && /typeof\s+\w+\s*===?\s*[^"']undefined/.test(line)) {
+                findings.push({
+                    severity: "medium",
+                    category: "bug",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Incorrect typeof comparison — should compare against string 'undefined'.",
+                    suggestion: "Use: typeof x === 'undefined'",
+                    source: "static",
+                });
+            }
+            // 10. JSON.parse without try/catch.
+            if (!isComment && /JSON\.parse\s*\(/.test(line) && !/\btry\b/.test(content.split("\n").slice(Math.max(0, idx - 3), idx + 1).join("\n"))) {
+                findings.push({
+                    severity: "medium",
+                    category: "bug",
+                    file: path,
+                    line: idx + 1,
+                    comment: "JSON.parse() without nearby error handling.",
+                    suggestion: "Wrap in try/catch to handle malformed JSON.",
+                    source: "static",
+                });
+            }
+            // 11. parseInt without radix.
+            if (!isComment && /\bparseInt\s*\([^,)]+\)/.test(line) && !/parseInt\s*\([^,]+,\s*\d+/.test(line)) {
+                findings.push({
+                    severity: "low",
+                    category: "bug",
+                    file: path,
+                    line: idx + 1,
+                    comment: "parseInt() called without explicit radix parameter.",
+                    suggestion: "Use parseInt(value, 10) to avoid unexpected results.",
+                    source: "static",
+                });
+            }
+            // 12. setTimeout/setInterval with string (acts like eval).
+            if (!isComment && /\b(setTimeout|setInterval)\s*\(\s*["']/.test(line)) {
+                findings.push({
+                    severity: "high",
+                    category: "security",
+                    file: path,
+                    line: idx + 1,
+                    comment: "String passed to setTimeout/setInterval (acts like eval).",
+                    suggestion: "Pass a function reference instead of a string.",
+                    source: "static",
+                });
+            }
+            // 13. new Date() without arguments (timezone dependent).
+            if (!isComment && /\bnew\s+Date\s*\(\s*\)/.test(line)) {
+                findings.push({
+                    severity: "low",
+                    category: "smell",
+                    file: path,
+                    line: idx + 1,
+                    comment: "new Date() without arguments is timezone-dependent.",
+                    suggestion: "Consider using a timezone-aware date library or explicit timezone.",
+                    source: "static",
+                });
+            }
+            // 14. Math.random() for security-sensitive contexts.
+            if (!isComment && /\bMath\.random\s*\(/.test(line) && /(token|secret|password|key|auth|session)/i.test(line)) {
+                findings.push({
+                    severity: "high",
+                    category: "security",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Math.random() is not cryptographically secure.",
+                    suggestion: "Use crypto.randomBytes() or crypto.randomUUID() instead.",
+                    source: "static",
+                });
+            }
+            // 15. await inside forEach (common async bug).
+            if (!isComment && /\bawait\b/.test(line) && /\.(forEach|each)\s*\(/.test(content.split("\n").slice(Math.max(0, idx - 2), idx + 1).join(" "))) {
+                findings.push({
+                    severity: "high",
+                    category: "bug",
+                    file: path,
+                    line: idx + 1,
+                    comment: "await inside forEach does not work — forEach ignores returned promises.",
+                    suggestion: "Use for...of or Promise.all() with map() instead.",
+                    source: "static",
+                });
+            }
+        });
+        // 16. Deep nesting detection.
+        findings.push(...this.detectDeepNesting(path, lines));
+        // 17. Magic numbers detection.
+        findings.push(...this.detectMagicNumbers(path, lines));
+        // 18. Missing error handling (bare await without try/catch).
+        findings.push(...this.detectMissingErrorHandling(path, content));
+        // 19. Long functions detection (> 50 lines).
+        findings.push(...this.detectLongFunctions(path, lines));
+        return findings;
+    }
+    /**
+     * Perform progressive analysis (quick scan → deep analysis).
+     */
+    async analyzeProgressive(files) {
+        return this.progressiveAnalyzer.analyzeProgressive(files, (path, content, rules) => {
+            if (this.analyzerConfig.enableEnhancedAnalysis) {
+                return this.enhancedAnalyzer.analyze(path, content);
+            }
+            return this.analyzeBasic(path, content);
+        });
+    }
+    /**
+     * Perform multi-file analysis with cross-file insights.
+     */
+    async analyzeMultiFile(files) {
+        return this.progressiveAnalyzer.analyzeMultiFile(files, (path, content) => {
+            if (this.analyzerConfig.enableEnhancedAnalysis) {
+                return this.enhancedAnalyzer.analyze(path, content);
+            }
+            return this.analyzeBasic(path, content);
+        });
+    }
+    /**
+     * Compare analysis results between two runs.
+     */
+    compareAnalyses(previousFindings, currentFindings) {
+        if (!this.analysisCache) {
+            return null;
+        }
+        return this.analysisCache.compare(previousFindings, currentFindings);
+    }
+    /**
+     * Update file histories for dynamic severity adjustment.
+     */
+    updateFileHistories(fileHistories) {
+        if (this.analyzerConfig.enableEnhancedAnalysis) {
+            this.enhancedAnalyzer.updateContext(fileHistories);
+        }
+    }
+    /**
+     * Add a custom rule.
+     */
+    addCustomRule(rule) {
+        this.analyzerConfig.customRules.push(rule);
+        if (this.analyzerConfig.enableEnhancedAnalysis) {
+            this.enhancedAnalyzer.addCustomRule(rule);
+        }
+    }
+    /**
+     * Remove a custom rule.
+     */
+    removeCustomRule(ruleId) {
+        this.analyzerConfig.customRules = this.analyzerConfig.customRules.filter(r => r.id !== ruleId);
+        if (this.analyzerConfig.enableEnhancedAnalysis) {
+            this.enhancedAnalyzer.removeCustomRule(ruleId);
+        }
+    }
+    /**
+     * Update confidence thresholds.
+     */
+    updateConfidenceThresholds(thresholds) {
+        this.analyzerConfig.confidenceThresholds = {
+            ...this.analyzerConfig.confidenceThresholds,
+            ...thresholds,
+        };
+        if (this.analyzerConfig.enableEnhancedAnalysis) {
+            this.enhancedAnalyzer.updateConfidenceThresholds(thresholds);
+        }
+    }
+    /**
+     * Update severity adjustment configuration.
+     */
+    updateSeverityConfig(config) {
+        this.analyzerConfig.severityAdjustment = {
+            ...this.analyzerConfig.severityAdjustment,
+            ...config,
+        };
+        if (this.analyzerConfig.enableEnhancedAnalysis) {
+            this.enhancedAnalyzer.updateSeverityConfig(config);
+        }
+    }
+    /**
+     * Get analyzer configuration.
+     */
+    getConfig() {
+        return { ...this.analyzerConfig };
+    }
+    /**
+     * Get cache statistics.
+     */
+    getCacheStats() {
+        return this.analysisCache?.getStats() ?? null;
+    }
+    /**
+     * Clear analysis cache.
+     */
+    clearCache() {
+        this.analysisCache?.clear();
+    }
+    /** Detect deep nesting (more than 4 levels of indentation). */
+    detectDeepNesting(path, lines) {
+        const findings = [];
+        const maxDepth = 4;
+        let blockStart = -1;
+        let blockDepth = 0;
+        lines.forEach((line, idx) => {
+            const indent = line.search(/\S/);
+            if (indent >= 0) {
+                const depth = Math.floor(indent / 2);
+                if (depth > maxDepth) {
+                    if (blockStart === -1) {
+                        blockStart = idx + 1;
+                        blockDepth = depth;
+                    }
+                    if (depth > blockDepth)
+                        blockDepth = depth;
+                    return;
+                }
+            }
+            if (blockStart !== -1) {
+                findings.push({
+                    severity: "medium",
+                    category: "smell",
+                    file: path,
+                    line: blockStart,
+                    comment: `Deep nesting detected (depth: ${blockDepth}, lines ${blockStart}-${idx}).`,
+                    suggestion: "Consider extracting logic into separate functions.",
+                    source: "static",
+                });
+                blockStart = -1;
+                blockDepth = 0;
+            }
+        });
+        if (blockStart !== -1) {
+            findings.push({
+                severity: "medium",
+                category: "smell",
+                file: path,
+                line: blockStart,
+                comment: `Deep nesting detected (depth: ${blockDepth}, lines ${blockStart}-${lines.length}).`,
+                suggestion: "Consider extracting logic into separate functions.",
+                source: "static",
+            });
+        }
+        return findings;
+    }
+    /** Detect magic numbers (numeric literals other than 0, 1, -1). */
+    detectMagicNumbers(path, lines) {
+        const findings = [];
+        if (isDataFile(path))
+            return findings;
+        const magicNumberRegex = /(?<![a-zA-Z_.])\b(?!0\b|1\b|-1\b|2\b)\d{2,}\b(?![a-zA-Z_])/g;
+        lines.forEach((line, idx) => {
+            if (line.trim().startsWith("import") || line.trim().startsWith("export")) {
+                return;
+            }
+            const code = maskLiterals(line);
+            let match;
+            while ((match = magicNumberRegex.exec(code)) !== null) {
+                findings.push({
+                    severity: "low",
+                    category: "smell",
+                    file: path,
+                    line: idx + 1,
+                    comment: `Magic number ${match[0]} detected.`,
+                    suggestion: "Consider extracting to a named constant.",
+                    source: "static",
+                });
+            }
+        });
+        return findings;
+    }
+    /** Detect missing error handling (bare await without try/catch). */
+    detectMissingErrorHandling(path, content) {
+        const findings = [];
+        const lines = content.split("\n");
+        const inTryBlock = new Set();
+        let tryStart = -1;
+        let braceCount = 0;
+        lines.forEach((line, idx) => {
+            if (tryStart >= 0) {
+                braceCount += (line.match(/{/g) || []).length;
+                braceCount -= (line.match(/}/g) || []).length;
+                if (braceCount <= 0) {
+                    for (let i = tryStart; i <= idx; i++) {
+                        inTryBlock.add(i);
+                    }
+                    tryStart = -1;
+                }
+            }
+            else if (/\btry\s*\{/.test(line)) {
+                tryStart = idx;
+                braceCount = 1;
+            }
+        });
+        lines.forEach((line, idx) => {
+            if (inTryBlock.has(idx))
+                return;
+            const trimmed = line.trim();
+            if (trimmed.startsWith("//") || trimmed.startsWith("/*"))
+                return;
+            if (/\bawait\b/.test(line) && !/\b(try|catch)\b/.test(line)) {
+                findings.push({
+                    severity: "low",
+                    category: "smell",
+                    file: path,
+                    line: idx + 1,
+                    comment: "Await call without error handling.",
+                    suggestion: "Wrap in try/catch for proper error handling.",
+                    source: "static",
+                });
+            }
+        });
+        return findings;
+    }
+    /** Detect long functions (more than 50 lines). */
+    detectLongFunctions(path, lines) {
+        const findings = [];
+        let functionStart = -1;
+        let functionName = "";
+        let braceCount = 0;
+        lines.forEach((line, idx) => {
+            const functionMatch = line.match(/(?:function|const\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)\s*=>|function))\s+(\w+)?/);
+            if (functionMatch && functionStart === -1) {
+                functionStart = idx;
+                functionName = functionMatch[1] || "anonymous";
+                braceCount = 0;
+            }
+            if (functionStart >= 0) {
+                braceCount += (line.match(/{/g) || []).length;
+                braceCount -= (line.match(/}/g) || []).length;
+                if (braceCount <= 0 && idx > functionStart) {
+                    const functionLength = idx - functionStart;
+                    if (functionLength > 50) {
+                        findings.push({
+                            severity: "medium",
+                            category: "smell",
+                            file: path,
+                            line: functionStart + 1,
+                            comment: `Long function "${functionName}" (${functionLength} lines).`,
+                            suggestion: "Consider breaking into smaller functions.",
+                            source: "static",
+                        });
+                    }
+                    functionStart = -1;
+                }
+            }
+        });
+        return findings;
+    }
+    /** Aggregate findings across many files. */
+    analyzeMany(files) {
+        return files.flatMap((f) => this.analyze(f.path, f.content));
+    }
+}
+/** Detect the language label for a path (re-export for convenience). */
+export function langFor(path) {
+    return languageOf(path);
+}
+//# sourceMappingURL=index.js.map

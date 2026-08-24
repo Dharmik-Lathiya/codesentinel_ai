@@ -8,6 +8,30 @@ interface ScannerTool {
   run(root: string): Finding[];
 }
 
+const ONE_KB = 1024;
+const ONE_MB = ONE_KB * ONE_KB;
+const MAX_BUFFER_MB = 10;
+const MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
+const SNIPPET_LENGTH = 80;
+
+function parseTrufflehogLine(line: string): Finding | null {
+  try {
+    const r = JSON.parse(line);
+    return {
+      file: r.SourceMetadata?.Data?.Filesystem?.file ?? "unknown",
+      line: r.SourceMetadata?.Data?.Filesystem?.line ?? null,
+      severity: "high" as const,
+      category: "security" as const,
+      comment: `[trufflehog] ${r.DetectorName ?? "secret"}: ${r.Description ?? ""}`,
+      suggestion: `Matched: ${(r.Raw || "").slice(0, SNIPPET_LENGTH)}`,
+      source: "scanner" as const,
+    } as Finding;
+  } catch {
+    logger.warn("Failed to parse trufflehog JSON line");
+    return null;
+  }
+}
+
 const gitleaks: ScannerTool = {
   name: "gitleaks",
   detect(): boolean {
@@ -15,6 +39,7 @@ const gitleaks: ScannerTool = {
       execSync("which gitleaks", { stdio: "ignore" });
       return true;
     } catch {
+      logger.debug("gitleaks not found");
       return false;
     }
   },
@@ -22,17 +47,23 @@ const gitleaks: ScannerTool = {
     try {
       const out = execSync(
         "gitleaks detect --no-git --source . --report-format json --report-path /dev/stdout 2>/dev/null || true",
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
-      const results: { File: string; StartLine: number; RuleID: string; Description: string; Match: string; Severity: string }[] = JSON.parse(out);
+      let results: { File: string; StartLine: number; RuleID: string; Description: string; Match: string; Severity: string }[];
+      try {
+        results = JSON.parse(out);
+      } catch {
+        logger.warn("gitleaks JSON parse failed");
+        return [];
+      }
       return results.map((r) => ({
         file: r.File,
         line: r.StartLine || null,
         severity: (r.Severity?.toLowerCase() === "high" ? "high" : "critical") as "high" | "critical",
         category: "security" as const,
         comment: `[gitleaks] ${r.Description}`,
-        suggestion: `Match: ${r.Match.trim().slice(0, 80)}`,
+        suggestion: `Match: ${r.Match.trim().slice(0, SNIPPET_LENGTH)}`,
         source: "scanner" as const,
       }));
     } catch (e) {
@@ -49,6 +80,7 @@ const trufflehog: ScannerTool = {
       execSync("which trufflehog", { stdio: "ignore" });
       return true;
     } catch {
+      logger.debug("trufflehog not found");
       return false;
     }
   },
@@ -56,26 +88,11 @@ const trufflehog: ScannerTool = {
     try {
       const out = execSync(
         "trufflehog filesystem . --json --no-verification 2>/dev/null || true",
-        { cwd: root, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
+        { cwd: root, encoding: "utf8", maxBuffer: MAX_BUFFER },
       );
       if (!out.trim()) return [];
       const lines = out.trim().split("\n").filter(Boolean);
-      return lines.map((line) => {
-        try {
-          const r = JSON.parse(line);
-          return {
-            file: r.SourceMetadata?.Data?.Filesystem?.file ?? "unknown",
-            line: r.SourceMetadata?.Data?.Filesystem?.line ?? null,
-            severity: "high" as const,
-            category: "security" as const,
-            comment: `[trufflehog] ${r.DetectorName ?? "secret"}: ${r.Description ?? ""}`,
-            suggestion: `Matched: ${(r.Raw || "").slice(0, 80)}`,
-            source: "scanner" as const,
-          } as Finding;
-        } catch {
-          return null;
-        }
-      }).filter((f): f is Finding => f !== null);
+      return lines.map(parseTrufflehogLine).filter((f): f is Finding => f !== null);
     } catch (e) {
       logger.warn(`trufflehog run failed: ${e}`);
       return [];

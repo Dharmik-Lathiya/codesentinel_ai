@@ -1,0 +1,76 @@
+import { ProviderUnavailableError } from "./provider.js";
+/**
+ * OpenAI-backed provider. Uses the chat completions API. The SDK is loaded
+ * lazily (on first call) so the package works without the optional dependency
+ * installed and without blocking startup.
+ */
+export class OpenAIProvider {
+    secrets;
+    name = "openai";
+    client = null;
+    initializing = null;
+    constructor(secrets) {
+        this.secrets = secrets;
+        if (!secrets.openai_api_key) {
+            throw new ProviderUnavailableError("openai", "missing OPENAI_API_KEY");
+        }
+    }
+    /** Lazily import and construct the optional SDK exactly once. */
+    async getClient() {
+        if (this.client)
+            return this.client;
+        if (!this.initializing) {
+            this.initializing = import("openai").then((mod) => {
+                const OpenAI = mod.default ?? mod.OpenAI;
+                return new OpenAI({ apiKey: this.secrets.openai_api_key });
+            });
+        }
+        try {
+            this.client = await this.initializing;
+        }
+        catch (e) {
+            this.initializing = null;
+            throw new ProviderUnavailableError("openai", "Failed to initialize OpenAI client: " +
+                (e instanceof Error ? e.message : String(e)));
+        }
+        return this.client;
+    }
+    async complete(req) {
+        try {
+            const client = await this.getClient();
+            const tokens = req.model.maxTokens ?? req.maxTokens;
+            const res = await client.chat.completions.create({
+                model: req.model.model,
+                messages: req.messages,
+                temperature: req.temperature ?? 0.2,
+                ...(tokens ? { max_tokens: tokens } : {}),
+                ...(req.responseFormat === "json_object" ? { response_format: { type: "json_object" } } : {}),
+            });
+            const message = res.choices?.[0]?.message?.content ?? "";
+            return {
+                content: message,
+                model: req.model.model,
+                provider: this.name,
+                usage: {
+                    promptTokens: res.usage?.prompt_tokens,
+                    completionTokens: res.usage?.completion_tokens,
+                },
+            };
+        }
+        catch (error) {
+            if (error instanceof ProviderUnavailableError)
+                throw error;
+            throw new ProviderUnavailableError("openai", "OpenAI API call failed: " +
+                (error instanceof Error ? error.message : String(error)));
+        }
+    }
+}
+export function openaiFactory(secrets) {
+    try {
+        return new OpenAIProvider(secrets);
+    }
+    catch {
+        return null;
+    }
+}
+//# sourceMappingURL=openai.js.map

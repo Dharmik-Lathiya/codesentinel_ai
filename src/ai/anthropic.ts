@@ -2,6 +2,9 @@ import type { CompletionRequest, CompletionResult, AIProvider } from "./provider
 import { ProviderUnavailableError } from "./provider.js";
 import type { RuntimeSecrets } from "../config/types.js";
 
+const KILOBYTE = 1024;
+const DEFAULT_ANTHROPIC_MAX_TOKENS = 128 * KILOBYTE;
+
 /**
  * Anthropic (Claude) provider. Maps our role-based messages to Anthropic's
  * `user`/`assistant` roles (system is a top-level field).
@@ -25,12 +28,28 @@ export class AnthropicProvider implements AIProvider {
         return new Anthropic({ apiKey: this.secrets.anthropic_api_key });
       });
     }
-    this.client = await this.initializing;
+    try {
+      this.client = await this.initializing;
+    } catch (err) {
+      // Reset state so future calls can retry initialization
+      this.initializing = null;
+      this.client = null;
+      throw new Error(
+        `[anthropic] Failed to initialize client: ${(err as Error).message}`
+      );
+    }
     return this.client;
   }
-
   async complete(req: CompletionRequest): Promise<CompletionResult> {
-    const client = await this.getClient();
+    let client;
+    try {
+      client = await this.getClient();
+    } catch (err) {
+      throw new Error(
+        `[anthropic] Cannot get client: ${(err as Error).message}`
+      );
+    }
+
     const system = req.messages.find((m) => m.role === "system")?.content ?? "";
     const messages = req.messages
       .filter((m) => m.role !== "system")
@@ -39,13 +58,20 @@ export class AnthropicProvider implements AIProvider {
         content: m.content,
       }));
 
-    const res = await client.messages.create({
-      model: req.model.model,
-      system,
-      messages,
-      temperature: req.temperature ?? 0.2,
-      max_tokens: req.maxTokens ?? 2048,
-    });
+    let res;
+    try {
+      res = await client.messages.create({
+        model: req.model.model,
+        system,
+        messages,
+        temperature: req.temperature ?? 0.2,
+        max_tokens: req.model.maxTokens ?? req.maxTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
+      });
+    } catch (err) {
+      throw new Error(
+        `[anthropic] API call failed: ${(err as Error).message}`
+      );
+    }
     const text = Array.isArray(res.content)
       ? res.content.map((b: any) => b.text ?? "").join("")
       : String(res.content);

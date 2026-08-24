@@ -120,10 +120,33 @@ export class GitHubReporter {
     return comments;
   }
 
-  /** Create a GitHub issue (used by audit mode). */
-  async createIssue(title: string, body: string): Promise<void> {
+  /** Find an open issue whose title matches exactly (used for dedup). */
+  async findOpenIssueByTitle(title: string): Promise<number | null> {
+    const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues?state=open&per_page=100`;
+    const issues = await this.request("GET", url) as Array<{ number: number; title: string }> | null;
+    if (!Array.isArray(issues)) return null;
+    const match = issues.find((i) => i.title === title);
+    return match ? match.number : null;
+  }
+
+  /** Create a GitHub issue (used by audit mode), optionally with labels. */
+  async createIssue(title: string, body: string, labels?: string[]): Promise<number> {
     const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues`;
-    await this.request("POST", url, { title, body });
+    const payload: Record<string, unknown> = { title, body };
+    if (labels && labels.length > 0) payload.labels = labels;
+    const result = await this.request("POST", url, payload) as { number?: number } | null;
+    return result?.number ?? 0;
+  }
+
+  /** Create an issue, or update the existing open issue with the same title (dedup). */
+  async createOrUpdateIssue(title: string, body: string, labels?: string[]): Promise<number> {
+    const existing = await this.findOpenIssueByTitle(title);
+    if (existing !== null) {
+      const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/issues/${existing}`;
+      await this.request("PATCH", url, { body });
+      return existing;
+    }
+    return this.createIssue(title, body, labels);
   }
 
   /** Create a GitHub Check Run with annotations. */
@@ -161,5 +184,53 @@ export class GitHubReporter {
       description: opts.description,
       context: opts.context,
     });
+  }
+
+  /** Create a new branch from an existing SHA. */
+  async createBranch(branchName: string, sha: string): Promise<void> {
+    const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/git/refs`;
+    await this.request("POST", url, { ref: `refs/heads/${branchName}`, sha });
+  }
+
+  /** Create a pull request and return its number. */
+  async createPR(opts: {
+    title: string;
+    body: string;
+    head: string;
+    base: string;
+  }): Promise<number> {
+    const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/pulls`;
+    const result = await this.request("POST", url, {
+      title: opts.title,
+      body: opts.body,
+      head: opts.head,
+      base: opts.base,
+    }) as { number: number };
+    return result.number;
+  }
+
+  /** Enable auto-merge on a PR (merges when all required checks pass). */
+  async enableAutoMerge(pullNumber: number, mergeMethod: "merge" | "squash" | "rebase" = "squash"): Promise<void> {
+    try {
+      // GitHub's native auto-merge — the PR merges only when required checks pass.
+      // Deliberately NOT the /pulls/{n}/merge endpoint, which force-merges immediately.
+      const url = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/pulls/${pullNumber}/auto_merge`;
+      await this.request("PUT", url, {
+        merge_method: mergeMethod,
+        commit_title: `chore: merge PR #${pullNumber} (CodeSentinel)`,
+      });
+      logger.info(`enableAutoMerge: enabled auto-merge on PR #${pullNumber}`);
+    } catch {
+      logger.warn(`enableAutoMerge: auto-merge unavailable on PR #${pullNumber} (repo may not allow it)`);
+    }
+  }
+
+  /** Get the default branch name and its latest commit SHA. */
+  async getDefaultBranch(): Promise<{ name: string; sha: string }> {
+    const repoUrl = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}`;
+    const repo = await this.request("GET", repoUrl) as { default_branch: string };
+    const branchUrl = `${this.api}/repos/${this.coords.owner}/${this.coords.repo}/branches/${repo.default_branch}`;
+    const branch = await this.request("GET", branchUrl) as { commit: { sha: string } };
+    return { name: repo.default_branch, sha: branch.commit.sha };
   }
 }

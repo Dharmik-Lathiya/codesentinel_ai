@@ -5,14 +5,6 @@
     "superpowers@git+https://github.com/obra/superpowers.git"
   ],
 
-  "mcp": {
-    "superpowers": {
-      "type": "local",
-      "command": ["node", "/home/denny/.config/opencode/mcp/superpowers-mcp/build/index.js"],
-      "enabled": true
-    }
-  },
-
   "command": {
     "review": {
       "template": "Run the codesentinel review on the staged changes. Load the codesentinel-ai skill first, then run the review pipeline.\n\n1. use skill: codesentinel-ai\n2. node dist/index.js review --provider opencode\n3. Review the output and fix any issues found.",
@@ -46,28 +38,7 @@
     }
   },
 
-  "instruction": ["AGENTS.md", ".opencode/skills/**/SKILL.md"],
-
-  "agent": {
-    "build": {
-      "model": "opencode/default",
-      "tools": {
-        "skill": true
-      }
-    },
-    "plan": {
-      "model": "opencode/default",
-      "tools": {
-        "skill": true
-      }
-    },
-    "explore": {
-      "model": "opencode/default",
-      "tools": {
-        "skill": true
-      }
-    }
-  },
+  "instructions": ["AGENTS.md", ".opencode/skills/**/SKILL.md"],
 
   "tools": {
     "skill": true

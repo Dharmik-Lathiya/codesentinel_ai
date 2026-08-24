@@ -8,7 +8,7 @@ import type { RuntimeSecrets } from "../config/types.js";
 export class GeminiProvider implements AIProvider {
   readonly name = "gemini";
   private client: any = null;
-  private model: any = null;
+  private models = new Map<string, any>();
   private initializing: Promise<any> | null = null;
 
   constructor(private readonly secrets: RuntimeSecrets) {
@@ -18,32 +18,78 @@ export class GeminiProvider implements AIProvider {
   }
 
   private async getModel(req: CompletionRequest): Promise<any> {
-    if (this.model) return this.model;
+    const modelName = req.model.model;
+    const existing = this.models.get(modelName);
+    if (existing) return existing;
     if (!this.initializing) {
-      this.initializing = import("@google/generative-ai").then((mod: any) => {
+      this.initializing = (async () => {
+        const mod: any = await import("@google/generative-ai");
         const { GoogleGenerativeAI } = mod;
         const genAI = new GoogleGenerativeAI(this.secrets.gemini_api_key!);
-        return genAI.getGenerativeModel({ model: req.model.model });
-      });
+        return genAI.getGenerativeModel({ model: modelName });
+      })();
     }
-    this.model = await this.initializing;
-    return this.model;
+    try {
+      const model = await this.initializing;
+      this.models.set(modelName, model);
+      return model;
+    } catch (err) {
+      this.initializing = null;
+      throw new ProviderUnavailableError(
+        "gemini",
+        `failed to initialize model: ${(err as Error).message}`
+      );
+    }
+  }
+
+  async #generateContent(model: any, prompt: string, req: CompletionRequest): Promise<any> {
+    try {
+      const tokens = req.model.maxTokens ?? req.maxTokens;
+      const generationConfig: Record<string, unknown> = {
+        temperature: req.temperature ?? 0.2,
+        ...(tokens ? { maxOutputTokens: tokens } : {}),
+      };
+      if (req.responseFormat === "json_object") {
+        generationConfig.responseMimeType = "application/json";
+      }
+      return await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig,
+      });
+    } catch (err) {
+      throw new Error(
+        `Gemini generateContent failed: ${(err as Error).message}`
+      );
+    }
   }
 
   async complete(req: CompletionRequest): Promise<CompletionResult> {
-    const model = await this.getModel(req);
+    let model: any;
+    try {
+      model = await this.getModel(req);
+    } catch (err) {
+      throw new ProviderUnavailableError(
+        "gemini",
+        `failed to get model: ${(err as Error).message}`
+      );
+    }
+
     const prompt = req.messages
       .map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
       .join("\n\n");
-    const res = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: req.temperature ?? 0.2,
-        maxOutputTokens: req.maxTokens ?? 2048,
-      },
-    });
+    const res = await this.#generateContent(model, prompt, req);
     const text = res.response?.text?.() ?? "";
-    return { content: text, model: req.model.model, provider: this.name };
+    const usage = res.response?.usageMetadata;
+    return {
+      content: text,
+      model: req.model.model,
+      provider: this.name,
+      usage: usage ? {
+        promptTokens: usage.promptTokenCount,
+        completionTokens: usage.candidatesTokenCount,
+        totalTokens: usage.totalTokenCount,
+      } : undefined,
+    };
   }
 }
 

@@ -1,0 +1,4 @@
+# Force LF for CI/CD files — CRLF breaks GitHub Actions YAML parsing
+*.yml    eol=lf
+*.yaml   eol=lf
+action.yml eol=lf

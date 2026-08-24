@@ -7,7 +7,7 @@ branding:
 
 inputs:
   mode:
-    description: "Operation mode: review | fix | audit | score | testgen | chat"
+    description: "Operation mode: review | fix | audit | score | testgen | chat | plan | describe"
     required: false
     default: "review"
   max_iterations:
@@ -38,6 +38,14 @@ inputs:
     description: "AI provider: opencode | openai | anthropic | gemini (overrides all task models)"
     required: false
     default: "opencode"
+  opencode_version:
+    description: "OpenCode CLI version to install (e.g. v0.3.0 or latest)"
+    required: false
+    default: "latest"
+  use_opencode_cli:
+    description: "Use the local OpenCode CLI binary instead of the AI provider API (true/false)"
+    required: false
+    default: "true"
   config_path:
     description: "Path to a codesentinel config file"
     required: false
@@ -51,9 +59,42 @@ inputs:
   gemini_api_key:
     description: "Gemini API key"
     required: false
+  opencode_base_url:
+    description: "OpenCode base URL"
+    required: false
+    default: ""
+  auto_merge:
+    description: "Auto-merge PRs when quality gates pass (true/false)"
+    required: false
+    default: "false"
   opencode_api_key:
     description: "OpenCode API key"
     required: false
+  issue_title:
+    description: "Issue title (for plan mode)"
+    required: false
+  issue_body:
+    description: "Issue body (for plan mode)"
+    required: false
+  ask:
+    description: "Question to ask (chat mode)"
+    required: false
+  audit_create_issues:
+    description: "Create GitHub issues for audit findings (true/false)"
+    required: false
+    default: "true"
+  audit_auto_fix:
+    description: "Add the autofix-trigger label so the fix loop picks up audit issues (true/false)"
+    required: false
+    default: "false"
+  audit_labels:
+    description: "Comma-separated labels for audit issues"
+    required: false
+    default: "audit"
+  audit_target_dirs:
+    description: "Comma-separated directories to audit (empty = whole repo)"
+    required: false
+    default: ""
 
 outputs:
   score:
@@ -62,5 +103,5 @@ outputs:
     description: "Number of findings detected"
 
 runs:
-  using: "node24"
-  main: "dist/github/action.js"
+  using: "node20"
+  main: "dist/action-bundle/index.mjs"

@@ -1,9 +1,12 @@
 import { writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { homedir } from "node:os";
 
 import { Engine, configFromInputs, type EngineReport } from "../engine/index.js";
 import { GitHubReporter } from "./reporter.js";
-import type { RuntimeSecrets } from "../config/types.js";
+import type { Mode, RuntimeSecrets } from "../config/types.js";
 import { logger } from "../utils/logger.js";
+import { setupOpenCode } from "../opencode/installer.js";
 
 /**
  * GitHub Action entrypoint. Reads inputs from the environment (set by action.yml
@@ -22,31 +25,93 @@ export async function runAction(): Promise<void> {
     project_context: get("project_context"),
     test_runner: get("test_runner"),
     provider: get("provider"),
+    auto_merge: get("auto_merge"),
+    issue_title: get("issue_title"),
+    issue_body: get("issue_body"),
+    ask: get("ask"),
+    use_opencode_cli: get("use_opencode_cli"),
+    audit_create_issues: get("audit_create_issues"),
+    audit_auto_fix: get("audit_auto_fix"),
+    audit_labels: get("audit_labels"),
+    audit_target_dirs: get("audit_target_dirs"),
   };
 
-  const configOverrides = configFromInputs(inputs);
+  const useOpencodeCliFlag = inputs.use_opencode_cli === "true";
+  const opencodeVersion = get("opencode_version") || "latest";
+
+  // When the OpenCode CLI mode is requested, install the binary (or use cached)
+  // and prepend its directory to PATH so runner.ts can locate it.
+  if (useOpencodeCliFlag) {
+    try {
+      const { binaryPath } = await setupOpenCode(opencodeVersion);
+      const binDir = dirname(binaryPath);
+      const existingPath = process.env.PATH ?? "";
+      if (!existingPath.split(":").includes(binDir)) {
+        process.env.PATH = `${binDir}:${existingPath}`;
+      }
+      logger.info(`action: OpenCode CLI installed at ${binaryPath}`);
+    } catch (err) {
+      logger.warn(`action: OpenCode CLI install failed (${err}), continuing without it`);
+    }
+  } else {
+    // Also prepend the default install dir so system-installed opencode is found
+    const defaultBinDir = `${process.env.HOME ?? homedir()}/.codesentinel/bin`;
+    const existingPath = process.env.PATH ?? "";
+    if (!existingPath.split(":").includes(defaultBinDir)) {
+      process.env.PATH = `${defaultBinDir}:${existingPath}`;
+    }
+  }
+
+  // Build config overrides from all inputs (including use_opencode_cli)
+  const configOverrides = configFromInputs({ ...inputs, use_opencode_cli: useOpencodeCliFlag ? "true" : undefined });
 
   const secrets: RuntimeSecrets = {
     github_token: process.env.GITHUB_TOKEN,
-    openai_api_key: process.env.OPENAI_API_KEY,
-    anthropic_api_key: process.env.ANTHROPIC_API_KEY,
-    gemini_api_key: process.env.GEMINI_API_KEY,
-    opencode_api_key: process.env.OPENCODE_API_KEY,
-    opencode_base_url: process.env.OPENCODE_BASE_URL,
+    openai_api_key: process.env.OPENAI_API_KEY || get("openai_api_key"),
+    anthropic_api_key: process.env.ANTHROPIC_API_KEY || get("anthropic_api_key"),
+    gemini_api_key: process.env.GEMINI_API_KEY || get("gemini_api_key"),
+    opencode_api_key: process.env.OPENCODE_API_KEY || get("opencode_api_key"),
+    opencode_base_url: process.env.OPENCODE_BASE_URL || get("opencode_base_url"),
   };
 
+  const runMode = (inputs.mode || "review") as Mode;
   const engine = Engine.fromInputs({
     configPath: get("config_path") || undefined,
-    overrides: { ...configOverrides, enable_auto_fix: configOverrides.enable_auto_fix ?? false },
+    overrides: { ...configOverrides, mode: runMode, enable_auto_fix: configOverrides.enable_auto_fix ?? false },
     secrets,
   });
 
+  // Handle chat mode with ask question
+  if (runMode === "chat" && inputs.ask) {
+    const answer = await engine.ask(inputs.ask);
+    process.stdout.write(answer + "\n");
+    return;
+  }
+
+  const autoMerge = configOverrides.autoMerge ?? false;
   const report = await engine.run();
-  await publishOutputs(report, secrets);
+
+  // Write human-readable output to stdout so workflows can capture it via tee
+  const outputMode = report.mode ?? configOverrides.mode ?? "plan";
+  process.stdout.write(`\n=== CodeSentinel [${outputMode}] ===\n`);
+  process.stdout.write(report.summary + "\n");
+  if (report.score) {
+    process.stdout.write(
+      `Score: ${report.score.overall}/100 ` +
+      `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
+      `security ${report.score.security}, coverage ${report.score.test_coverage})\n`,
+    );
+  }
+
+  await publishOutputs(report, secrets, autoMerge, {
+    createIssues: inputs.audit_create_issues !== "false",
+    autoFix: inputs.audit_auto_fix === "true",
+    labels: (inputs.audit_labels || "audit").split(",").map((s) => s.trim()).filter(Boolean),
+  });
 }
 
 /** Post comments / issues and write the step summary + metrics outputs. */
-async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets): Promise<void> {
+async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets, autoMerge = false, auditOpts?: { createIssues: boolean; autoFix: boolean; labels: string[] }): Promise<void> {
   const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
   const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
   const pullNumber = process.env.GITHUB_PR_NUMBER
@@ -63,11 +128,14 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets): Pr
         line: c.line,
       });
     }
-    if (report.mode === "audit") {
+    if (report.mode === "audit" && auditOpts?.createIssues) {
+      const labels = [...(auditOpts.labels ?? [])];
+      if (auditOpts.autoFix) labels.push("autofix-trigger");
       for (const f of report.findings) {
-        await reporter.createIssue(
+        await reporter.createOrUpdateIssue(
           `[${f.severity}] ${f.file}`,
           f.comment,
+          labels,
         );
       }
     }
@@ -101,6 +169,12 @@ async function publishOutputs(report: EngineReport, secrets: RuntimeSecrets): Pr
         description: report.gatePassed ? "All gate checks passed" : "Gate checks failed",
         context: "codesentinel/gate",
       });
+
+      // Auto-merge when gate passes
+      if (report.gatePassed && autoMerge && pullNumber) {
+        await reporter.enableAutoMerge(pullNumber, "squash");
+        logger.info(`publishOutputs: enabled auto-merge on PR #${pullNumber}`);
+      }
     }
   }
 

@@ -68,6 +68,10 @@ CREATE INDEX IF NOT EXISTS idx_patterns_category ON patterns(category);
 CREATE INDEX IF NOT EXISTS idx_custom_rules_status ON custom_rules(status);
 `;
 
+const ALPHANUMERIC = '0123456789abcdefghijklmnopqrstuvwxyz';
+const RADIX = ALPHANUMERIC.length;
+const SLICE_END = ALPHANUMERIC.indexOf('a');
+
 export function generateId(): string {
-  return `cs_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  return `cs_${Date.now()}_${Math.random().toString(RADIX).slice(2, SLICE_END)}`;
 }

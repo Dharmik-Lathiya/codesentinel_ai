@@ -27,10 +27,16 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
 
       - name: Install & Build
-        run: npm install && npm run build
+        run: npm ci && npm run build
+
+      - name: Install OpenCode CLI
+        run: |
+          npm install -g opencode-ai
+          echo "$(npm config get prefix)/bin" >> "$GITHUB_PATH"
+          opencode --version
 
       - name: Run CodeSentinel
         uses: ./
@@ -38,7 +44,5 @@ jobs:
           mode: ${{ github.event.inputs.mode || 'review' }}
           enable_scoring: "true"
           enable_auto_fix: "false"
-          project_context: "This is a TypeScript backend service using Fastify."
-          opencode_api_key: ${{ secrets.OPENCODE_API_KEY }}
-          # Uncomment to use a different provider:
-          # openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          use_opencode_cli: "true"
+          provider: "opencode"
