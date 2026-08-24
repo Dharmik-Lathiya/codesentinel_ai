@@ -31,6 +31,11 @@ export function messagesToPrompt(messages: ChatMessage[]): string {
  * documented CI mechanism (opencode-ai-reviewer uses the same flag).
  */
 export function buildCliArgs(model: string, prompt: string): string[] {
+  // If model is the generic "default" sentinel, omit --model so OpenCode uses
+  // its own configured default (avoids referencing retired models like deepseek-v4-flash-free).
+  if (model === "default") {
+    return ["run", "--auto", "--format", "json", prompt];
+  }
   return ["run", "--auto", "--format", "json", "--model", model, prompt];
 }
 
@@ -281,9 +286,10 @@ export class OpenCodeProvider implements AIProvider {
   }
 
   async #doCompleteViaCli(req: CompletionRequest): Promise<CompletionResult> {
-    const rawModel = req.model.model === "default" ? "deepseek-v4-flash-free" : req.model.model;
-    logger.info(`OpenCodeProvider.completeViaCli: model=${rawModel}`);
-    const cliModel = rawModel.includes("/") ? rawModel : `opencode/${rawModel}`;
+    const rawModel = req.model.model;
+    // If the model is the generic "default" sentinel, let OpenCode pick its own default.
+    const cliModel = rawModel === "default" ? "default" : (rawModel.includes("/") ? rawModel : `opencode/${rawModel}`);
+    logger.info(`OpenCodeProvider.completeViaCli: model=${cliModel}`);
     const prompt = messagesToPrompt(req.messages);
     const timeoutMs = cliTimeoutMs();
     const args = buildCliArgs(cliModel, prompt);

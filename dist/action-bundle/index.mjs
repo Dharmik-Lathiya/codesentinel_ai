@@ -12696,16 +12696,16 @@ const DEFAULT_CONFIG = {
     project_context: "",
     issue_title: undefined,
     issue_body: undefined,
-    default_model: { provider: "opencode", model: "deepseek-v4-flash-free" },
+    default_model: { provider: "opencode", model: "default" },
     models: {
-        review: { provider: "opencode", model: "deepseek-v4-flash-free" },
-        fix: { provider: "opencode", model: "deepseek-v4-flash-free" },
-        audit: { provider: "opencode", model: "deepseek-v4-flash-free" },
-        score: { provider: "opencode", model: "deepseek-v4-flash-free" },
-        testgen: { provider: "opencode", model: "deepseek-v4-flash-free" },
-        chat: { provider: "opencode", model: "deepseek-v4-flash-free" },
-        describe: { provider: "opencode", model: "deepseek-v4-flash-free" },
-        plan: { provider: "opencode", model: "deepseek-v4-flash-free" },
+        review: { provider: "opencode", model: "default" },
+        fix: { provider: "opencode", model: "default" },
+        audit: { provider: "opencode", model: "default" },
+        score: { provider: "opencode", model: "default" },
+        testgen: { provider: "opencode", model: "default" },
+        chat: { provider: "opencode", model: "default" },
+        describe: { provider: "opencode", model: "default" },
+        plan: { provider: "opencode", model: "default" },
     },
     test_runner: "vitest",
     include: ["**/*.{ts,tsx,js,jsx,py,go,java,rb}"],
@@ -17247,6 +17247,11 @@ function messagesToPrompt(messages) {
  * documented CI mechanism (opencode-ai-reviewer uses the same flag).
  */
 function buildCliArgs(model, prompt) {
+    // If model is the generic "default" sentinel, omit --model so OpenCode uses
+    // its own configured default (avoids referencing retired models like deepseek-v4-flash-free).
+    if (model === "default") {
+        return ["run", "--auto", "--format", "json", prompt];
+    }
     return ["run", "--auto", "--format", "json", "--model", model, prompt];
 }
 /** CLI timeout in ms — OPENCODE_CLI_TIMEOUT_MINUTES env override, default 20 minutes. */
@@ -17491,9 +17496,10 @@ class OpenCodeProvider {
         }), { maxAttempts: 3, baseDelayMs: 2000 });
     }
     async #doCompleteViaCli(req) {
-        const rawModel = req.model.model === "default" ? "deepseek-v4-flash-free" : req.model.model;
-        logger_logger.info(`OpenCodeProvider.completeViaCli: model=${rawModel}`);
-        const cliModel = rawModel.includes("/") ? rawModel : `opencode/${rawModel}`;
+        const rawModel = req.model.model;
+        // If the model is the generic "default" sentinel, let OpenCode pick its own default.
+        const cliModel = rawModel === "default" ? "default" : (rawModel.includes("/") ? rawModel : `opencode/${rawModel}`);
+        logger_logger.info(`OpenCodeProvider.completeViaCli: model=${cliModel}`);
         const prompt = messagesToPrompt(req.messages);
         const timeoutMs = cliTimeoutMs();
         const args = buildCliArgs(cliModel, prompt);
