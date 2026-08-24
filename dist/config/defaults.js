@@ -127,16 +127,19 @@ export const DEFAULT_CONFIG = {
     project_context: "",
     issue_title: undefined,
     issue_body: undefined,
-    default_model: { provider: "opencode", model: "default" },
+    // big-pickle: current Zen free-tier model. The "default" sentinel resolves
+    // server-side to a PAID model when OPENCODE_API_KEY is set, which fails on
+    // accounts without a payment method ("APIError: No payment method").
+    default_model: { provider: "opencode", model: "big-pickle" },
     models: {
-        review: { provider: "opencode", model: "default" },
-        fix: { provider: "opencode", model: "default" },
-        audit: { provider: "opencode", model: "default" },
-        score: { provider: "opencode", model: "default" },
-        testgen: { provider: "opencode", model: "default" },
-        chat: { provider: "opencode", model: "default" },
-        describe: { provider: "opencode", model: "default" },
-        plan: { provider: "opencode", model: "default" },
+        review: { provider: "opencode", model: "big-pickle" },
+        fix: { provider: "opencode", model: "big-pickle" },
+        audit: { provider: "opencode", model: "big-pickle" },
+        score: { provider: "opencode", model: "big-pickle" },
+        testgen: { provider: "opencode", model: "big-pickle" },
+        chat: { provider: "opencode", model: "big-pickle" },
+        describe: { provider: "opencode", model: "big-pickle" },
+        plan: { provider: "opencode", model: "big-pickle" },
     },
     test_runner: "vitest",
     include: ["**/*.{ts,tsx,js,jsx,py,go,java,rb}"],
