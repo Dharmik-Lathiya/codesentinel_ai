@@ -137,7 +137,7 @@ jobs:
 
       - name: Run CodeSentinel
         id: cs
-        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ inputs.version }}
+        uses: ./
         env:
           GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

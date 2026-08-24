@@ -3,11 +3,6 @@ name: "CodeSentinel AutoFix (reusable)"
 on:
   workflow_call:
     inputs:
-      version:
-        description: "CodeSentinel action tag to use (e.g. v0.12.1). Pinned to a release, never a branch."
-        required: false
-        type: string
-        default: "v0.12.1"
       max_iterations:
         description: "Max fix iterations"
         required: false
@@ -85,7 +80,7 @@ jobs:
 
       - name: Run CodeSentinel fix
         id: cs
-        uses: Dharmik-Lathiya/CodeSentinel_AI@${{ inputs.version }}
+        uses: ./
         env:
           GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         with:
