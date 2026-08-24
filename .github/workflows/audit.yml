@@ -27,8 +27,6 @@ on:
       CODESENTINEL_GITHUB_TOKEN:
         description: "Optional PAT for git push (overrides GITHUB_TOKEN)"
         required: false
-      GITHUB_TOKEN:
-        required: true
       OPENAI_API_KEY:
         required: false
       ANTHROPIC_API_KEY:
