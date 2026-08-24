@@ -1,7 +1,8 @@
 import { renameSync, rmSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const dir = new URL("../dist/action-bundle/", import.meta.url).pathname;
+const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "action-bundle");
 
 renameSync(join(dir, "index.js"), join(dir, "index.mjs"));
 

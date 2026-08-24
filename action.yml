@@ -45,7 +45,7 @@ inputs:
   use_opencode_cli:
     description: "Use the local OpenCode CLI binary instead of the AI provider API (true/false)"
     required: false
-    default: "false"
+    default: "true"
   config_path:
     description: "Path to a codesentinel config file"
     required: false

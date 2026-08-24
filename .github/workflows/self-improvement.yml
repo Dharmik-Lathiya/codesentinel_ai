@@ -1,11 +1,8 @@
 name: CodeSentinel Self-Improvement
 
-# Weekly: lets CodeSentinel improve its own codebase on an improvement/ branch
-# and opens a PR labeled self-improvement (human-reviewed, never auto-merged).
-
 on:
   schedule:
-    - cron: '0 0 * * 0'  # Weekly, Sunday midnight UTC
+    - cron: '0 0 * * 0'
   workflow_dispatch:
 
 permissions:
@@ -37,22 +34,23 @@ jobs:
       - name: Install dependencies
         run: npm ci || npm install
 
+      - name: Install OpenCode CLI
+        run: |
+          npm install -g opencode-ai
+          echo "$(npm config get prefix)/bin" >> "$GITHUB_PATH"
+          opencode --version
+
       - name: Create improvement branch
         run: |
-          git config user.name "${CODESENTINEL_GIT_NAME:-CodeSentinel Bot}"
-          git config user.email "${CODESENTINEL_GIT_EMAIL:-bot@codesentinel.ai}"
+          git config user.name "${CODESENTINEL_GIT_NAME:-Dharmik Lathiya}"
+          git config user.email "${CODESENTINEL_GIT_EMAIL:-dharmiklathiya.it@gmail.com}"
           git checkout -b improvement/auto-$(date -u '+%Y%m%d')
 
       - name: Run self-improvement fix
         env:
           GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
         run: |
-          node dist/index.js fix --auto-fix 2>&1 || true
+          node dist/index.js fix --auto-fix --use-opencode-cli 2>&1 || true
           if [ -z "$(git status --porcelain)" ]; then
             echo "No changes — nothing to improve"
             exit 0

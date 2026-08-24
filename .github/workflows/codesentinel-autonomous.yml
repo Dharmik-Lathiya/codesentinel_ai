@@ -2,7 +2,7 @@ name: CodeSentinel Autonomous Improvement
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -10,7 +10,7 @@ permissions:
   pull-requests: write
 
 env:
-  NODE_VERSION: "24"
+  NODE_VERSION: "22"
 
 jobs:
   auto-improve:
@@ -28,17 +28,21 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install & Build
-        run: npm install && npm run build
+        run: npm ci && npm run build
+
+      - name: Install OpenCode CLI
+        run: |
+          npm install -g opencode-ai
+          echo "$(npm config get prefix)/bin" >> "$GITHUB_PATH"
+          opencode --version
 
       - name: Auto-Fix Issues
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL || 'https://opencode.ai/zen' }}
         run: |
           git config user.name "${CODESENTINEL_GIT_NAME:-Dharmik Lathiya}"
           git config user.email "${CODESENTINEL_GIT_EMAIL:-dharmiklathiya.it@gmail.com}"
-          node dist/index.js fix --auto-fix 2>&1 || true
+          node dist/index.js fix --auto-fix --use-opencode-cli 2>&1 || true
           if [[ -n "$(git status --porcelain)" ]]; then
             git add -A
             git commit -m "CodeSentinel: auto-fix issues [skip ci]"
@@ -52,26 +56,19 @@ jobs:
         id: feature-gen
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL || 'https://opencode.ai/zen' }}
         run: |
-          MINUTE=$(date +%M)
-          if [[ $((10#$MINUTE % 30)) -ne 0 && "${{ github.event_name }}" == "schedule" ]]; then
-            echo "Skipping feature generation (minute ${MINUTE} not divisible by 30)"
-            echo "generated=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
           DAY_OF_YEAR=$(date +%j)
           HOUR=$(date +%H)
-          TYPE_INDEX=$(( (10#$DAY_OF_YEAR + 10#$HOUR) % 3 ))
+          MINUTE=$(date +%M)
+          TYPE_INDEX=$(( (10#$DAY_OF_YEAR + 10#$HOUR + 10#$MINUTE / 30) % 3 ))
           case $TYPE_INDEX in
             0) TYPE="test" ;;
             1) TYPE="util" ;;
             2) TYPE="doc" ;;
           esac
-          echo "type=${TYPE}" >> $GITHUB_OUTPUT
-          node dist/index.js testgen 2>&1 || true
-          echo "generated=true" >> $GITHUB_OUTPUT
+          echo "type=${TYPE}" >> "$GITHUB_OUTPUT"
+          node dist/index.js testgen --use-opencode-cli 2>&1 || true
+          echo "generated=true" >> "$GITHUB_OUTPUT"
 
       - name: Create Feature PR
         if: ${{ steps.feature-gen.outputs.generated == 'true' }}
