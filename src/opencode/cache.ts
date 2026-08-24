@@ -32,6 +32,19 @@ export function buildCacheKey(filePath: string, pattern: string): string {
     .slice(0, 16);
 }
 
+function utcTimestamp(): string {
+  return new Date(Date.now()).toISOString();
+}
+
+function upsertLesson(entry: CacheEntry, lesson: Lesson): void {
+  const idx = entry.lessons.findIndex((l) => l.pattern === lesson.pattern);
+  if (idx >= 0) {
+    entry.lessons[idx] = lesson;
+  } else {
+    entry.lessons.push(lesson);
+  }
+}
+
 class FileSystemBackend implements CacheBackend {
   constructor(private cacheDir: string) {}
 
@@ -116,7 +129,9 @@ export class LearningCache {
   async get(key: string): Promise<Lesson[]> {
     const entry = await this.backend.get(key);
     if (!entry) return [];
-    entry.lessons.forEach((l) => l.hitCount++);
+    for (const l of entry.lessons) {
+      l.hitCount++;
+    }
     await this.backend.set(key, entry);
     return entry.lessons.map((l) => ({ ...l }));
   }
@@ -124,23 +139,18 @@ export class LearningCache {
   async set(key: string, lesson: Lesson): Promise<void> {
     return this.withLock(key, async () => {
       const existing = await this.backend.get(key);
-      if (existing) {
-        const idx = existing.lessons.findIndex((l) => l.pattern === lesson.pattern);
-        if (idx >= 0) {
-          existing.lessons[idx] = lesson;
-        } else {
-          existing.lessons.push(lesson);
-        }
-        existing.updatedAt = new Date().toISOString();
-        try { await this.backend.set(key, existing); } catch { /* ignore */ }
-      } else {
+      if (!existing) {
         const entry: CacheEntry = {
           key,
           lessons: [lesson],
-          updatedAt: new Date().toISOString(),
+          updatedAt: utcTimestamp(),
         };
         try { await this.backend.set(key, entry); } catch { /* ignore */ }
+        return;
       }
+      upsertLesson(existing, lesson);
+      existing.updatedAt = utcTimestamp();
+      try { await this.backend.set(key, existing); } catch { /* ignore */ }
     });
   }
 
