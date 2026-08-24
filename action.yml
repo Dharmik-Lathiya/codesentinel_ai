@@ -7,7 +7,7 @@ branding:
 
 inputs:
   mode:
-    description: "Operation mode: review | fix | audit | score | testgen | chat"
+    description: "Operation mode: review | fix | audit | score | testgen | chat | plan | describe"
     required: false
     default: "review"
   max_iterations:
@@ -45,7 +45,7 @@ inputs:
   use_opencode_cli:
     description: "Use the local OpenCode CLI binary instead of the AI provider API (true/false)"
     required: false
-    default: "false"
+    default: "true"
   config_path:
     description: "Path to a codesentinel config file"
     required: false
@@ -79,6 +79,22 @@ inputs:
   ask:
     description: "Question to ask (chat mode)"
     required: false
+  audit_create_issues:
+    description: "Create GitHub issues for audit findings (true/false)"
+    required: false
+    default: "true"
+  audit_auto_fix:
+    description: "Add the autofix-trigger label so the fix loop picks up audit issues (true/false)"
+    required: false
+    default: "false"
+  audit_labels:
+    description: "Comma-separated labels for audit issues"
+    required: false
+    default: "audit"
+  audit_target_dirs:
+    description: "Comma-separated directories to audit (empty = whole repo)"
+    required: false
+    default: ""
 
 outputs:
   score:
@@ -87,35 +103,5 @@ outputs:
     description: "Number of findings detected"
 
 runs:
-  using: "composite"
-  steps:
-    - name: Install dependencies
-      shell: bash
-      run: npm ci --prefix "${{ github.action_path }}" --omit=dev --ignore-scripts --no-audit --no-fund
-    - name: Add CodeSentinel bin to PATH
-      shell: bash
-      run: echo "$HOME/.codesentinel/bin" >> "$GITHUB_PATH"
-    - name: Run CodeSentinel
-      shell: bash
-      env:
-        INPUT_MODE: ${{ inputs.mode }}
-        INPUT_MAX_ITERATIONS: ${{ inputs.max_iterations }}
-        INPUT_ENABLE_AUTO_FIX: ${{ inputs.enable_auto_fix }}
-        INPUT_ENABLE_SCORING: ${{ inputs.enable_scoring }}
-        INPUT_ENABLE_TEST_GENERATION: ${{ inputs.enable_test_generation }}
-        INPUT_TEST_RUNNER: ${{ inputs.test_runner }}
-        INPUT_PROJECT_CONTEXT: ${{ inputs.project_context }}
-        INPUT_PROVIDER: ${{ inputs.provider }}
-        INPUT_CONFIG_PATH: ${{ inputs.config_path }}
-        INPUT_OPENAI_API_KEY: ${{ inputs.openai_api_key }}
-        INPUT_ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
-        INPUT_GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
-        INPUT_OPENCODE_BASE_URL: ${{ inputs.opencode_base_url }}
-        INPUT_AUTO_MERGE: ${{ inputs.auto_merge }}
-        INPUT_OPENCODE_API_KEY: ${{ inputs.opencode_api_key }}
-        INPUT_ISSUE_TITLE: ${{ inputs.issue_title }}
-        INPUT_ISSUE_BODY: ${{ inputs.issue_body }}
-        INPUT_ASK: ${{ inputs.ask }}
-        INPUT_OPENCODE_VERSION: ${{ inputs.opencode_version }}
-        INPUT_USE_OPENCODE_CLI: ${{ inputs.use_opencode_cli }}
-      run: node "${{ github.action_path }}/dist/github/action.js" 2>&1 | tee /tmp/cs-out.txt
+  using: "node20"
+  main: "dist/action-bundle/index.mjs"

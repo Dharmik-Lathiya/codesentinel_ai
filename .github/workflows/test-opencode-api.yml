@@ -1,7 +1,12 @@
-name: Test OpenCode API Key
+name: Test OpenCode Connection
 
 on:
   workflow_dispatch:
+    inputs:
+      model:
+        description: "Model ID to probe (blank = auto-pick first available free model)"
+        required: false
+        type: string
   schedule:
     - cron: "0 6 * * *"
 
@@ -9,9 +14,12 @@ permissions:
   contents: read
   issues: write
 
+env:
+  DEFAULT_BASE_URL: https://opencode.ai/zen/v1
+
 jobs:
   test-opencode-api:
-    name: Ping OpenCode API
+    name: Ping OpenCode Zen API (HTTP only, no CLI)
     runs-on: ubuntu-latest
 
     steps:
@@ -21,224 +29,219 @@ jobs:
         env:
           OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
         run: |
-          RAW="${OPENCODE_BASE_URL:-http://localhost:4096}"
+          RAW="${OPENCODE_BASE_URL:-$DEFAULT_BASE_URL}"
           # Mirror opencode.ts: .replace(/\/v1$/, "").replace(/\/$/, "")
           BASE=$(echo "$RAW" | sed 's|/v1$||' | sed 's|/$||')
-          echo "base_url=$BASE"                    >> "$GITHUB_OUTPUT"
-          echo "api_url=$BASE/v1/chat/completions" >> "$GITHUB_OUTPUT"
-          echo "Resolved endpoint: $BASE/v1/chat/completions"
+          echo "base_url=$BASE"                        >> "$GITHUB_OUTPUT"
+          echo "models_url=$BASE/v1/models"            >> "$GITHUB_OUTPUT"
+          echo "api_url=$BASE/v1/chat/completions"     >> "$GITHUB_OUTPUT"
+          echo "Resolved endpoint: $BASE/v1/{models,chat/completions}"
 
-          if echo "$RAW" | grep -qE "opencode\.ai/(zen)?$"; then
-            echo "::error::OPENCODE_BASE_URL points to the opencode.ai website, not an API."
+          if [ "$BASE" = "https://opencode.ai" ]; then
+            echo "::error::OPENCODE_BASE_URL points at the website root. Use $DEFAULT_BASE_URL"
             exit 1
           fi
 
-      # ── 2. Key present? ────────────────────────────────────────────────────
+      # ── 2. Key configured? (recorded here; verdict comes later) ────────────
       - name: Check API key is configured
         id: key_check
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           if [ -z "$OPENCODE_API_KEY" ]; then
-            echo "::error::OPENCODE_API_KEY secret is empty — set it in Settings > Secrets > Actions"
             echo "key_set=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::OPENCODE_API_KEY secret is empty. Zen rejects anonymous completions with HTTP 401 — CI AI jobs will fail until a key is set."
+          else
+            echo "key_set=true"                    >> "$GITHUB_OUTPUT"
+            echo "key_hint=${OPENCODE_API_KEY:0:4}****" >> "$GITHUB_OUTPUT"
+            echo "API key configured — starts with: ${OPENCODE_API_KEY:0:4}****"
+          fi
+
+      # ── 3. Model discovery (GET /v1/models is public — no key needed) ─────
+      - name: Discover available models
+        id: models
+        env:
+          MODEL_INPUT: ${{ inputs.model }}
+        run: |
+          MODELS_URL="${{ steps.url.outputs.models_url }}"
+          RESP=$(curl -s -w "\n__S__:%{http_code}" --max-time 30 "$MODELS_URL")
+          STATUS=$(echo "$RESP" | grep "__S__:" | cut -d: -f2)
+          BODY=$(echo "$RESP"   | sed '/__S__:/d')
+          echo "GET $MODELS_URL → HTTP $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Cannot list models (HTTP $STATUS). Endpoint unreachable or changed: $MODELS_URL"
             exit 1
           fi
-          KEY_LEN="${#OPENCODE_API_KEY}"
-          KEY_HINT="${OPENCODE_API_KEY:0:4}****"
-          echo "key_set=true"        >> "$GITHUB_OUTPUT"
-          echo "key_len=$KEY_LEN"    >> "$GITHUB_OUTPUT"
-          echo "key_hint=$KEY_HINT"  >> "$GITHUB_OUTPUT"
-          echo "API key configured — length=$KEY_LEN, starts with: $KEY_HINT"
 
-      # ── 3. Try multiple auth header formats ───────────────────────────────
-      #    Different API providers use different header names/formats.
-      #    We try them all and report which one works.
-      - name: Probe auth header formats
-        id: auth_probe
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          CATALOG=$(echo "$BODY" | jq -r '.data[].id' | sort)
+          COUNT=$(echo "$CATALOG" | grep -c . || true)
+          echo "Catalog contains $COUNT models:"
+          echo "$CATALOG" | sed 's/^/  - /'
+
+          TARGET="$MODEL_INPUT"
+          if [ -z "$TARGET" ]; then
+            # Preferred current free models first; retired ones last as fallback
+            for CAND in big-pickle mimo-v2.5-free x-preview-f-free north-mini-code-free deepseek-v4-flash-free; do
+              if echo "$CATALOG" | grep -qx "$CAND"; then TARGET="$CAND"; break; fi
+            done
+          fi
+          if [ -z "$TARGET" ]; then TARGET=$(echo "$CATALOG" | grep -- '-free' | head -1); fi
+          if [ -z "$TARGET" ]; then TARGET=$(echo "$CATALOG" | head -1); fi
+
+          IN_CATALOG=$(echo "$CATALOG" | grep -qx "$TARGET" && echo true || echo false)
+          echo "target=$TARGET"             >> "$GITHUB_OUTPUT"
+          echo "catalog_count=$COUNT"       >> "$GITHUB_OUTPUT"
+          echo "target_in_catalog=$IN_CATALOG" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "Probe target model: $TARGET (in catalog: $IN_CATALOG)"
+
+      # ── 4. Anonymous completion probe — documents whether free/no-key use works
+      - name: Probe without key
+        id: anon_probe
         run: |
           API_URL="${{ steps.url.outputs.api_url }}"
-          PAYLOAD='{"model":"deepseek-v4-flash-free","messages":[{"role":"user","content":"Reply with one word: PONG"}],"max_tokens":20,"temperature":0}'
-
-          try_auth() {
-            local LABEL="$1"
-            local HEADER="$2"
-            echo "--- Trying: $LABEL ---"
-            RESP=$(curl -s -w "\n__S__:%{http_code}" --max-time 30 \
-              -X POST "$API_URL" \
-              -H "Content-Type: application/json" \
-              -H "$HEADER" \
-              -d "$PAYLOAD" 2>/dev/null)
-            STATUS=$(echo "$RESP" | grep "__S__:" | cut -d: -f2)
-            BODY=$(echo "$RESP"   | sed '/__S__:/d')
-            echo "  HTTP: $STATUS"
-            echo "  Body: ${BODY:0:200}"
-            echo "$LABEL|$STATUS|${BODY:0:200}"
-          }
-
-          RESULTS=""
-          RESULTS+=$(try_auth "Bearer token"              "Authorization: Bearer $OPENCODE_API_KEY")$'\n'
-          RESULTS+=$(try_auth "X-API-Key header"          "X-API-Key: $OPENCODE_API_KEY")$'\n'
-          RESULTS+=$(try_auth "api-key header"            "api-key: $OPENCODE_API_KEY")$'\n'
-          RESULTS+=$(try_auth "Authorization Basic b64"   "Authorization: Basic $(echo -n ":$OPENCODE_API_KEY" | base64)")$'\n'
-
-          # Find the working format
-          WORKING=""
-          WORKING_STATUS=""
-          while IFS= read -r line; do
-            LABEL=$(echo "$line" | cut -d'|' -f1)
-            STATUS=$(echo "$line" | cut -d'|' -f2)
-            if [ "$STATUS" = "200" ]; then
-              WORKING="$LABEL"
-              WORKING_STATUS="200"
-              break
-            fi
-          done <<< "$RESULTS"
-
-          if [ -n "$WORKING" ]; then
-            echo "working_format=$WORKING"   >> "$GITHUB_OUTPUT"
-            echo "auth_ok=true"              >> "$GITHUB_OUTPUT"
-            echo ""
-            echo "✅ Auth succeeded with: $WORKING"
+          BODY="{\"model\":\"${{ steps.models.outputs.target }}\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with one word: PONG\"}],\"max_tokens\":20}"
+          STATUS=$(curl -s -o /tmp/anon.json -w "%{http_code}" --max-time 30 \
+            -X POST "$API_URL" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+          echo "Anonymous completion → HTTP $STATUS"
+          echo "Body: $(head -c 200 /tmp/anon.json)"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          if [[ "$STATUS" == 2* ]]; then
+            echo "anon_ok=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Anonymous inference works on this endpoint"
           else
-            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
-            echo ""
-            echo "::error::None of the auth formats returned 200."
-            echo "::error::Key hint: ${{ steps.key_check.outputs.key_hint }}"
-            echo "::error::Possible causes:"
-            echo "::error::  1. OPENCODE_API_KEY value is expired or revoked"
-            echo "::error::  2. Key was copied with extra whitespace"
-            echo "::error::  3. API expects a different key format"
+            echo "anon_ok=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ Anonymous inference rejected (HTTP $STATUS) — expected: Zen requires a Bearer key for completions"
           fi
 
-      # ── 4. Full completion test (only if auth probe passed) ────────────────
-      - name: Send test AI completion (expect PONG)
-        id: ai_test
-        if: steps.auth_probe.outputs.auth_ok == 'true'
+      # ── 5. Authenticated completion test (the real health check) ───────────
+      - name: Probe with key (expect PONG)
+        id: auth_probe
+        if: steps.key_check.outputs.key_set == 'true'
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           API_URL="${{ steps.url.outputs.api_url }}"
+          BODY="{\"model\":\"${{ steps.models.outputs.target }}\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":50,\"temperature\":0}"
 
-          RESPONSE=$(curl -s -w "\n__STATUS__:%{http_code}" \
-            --max-time 60 \
+          RESPONSE=$(curl -s -w "\n__STATUS__:%{http_code}" --max-time 60 \
             -X POST "$API_URL" \
             -H "Authorization: Bearer $OPENCODE_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{
-              "model": "deepseek-v4-flash-free",
-              "messages": [{"role":"user","content":"Reply with exactly one word: PONG"}],
-              "max_tokens": 50,
-              "temperature": 0
-            }')
+            -d "$BODY")
 
           STATUS=$(echo "$RESPONSE" | grep "__STATUS__:" | cut -d: -f2)
-          BODY=$(echo "$RESPONSE"   | sed '/__STATUS__:/d')
+          OUT=$(echo "$RESPONSE"    | sed '/__STATUS__:/d')
 
           echo "HTTP: $STATUS"
-          echo "Body: ${BODY:0:600}"
+          echo "Body: ${OUT:0:400}"
           echo "http_status=$STATUS" >> "$GITHUB_OUTPUT"
 
-          RESULT=$(python3 -c "
-import sys, json
-try:
-    raw = sys.stdin.read()
-    d = json.loads(raw)
-    choices = d.get('choices', [])
-    if choices:
-        msg = choices[0].get('message', {})
-        content = msg.get('content') or msg.get('reasoning_content') or ''
-        print(('ok:' + content.strip()[:200]) if content.strip() else 'empty:no content')
-        sys.stderr.write('DEBUG content=%r reasoning_content=%r\\n' % (msg.get('content'), msg.get('reasoning_content')))
-    else:
-        err = d.get('error', {})
-        print('error:' + str(err.get('message', json.dumps(d)[:200])))
-except Exception as e:
-    print('parse_error:' + str(e))
-" <<< "$BODY" 2>/dev/null || echo "parse_error:python3 failed")
+          REPLY=$(echo "$OUT" | python3 -c "
+          import sys, json
+          try:
+              d = json.loads(sys.stdin.read())
+              choices = d.get('choices', [])
+              if choices:
+                  msg = choices[0].get('message', {})
+                  content = (msg.get('content') or msg.get('reasoning_content') or '').strip()
+                  print(content[:100] if content else 'empty:no content')
+              else:
+                  err = d.get('error', {})
+                  print('error:' + str(err.get('message', json.dumps(d)[:150])))
+          except Exception as e:
+              print('parse_error:' + str(e))
+          ")
 
-          KIND="${RESULT%%:*}"
-          VALUE="${RESULT#*:}"
-          echo "result_kind=$KIND" >> "$GITHUB_OUTPUT"
-          echo "ai_reply=$VALUE"   >> "$GITHUB_OUTPUT"
+          echo "reply=$REPLY" >> "$GITHUB_OUTPUT"
 
-          if [ "$KIND" = "ok" ]; then
-            echo "has_content=true" >> "$GITHUB_OUTPUT"
-            echo "✅ AI replied: $VALUE"
+          if [[ "$STATUS" == 2* && -n "$REPLY" && "$REPLY" != error:* && "$REPLY" != parse_error:* ]]; then
+            echo "auth_ok=true" >> "$GITHUB_OUTPUT"
+            echo "✅ AI replied: $REPLY"
           else
-            echo "has_content=false" >> "$GITHUB_OUTPUT"
-            echo "::error::AI did not return content. kind=$KIND detail=$VALUE"
+            echo "auth_ok=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Authenticated completion failed (HTTP $STATUS): $REPLY"
+            echo "::error::Check that the key is valid AND the account is activated (Zen may require one top-up before free models work)."
+          fi
+
+      # ── 6. Verdict gate ─────────────────────────────────────────────────────
+      - name: Verdict
+        run: |
+          KEY_SET="${{ steps.key_check.outputs.key_set }}"
+          AUTH_OK="${{ steps.auth_probe.outputs.auth_ok }}"
+          ANON_OK="${{ steps.anon_probe.outputs.anon_ok }}"
+
+          if [ "$KEY_SET" != "true" ] && [ "$ANON_OK" != "true" ]; then
+            echo "::error::VERDICT: FAIL — no OPENCODE_API_KEY secret and anonymous inference is rejected (HTTP ${{ steps.anon_probe.outputs.status }})."
+            echo "::error::Fix: create a key at https://opencode.ai/auth → repo Settings → Secrets and variables → Actions → New repository secret OPENCODE_API_KEY"
             exit 1
           fi
 
-      # ── 5. Step summary ────────────────────────────────────────────────────
+          if [ "$KEY_SET" = "true" ] && [ "$AUTH_OK" != "true" ]; then
+            echo "::error::VERDICT: FAIL — key is set but authenticated completion failed (HTTP ${{ steps.auth_probe.outputs.http_status }})."
+            echo "::error::Fix: verify the key at https://opencode.ai/auth, check billing/account activation, ensure no whitespace in the secret."
+            exit 1
+          fi
+
+          echo "VERDICT: PASS — OpenCode endpoint reachable and inference working."
+
+      # ── 7. Step summary ─────────────────────────────────────────────────────
       - name: Write step summary
         if: always()
-        env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
+          KEY_SET="${{ steps.key_check.outputs.key_set }}"
           AUTH_OK="${{ steps.auth_probe.outputs.auth_ok }}"
-          AI_OK="${{ steps.ai_test.outputs.has_content }}"
+          PASS="false"
+          if { [ "$KEY_SET" != "true" ] && [ "${{ steps.anon_probe.outputs.anon_ok }}" = "true" ]; } \
+             || { [ "$KEY_SET" = "true" ] && [ "$AUTH_OK" = "true" ]; }; then
+            PASS="true"
+          fi
 
           {
-            echo "# OpenCode API Key Test"
-            [ "$AI_OK" = "true" ] && echo "## ✅ PASS" || echo "## ❌ FAIL"
+            echo "# OpenCode Connection Test"
+            [ "$PASS" = "true" ] && echo "## ✅ PASS" || echo "## ❌ FAIL"
             echo ""
             echo "| Check | Result |"
             echo "|---|---|"
             echo "| API endpoint | \`${{ steps.url.outputs.api_url }}\` |"
-            [ "${{ steps.key_check.outputs.key_set }}" = "true" ] \
-              && echo "| API key configured | ✅ Yes (starts with \`${{ steps.key_check.outputs.key_hint }}\`) |" \
-              || echo "| API key configured | ❌ Missing |"
-            [ "$AUTH_OK" = "true" ] \
-              && echo "| Auth probe | ✅ Passed (\`${{ steps.auth_probe.outputs.working_format }}\`) |" \
-              || echo "| Auth probe | ❌ All formats failed (401) |"
-            echo "| Chat HTTP status | \`${{ steps.ai_test.outputs.http_status }}\` |"
-            [ "$AI_OK" = "true" ] \
-              && echo "| AI returned content | ✅ Yes |" \
-              || echo "| AI returned content | ❌ No |"
-            echo "| AI reply | \`${{ steps.ai_test.outputs.ai_reply }}\` |"
-            echo ""
-            echo "> Model: \`deepseek-v4-flash-free\`"
-            echo ""
-            if [ "$AUTH_OK" != "true" ]; then
-              echo "---"
-              echo "### ❌ Auth failed — next steps"
-              echo "1. Go to **Settings → Secrets → Actions**"
-              echo "2. Delete and re-create \`OPENCODE_API_KEY\` (in case of whitespace/copy error)"
-              echo "3. Make sure the key is valid and not expired"
-              KEY_LEN="${#OPENCODE_API_KEY}"
-              echo "4. Current key length: **$KEY_LEN chars** — if 0, the secret is empty"
+            echo "| Model catalog | ${{ steps.models.outputs.catalog_count }} models |"
+            echo "| Probe model | \`${{ steps.models.outputs.target }}\` (in catalog: ${{ steps.models.outputs.target_in_catalog }}) |"
+            if [ "${{ steps.key_check.outputs.key_set }}" = "true" ]; then
+              echo "| API key configured | ✅ Yes (\`${{ steps.key_check.outputs.key_hint }}\`) |"
+            else
+              echo "| API key configured | ❌ Missing |"
             fi
+            echo "| Anonymous completion | HTTP ${{ steps.anon_probe.outputs.status }} |"
+            if [ "$KEY_SET" = "true" ]; then
+              echo "| Authenticated completion | HTTP ${{ steps.auth_probe.outputs.http_status }} — reply: \`${{ steps.auth_probe.outputs.reply }}\` |"
+            fi
+            echo ""
+            echo "> CI AI jobs (review/fix/audit/testgen via \`--use-opencode-cli\`) require OPENCODE_API_KEY when anonymous inference is rejected."
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Also print to console
-          echo "=============================="
-          echo "  API endpoint : ${{ steps.url.outputs.api_url }}"
-          echo "  Key hint     : ${{ steps.key_check.outputs.key_hint }}"
-          echo "  Auth passed  : $AUTH_OK"
-          echo "  Working fmt  : ${{ steps.auth_probe.outputs.working_format }}"
-          echo "  AI replied   : $AI_OK"
-          echo "=============================="
-
-      # ── 6. Auto-open issue on scheduled failure ───────────────────────────
+      # ── 8. Auto-open issue on scheduled failure ────────────────────────────
       - name: Open issue on failure (scheduled runs only)
         if: failure() && github.event_name == 'schedule'
         uses: actions/github-script@v7
         with:
           script: |
-            const title = `🚨 OpenCode API health check failed — ${new Date().toISOString().slice(0,10)}`;
+            const keyMissing = '${{ steps.key_check.outputs.key_set }}' !== 'true';
+            const title = `🚨 OpenCode connection check failed — ${new Date().toISOString().slice(0,10)}`;
             const body = [
-              '## OpenCode API Key auth is failing (401)',
+              '## OpenCode connection check failed',
               '',
               `**Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
               '',
+              keyMissing
+                ? '**Cause:** `OPENCODE_API_KEY` secret is not set, and the endpoint rejects anonymous completions.'
+                : '**Cause:** `OPENCODE_API_KEY` is set but authenticated completions fail (invalid key, expired, or account not activated).',
+              '',
               '**Fix:**',
-              '1. Go to **Settings → Secrets → Actions**',
-              '2. Delete and re-create `OPENCODE_API_KEY` with a fresh value',
-              '3. Ensure no leading/trailing whitespace when pasting',
+              '1. Create/copy a key at <https://opencode.ai/auth>',
+              '2. Repo → **Settings → Secrets and variables → Actions** → set/update `OPENCODE_API_KEY`',
+              '3. Re-run this workflow manually to confirm',
             ].join('\n');
 
             const { data: existing } = await github.rest.issues.listForRepo({

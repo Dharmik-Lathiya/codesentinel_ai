@@ -35,8 +35,9 @@ function parseExports(path: string, content: string): ExportInfo[] {
 
 function parseImports(path: string, content: string): ImportInfo[] {
   const imports: ImportInfo[] = [];
-  const importRe = /import\s+\{\s*([^}]+)\s*\}\s+from\s+['"]([^'"]+)['"]/g;
-  const defaultImportRe = /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g;
+  // Handles `import { A, B }` and `import type { A, B }` (type-only imports)
+  const importRe = /import\s+(?:type\s+)?\{\s*([^}]+)\s*\}\s+from\s+['"]([^'"]+)['"]/g;
+  const defaultImportRe = /import\s+(?:type\s+)?(\w+)\s+from\s+['"]([^'"]+)['"]/g;
 
   let match;
   while ((match = importRe.exec(content)) !== null) {
@@ -66,6 +67,7 @@ export function detectDeadCode(
   const fileMap = new Map<string, string>();
 
   for (const f of files) {
+    if (isFrameworkEntry(f.path)) continue;
     fileMap.set(f.path, f.content);
     allExports.push(...parseExports(f.path, f.content));
     allImports.push(...parseImports(f.path, f.content));
@@ -93,4 +95,27 @@ export function detectDeadCode(
   }
 
   return findings;
+}
+
+/**
+ * Framework entry points are resolved by the framework via file path rather
+ * than named imports — their exports must never be flagged as dead code.
+ * Covers Next.js App Router / Pages Router (page/layout/route/... entry files)
+ * and Expo / React Native file-based routing (any screen file directly under
+ * the app dir or inside a route-group dir like (tabs), plus index screens).
+ */
+function isFrameworkEntry(path: string): boolean {
+  const base = path.split("/").pop() ?? "";
+  const appDirMatch = path.match(/(^|\/)(?:src\/)?app\/(.*)$/);
+  if (!appDirMatch) return false;
+  const rest = appDirMatch[2];
+  const segments = rest.split("/").filter(Boolean);
+
+  if (/^(page|layout|route|loading|error|not-found|template|default|global-error|head|opengraph-image|twitter-image|icon|apple-icon|sitemap|robots|manifest)\.(ts|tsx|js|jsx)$/.test(base)) {
+    return true;
+  }
+  // Expo screens: directly in the app dir (index.tsx) or inside route groups
+  if (/^(index|_layout|_index)\.(ts|tsx|js|jsx)$/.test(base)) return true;
+  if (segments.length === 2 && segments[0].startsWith("(")) return true;
+  return false;
 }

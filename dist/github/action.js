@@ -26,6 +26,10 @@ export async function runAction() {
         issue_body: get("issue_body"),
         ask: get("ask"),
         use_opencode_cli: get("use_opencode_cli"),
+        audit_create_issues: get("audit_create_issues"),
+        audit_auto_fix: get("audit_auto_fix"),
+        audit_labels: get("audit_labels"),
+        audit_target_dirs: get("audit_target_dirs"),
     };
     const useOpencodeCliFlag = inputs.use_opencode_cli === "true";
     const opencodeVersion = get("opencode_version") || "latest";
@@ -86,10 +90,14 @@ export async function runAction() {
             `(readability ${report.score.readability}, maintainability ${report.score.maintainability}, ` +
             `security ${report.score.security}, coverage ${report.score.test_coverage})\n`);
     }
-    await publishOutputs(report, secrets, autoMerge);
+    await publishOutputs(report, secrets, autoMerge, {
+        createIssues: inputs.audit_create_issues !== "false",
+        autoFix: inputs.audit_auto_fix === "true",
+        labels: (inputs.audit_labels || "audit").split(",").map((s) => s.trim()).filter(Boolean),
+    });
 }
 /** Post comments / issues and write the step summary + metrics outputs. */
-async function publishOutputs(report, secrets, autoMerge = false) {
+async function publishOutputs(report, secrets, autoMerge = false, auditOpts) {
     const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
     const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
     const pullNumber = process.env.GITHUB_PR_NUMBER
@@ -105,9 +113,12 @@ async function publishOutputs(report, secrets, autoMerge = false) {
                 line: c.line,
             });
         }
-        if (report.mode === "audit") {
+        if (report.mode === "audit" && auditOpts?.createIssues) {
+            const labels = [...(auditOpts.labels ?? [])];
+            if (auditOpts.autoFix)
+                labels.push("autofix-trigger");
             for (const f of report.findings) {
-                await reporter.createIssue(`[${f.severity}] ${f.file}`, f.comment);
+                await reporter.createOrUpdateIssue(`[${f.severity}] ${f.file}`, f.comment, labels);
             }
         }
         // Create Check Run for gate mode

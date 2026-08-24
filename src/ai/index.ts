@@ -2,6 +2,7 @@ import { openaiFactory } from "./openai.js";
 import { anthropicFactory } from "./anthropic.js";
 import { geminiFactory } from "./gemini.js";
 import { opencodeFactory } from "./opencode.js";
+import { createOpencodeProvider } from "./providers/opencode-cli.js";
 import type {
   AIProvider,
   CompletionRequest,
@@ -31,6 +32,7 @@ export class AIHub {
     anthropic: anthropicFactory,
     gemini: geminiFactory,
     opencode: opencodeFactory,
+    "opencode-cli": (_s, root) => createOpencodeProvider(root),
   };
 
   constructor(

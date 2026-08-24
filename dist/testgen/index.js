@@ -1,5 +1,5 @@
 import { writeFileSync, existsSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, isAbsolute } from "node:path";
 import { languageOf, ensureDir } from "../utils/files.js";
 import { extractJson } from "../ai/provider.js";
 /**
@@ -100,6 +100,10 @@ export class TestGenerator {
         const outPath = parsed.test_file_path
             ? resolve(root, parsed.test_file_path)
             : targetPath;
+        if (!isWithinRoot(root, outPath)) {
+            console.error(`Rejected test path outside project root: ${parsed.test_file_path}`);
+            return null;
+        }
         ensureDir(dirname(outPath));
         writeFileSync(outPath, parsed.content, "utf8");
         return { file: file.path, testFilePath: relative(root, outPath), content: parsed.content };
@@ -119,6 +123,14 @@ export class TestGenerator {
 /** Determine if a path's test already exists on disk. */
 export function testExists(root, srcPath) {
     const base = srcPath.replace(/\.[^.]+$/, "");
-    return existsSync(resolve(root, base + ".test.ts"));
+    // join (not resolve) — bundlers (ncc) rewrite resolve(root, x.test.ts)
+    // into a bundle-relative asset path, breaking this check in the action.
+    return existsSync(join(root, base + ".test.ts"));
+}
+/** Guard against AI-supplied paths escaping the project root (../ traversal). */
+export function isWithinRoot(root, candidate) {
+    const rel = relative(root, candidate);
+    // relative() is empty for identical paths, absolute for cross-drive (Windows)
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 //# sourceMappingURL=index.js.map

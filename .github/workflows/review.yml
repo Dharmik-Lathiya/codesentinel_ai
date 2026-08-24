@@ -1,0 +1,180 @@
+name: "CodeSentinel Review (reusable)"
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "Operation mode: review | fix | audit | score | testgen | gate | describe"
+        required: false
+        type: string
+        default: "review"
+      version:
+        description: "CodeSentinel action tag to use (e.g. v0.11.0). Pinned to a release, never a branch."
+        required: false
+        type: string
+        default: "v0.12.1"
+      max_iterations:
+        description: "Max fix iterations"
+        required: false
+        type: string
+        default: "5"
+      enable_auto_fix:
+        description: "Apply fixes automatically (true/false)"
+        required: false
+        type: string
+        default: "false"
+      enable_scoring:
+        description: "Compute code quality score (true/false)"
+        required: false
+        type: string
+        default: "true"
+      enable_test_generation:
+        description: "Generate missing tests (true/false)"
+        required: false
+        type: string
+        default: "false"
+      test_runner:
+        description: "jest or vitest"
+        required: false
+        type: string
+        default: "vitest"
+      project_context:
+        description: "Free-form context injected into prompts"
+        required: false
+        type: string
+        default: ""
+      provider:
+        description: "AI provider: opencode | openai | anthropic | gemini (overrides all task models)"
+        required: false
+        type: string
+        default: "opencode"
+      opencode_version:
+        description: "OpenCode CLI version to install (e.g. v0.3.0 or latest)"
+        required: false
+        type: string
+        default: "latest"
+      use_opencode_cli:
+        description: "Use the local OpenCode CLI binary instead of the AI provider API (true/false)"
+        required: false
+        type: string
+        default: "false"
+      config_path:
+        description: "Path to a codesentinel config file"
+        required: false
+        type: string
+        default: ""
+      auto_merge:
+        description: "Auto-merge PRs when quality gates pass (true/false)"
+        required: false
+        type: string
+        default: "false"
+      checkout_ref:
+        description: "Git ref to check out (defaults to the PR head or default branch)"
+        required: false
+        type: string
+        default: ""
+      fail_on_severity:
+        description: "Exit 1 when findings reach this severity: off | critical | important | minor"
+        required: false
+        type: string
+        default: "off"
+    secrets:
+      CODESENTINEL_GITHUB_TOKEN:
+        description: "Optional PAT for git push (overrides GITHUB_TOKEN)"
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      GEMINI_API_KEY:
+        required: false
+      OPENCODE_API_KEY:
+        required: false
+      OPENCODE_BASE_URL:
+        required: false
+    outputs:
+      score:
+        description: "Overall quality score (0-100) when scoring is enabled"
+        value: ${{ jobs.codesentinel.outputs.score }}
+      findings:
+        description: "Number of findings detected"
+        value: ${{ jobs.codesentinel.outputs.findings }}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  codesentinel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      score: ${{ steps.cs.outputs.score }}
+      findings: ${{ steps.cs.outputs.findings }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.checkout_ref != '' && inputs.checkout_ref || github.event.pull_request.head.sha || '' }}
+          token: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Export PR number for comment posting
+        id: prnum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR="${{ github.event.pull_request.number || github.event.issue.number }}"
+          if [ -n "$PR" ] && [ "$PR" != "null" ]; then
+            echo "GITHUB_PR_NUMBER=$PR" >> "$GITHUB_ENV"
+            echo "Resolved PR number: $PR"
+          else
+            echo "No PR number in event context — comments will be skipped"
+          fi
+
+      - name: Run CodeSentinel
+        id: cs
+        uses: ./
+        env:
+          GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_BASE_URL: ${{ secrets.OPENCODE_BASE_URL }}
+        with:
+          mode: ${{ inputs.mode }}
+          max_iterations: ${{ inputs.max_iterations }}
+          enable_auto_fix: ${{ inputs.enable_auto_fix }}
+          enable_scoring: ${{ inputs.enable_scoring }}
+          enable_test_generation: ${{ inputs.enable_test_generation }}
+          test_runner: ${{ inputs.test_runner }}
+          project_context: ${{ inputs.project_context }}
+          provider: ${{ inputs.provider }}
+          opencode_version: ${{ inputs.opencode_version }}
+          use_opencode_cli: ${{ inputs.use_opencode_cli }}
+          config_path: ${{ inputs.config_path }}
+          auto_merge: ${{ inputs.auto_merge }}
+
+      - name: Fail on severity threshold
+        if: inputs.fail_on_severity != 'off'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MODE="${{ inputs.mode }}"
+          SEVERITY="${{ inputs.fail_on_severity }}"
+          REPORT="codesentinel-reports/codesentinel-${MODE}.json"
+          if [ -f "$REPORT" ]; then
+            node -e "
+              const fs = require('fs');
+              const r = JSON.parse(fs.readFileSync('$REPORT', 'utf8'));
+              const rank = { off: 0, minor: 1, important: 2, critical: 3 };
+              const thr = rank['$SEVERITY'];
+              const worst = (r.findings || []).reduce((m, f) => Math.max(m, rank[f.severity] || 0), 0);
+              if (worst >= thr) {
+                console.error('CodeSentinel found findings at or above severity: $SEVERITY');
+                process.exit(1);
+              }
+            "
+          fi

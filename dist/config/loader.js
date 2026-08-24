@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { load as parseYaml } from "js-yaml";
 import { parseJsonc } from "../utils/jsonc.js";
 const SEARCH_PATHS = [
     ".opencode-reviewer.yml",
@@ -28,8 +29,7 @@ export function loadYamlConfig(filePath) {
         return parseJsonc(raw);
     }
     try {
-        const yamlModule = require("js-yaml");
-        return yamlModule.load(raw);
+        return parseYaml(raw);
     }
     catch (err) {
         throw new Error(`Failed to parse YAML config ${filePath}: ${err}`);
