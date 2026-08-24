@@ -75,11 +75,9 @@ jobs:
               echo "PR #${NUM} dirty/behind — attempting merge..."
               if ! git merge origin/main --no-commit --no-ff 2>/tmp/merge-err.log; then
                 echo "Merge conflict on PR #${NUM} — attempting AI resolution..."
-                cat << CONFLICT_PROMPT > /tmp/conflict-prompt.txt
-                You are an AI conflict resolution agent. Resolve the merge conflicts on branch ${HEAD} in this repo.
-                Inspect git status and the conflicted files, resolve all conflict markers (<<<<<<< ======= >>>>>>>),
-                keep the code coherent and type-safe, then run the project's build and tests. Do not commit or push.
-CONFLICT_PROMPT
+                echo "You are an AI conflict resolution agent. Resolve the merge conflicts on branch ${HEAD} in this repo." > /tmp/conflict-prompt.txt
+                echo "Inspect git status and the conflicted files, resolve all conflict markers (<<<<<<< ======= >>>>>>>)," >> /tmp/conflict-prompt.txt
+                echo "keep the code coherent and type-safe, then run the project's build and tests. Do not commit or push." >> /tmp/conflict-prompt.txt
                 if opencode run --model opencode/deepseek-v4-flash-free --prompt "$(cat /tmp/conflict-prompt.txt)" \
                   && npm run build >/tmp/build.log 2>&1 && npm test >/tmp/test.log 2>&1; then
                   git add -A
