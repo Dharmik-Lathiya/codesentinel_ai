@@ -5,6 +5,7 @@ import type { CompletionRequest, CompletionResult, AIProvider, ChatMessage } fro
 import { ProviderUnavailableError } from "./provider.js";
 import type { RuntimeSecrets } from "../config/types.js";
 import { logger } from "../utils/logger.js";
+import { retry } from "../utils/retry.js";
 
 /** Default CLI timeout in minutes (mirrors opencode-ai-reviewer's runOpenCode default). */
 export const DEFAULT_CLI_TIMEOUT_MINUTES = 20;
@@ -262,17 +263,21 @@ export class OpenCodeProvider implements AIProvider {
   }
 
   private async completeViaCli(req: CompletionRequest): Promise<CompletionResult> {
-    // Serialise on a static lock so parallel batch calls don't corrupt opencode's DB
-    return new Promise<CompletionResult>((outerResolve, outerReject) => {
-      OpenCodeProvider.cliLock = OpenCodeProvider.cliLock.then(async () => {
-        try {
-          const result = await this.#doCompleteViaCli(req);
-          outerResolve(result);
-        } catch (e) {
-          outerReject(e);
-        }
-      });
-    });
+    // Wrap with retry for transient server errors (5xx, rate limits, etc.)
+    return retry(
+      () =>
+        new Promise<CompletionResult>((outerResolve, outerReject) => {
+          OpenCodeProvider.cliLock = OpenCodeProvider.cliLock.then(async () => {
+            try {
+              const result = await this.#doCompleteViaCli(req);
+              outerResolve(result);
+            } catch (e) {
+              outerReject(e);
+            }
+          });
+        }),
+      { maxAttempts: 3, baseDelayMs: 2000 },
+    );
   }
 
   async #doCompleteViaCli(req: CompletionRequest): Promise<CompletionResult> {

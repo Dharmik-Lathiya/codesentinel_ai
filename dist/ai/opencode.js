@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ProviderUnavailableError } from "./provider.js";
 import { logger } from "../utils/logger.js";
+import { retry } from "../utils/retry.js";
 /** Default CLI timeout in minutes (mirrors opencode-ai-reviewer's runOpenCode default). */
 export const DEFAULT_CLI_TIMEOUT_MINUTES = 20;
 /** Cap retained output to prevent memory exhaustion on verbose or stuck runs. */
@@ -255,8 +256,8 @@ export class OpenCodeProvider {
         return ""; // not found
     }
     async completeViaCli(req) {
-        // Serialise on a static lock so parallel batch calls don't corrupt opencode's DB
-        return new Promise((outerResolve, outerReject) => {
+        // Wrap with retry for transient server errors (5xx, rate limits, etc.)
+        return retry(() => new Promise((outerResolve, outerReject) => {
             OpenCodeProvider.cliLock = OpenCodeProvider.cliLock.then(async () => {
                 try {
                     const result = await this.#doCompleteViaCli(req);
@@ -266,7 +267,7 @@ export class OpenCodeProvider {
                     outerReject(e);
                 }
             });
-        });
+        }), { maxAttempts: 3, baseDelayMs: 2000 });
     }
     async #doCompleteViaCli(req) {
         const rawModel = req.model.model === "default" ? "deepseek-v4-flash-free" : req.model.model;

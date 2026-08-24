@@ -16406,7 +16406,9 @@ const DEFAULT_SHOULD_RETRY = (err) => {
             /\b(?:429|502|503)\b/.test(msg) ||
             /\btimeout\b/i.test(msg) ||
             /\beconnreset\b/i.test(msg) ||
-            /\boverloaded\b/i.test(msg));
+            /\boverloaded\b/i.test(msg) ||
+            /\bunexpected server error\b/i.test(msg) ||
+            /\bserver error\b/i.test(msg));
     }
     return false;
 };
@@ -17222,6 +17224,7 @@ var external_node_child_process_ = __nccwpck_require__(1421);
 
 
 
+
 /** Default CLI timeout in minutes (mirrors opencode-ai-reviewer's runOpenCode default). */
 const DEFAULT_CLI_TIMEOUT_MINUTES = 20;
 /** Cap retained output to prevent memory exhaustion on verbose or stuck runs. */
@@ -17474,8 +17477,8 @@ class OpenCodeProvider {
         return ""; // not found
     }
     async completeViaCli(req) {
-        // Serialise on a static lock so parallel batch calls don't corrupt opencode's DB
-        return new Promise((outerResolve, outerReject) => {
+        // Wrap with retry for transient server errors (5xx, rate limits, etc.)
+        return retry(() => new Promise((outerResolve, outerReject) => {
             OpenCodeProvider.cliLock = OpenCodeProvider.cliLock.then(async () => {
                 try {
                     const result = await this.#doCompleteViaCli(req);
@@ -17485,7 +17488,7 @@ class OpenCodeProvider {
                     outerReject(e);
                 }
             });
-        });
+        }), { maxAttempts: 3, baseDelayMs: 2000 });
     }
     async #doCompleteViaCli(req) {
         const rawModel = req.model.model === "default" ? "deepseek-v4-flash-free" : req.model.model;

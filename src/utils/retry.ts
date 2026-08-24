@@ -63,7 +63,9 @@ const DEFAULT_SHOULD_RETRY = (err: unknown): boolean => {
       /\b(?:429|502|503)\b/.test(msg) ||
       /\btimeout\b/i.test(msg) ||
       /\beconnreset\b/i.test(msg) ||
-      /\boverloaded\b/i.test(msg)
+      /\boverloaded\b/i.test(msg) ||
+      /\bunexpected server error\b/i.test(msg) ||
+      /\bserver error\b/i.test(msg)
     );
   }
   return false;
