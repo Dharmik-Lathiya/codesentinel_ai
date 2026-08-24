@@ -74,7 +74,7 @@ function buildSecrets(): RuntimeSecrets {
 }
 
 /** Run engine and return reply string. */
-async function runEngine(engine: Engine, cmd: { mode: Mode; arg: string }): Promise<string> {
+async function runEngine(engine: Engine, cmd: { mode: Mode | "deadcode"; arg: string }): Promise<string> {
   if (cmd.mode === "chat") {
     try {
       return await engine.ask(cmd.arg);
@@ -89,6 +89,21 @@ async function runEngine(engine: Engine, cmd: { mode: Mode; arg: string }): Prom
     } catch (error) {
       logger.error(error, "Failed to generate plan");
       return "❌ An error occurred while generating the plan.";
+    }
+  } else if (cmd.mode === "deadcode") {
+    try {
+      const { collectFiles, readText } = await import("../utils/files.js");
+      const { resolve } = await import("node:path");
+      const root = process.cwd();
+      const rels = collectFiles(root, engine.config.include, engine.config.exclude);
+      const files = rels.map((path) => ({ path, content: readText(resolve(root, path)) }));
+      const findings = await engine.runDeadCode(files);
+      if (findings.length === 0) return "✅ No unused exports detected.";
+      const lines = findings.map((f) => `  [${f.severity}] ${f.file}:${f.line} — ${f.comment}`);
+      return `### CodeSentinel — Dead Code\n\nUnused exports (${findings.length}):\n\n${lines.join("\n")}`;
+    } catch (error) {
+      logger.error(error, "Failed to run deadcode");
+      return "❌ An error occurred while running dead code analysis.";
     }
   } else {
     try {

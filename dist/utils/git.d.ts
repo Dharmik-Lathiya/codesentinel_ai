@@ -1,5 +1,7 @@
 /** Run a git command in the given cwd, returning stdout. */
-export declare function git(args: string[], cwd?: string): Promise<string>;
+export declare function git(args: string[], cwd?: string, options?: {
+    quiet?: boolean;
+}): Promise<string>;
 export interface DiffFile {
     /** Path of the file changed in the diff. */
     path: string;
@@ -7,8 +9,8 @@ export interface DiffFile {
     diff: string;
     /** Full (post-change) content of the file, if it still exists. */
     content: string;
-    /** Status: added | modified | deleted | renamed. */
-    status: "added" | "modified" | "deleted" | "renamed";
+    /** Status: added | modified | deleted. */
+    status: "added" | "modified" | "deleted";
 }
 /**
  * Collect the changed files for the current PR/branch relative to a base ref.

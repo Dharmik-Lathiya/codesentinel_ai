@@ -434,12 +434,12 @@ export class Engine {
       const pluginFindings = await this.plugins.runAnalyze([file]);
       const secretFindings = scanSecrets(file.path, file.content, this.config.secretPatterns);
 
+      // Repo-wide linter/scanner findings are appended once after the loop,
+      // not per file — otherwise each one would be duplicated N times.
       const fileFindings = [
         ...staticFindings,
         ...pluginFindings,
         ...secretFindings,
-        ...linterResults,
-        ...scannerResults,
       ];
 
       if (this.config.enable_cache) {
@@ -447,6 +447,9 @@ export class Engine {
       }
       allFindings.push(...fileFindings);
     }
+
+    // Repo-wide findings (linters, third-party secret scanners) exactly once.
+    allFindings.push(...linterResults, ...scannerResults);
 
     const filtered = this.dismissals.filterDismissed(allFindings);
 
@@ -857,8 +860,10 @@ export class Engine {
       }
 
       const msg = tag ? `CodeSentinel: auto-fix issues ${tag}` : 'CodeSentinel: auto-fix issues [skip ci]';
-      execFileSync("git", ["config", "user.email", "bot@codesentinel.ai"], { cwd: this.root, stdio: "pipe" });
-      execFileSync("git", ["config", "user.name", "CodeSentinel Bot"], { cwd: this.root, stdio: "pipe" });
+      const gitName = process.env.CODESENTINEL_GIT_NAME || "CodeSentinel Bot";
+      const gitEmail = process.env.CODESENTINEL_GIT_EMAIL || "bot@codesentinel.ai";
+      execFileSync("git", ["config", "user.email", gitEmail], { cwd: this.root, stdio: "pipe" });
+      execFileSync("git", ["config", "user.name", gitName], { cwd: this.root, stdio: "pipe" });
       execFileSync("git", ["commit", "-m", msg], { cwd: this.root, stdio: "pipe" });
       try {
         execFileSync("git", ["fetch", "origin", target], { cwd: this.root, stdio: "pipe", timeout: 30000 });
@@ -879,14 +884,23 @@ export class Engine {
 
   /** Create a PR from the fix branch and optionally enable auto-merge. */
   private async createFixPR(fixBranch: string): Promise<void> {
-    if (!fixBranch || !process.env.GITHUB_TOKEN) return;
+    // PAT (higher permissions) overrides the default GITHUB_TOKEN
+    const token = process.env.CODESENTINEL_GITHUB_TOKEN || process.env.GITHUB_TOKEN;
+    if (!fixBranch || !token) return;
 
     const owner = process.env.GITHUB_REPOSITORY?.split("/")[0];
     const repo = process.env.GITHUB_REPOSITORY?.split("/")[1];
     if (!owner || !repo) return;
 
-    const reporter = new GitHubReporter({ token: process.env.GITHUB_TOKEN, owner, repo });
-    const defaultBranch = process.env.GITHUB_BASE_REF || "main";
+    const reporter = new GitHubReporter({ token, owner, repo });
+    // Resolve the repo's actual default branch instead of assuming "main"
+    let defaultBranch = process.env.GITHUB_BASE_REF;
+    try {
+      const { name } = await reporter.getDefaultBranch();
+      defaultBranch = name;
+    } catch {
+      defaultBranch = defaultBranch || "main";
+    }
 
     try {
       const prNumber = await reporter.createPR({
@@ -1286,7 +1300,24 @@ ${promptBody}
   // AUDIT
   // ---------------------------------------------------------------------------
   private async runAudit(): Promise<EngineReport> {
-    const files = await this.collectedFiles();
+    let files = await this.collectedFiles();
+    const targetDirs = this.config.auditTargetDirs;
+    if (targetDirs && targetDirs.length > 0) {
+      files = files.filter((f) => targetDirs.some((d) => f.path.startsWith(d)));
+      if (files.length === 0) {
+        return {
+          mode: "audit",
+          summary: "No files matched the configured audit target directories.",
+          findings: [],
+          score: null,
+          comments: [],
+          generatedTests: [],
+          fixAttempts: [],
+          metrics: { filesAnalyzed: 0, findingsBySeverity: {}, durationMs: 0 },
+        };
+      }
+    }
+
     const staticFindings = await this.analyzeFiles(files);
 
     const snapshot = files

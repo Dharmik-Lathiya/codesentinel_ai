@@ -4,3 +4,4 @@ codesentinel-reports/
 .codesentinel-cache/
 *.log
 .DS_Store
+*.tgz

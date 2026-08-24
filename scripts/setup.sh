@@ -30,7 +30,12 @@ jobs:
        startsWith(github.event.comment.body, '/fix') ||
        startsWith(github.event.comment.body, '/audit') ||
        startsWith(github.event.comment.body, '/score') ||
-       startsWith(github.event.comment.body, '/testgen'))
+       startsWith(github.event.comment.body, '/testgen') ||
+       startsWith(github.event.comment.body, '/gate') ||
+       startsWith(github.event.comment.body, '/deadcode') ||
+       startsWith(github.event.comment.body, '/describe') ||
+       startsWith(github.event.comment.body, '/plan') ||
+       startsWith(github.event.comment.body, '/ask'))
     runs-on: ubuntu-latest
     steps:
       - name: Extract command
@@ -39,9 +44,19 @@ jobs:
         with:
           script: |
             const body = context.payload.comment.body.trim();
-            const match = body.match(/^\/(review|fix|audit|score|testgen)\b/i);
+            const match = body.match(/^\/(review|fix|audit|score|testgen|gate|deadcode|describe|plan|ask)\b/i);
             if (!match) { core.setFailed('No valid command'); return; }
             core.setOutput('mode', match[1].toLowerCase());
+
+      - name: Export PR number for comment posting
+        id: prnum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR="${{ github.event.issue.number }}"
+          if [ -n "$PR" ] && [ "$PR" != "null" ]; then
+            echo "GITHUB_PR_NUMBER=$PR" >> "$GITHUB_ENV"
+          fi
 
       - name: Checkout PR
         uses: actions/checkout@v4
@@ -81,8 +96,13 @@ echo "   git commit -m 'Add CodeSentinel AI'"
 echo "   git push"
 echo ""
 echo "💬 Then comment on any PR:"
-echo "   /review   — AI code review"
-echo "   /fix      — propose fixes"
-echo "   /audit    — full repo audit"
-echo "   /score    — quality score"
-echo "   /testgen  — generate tests"
+echo "   /review    — AI code review"
+echo "   /fix       — propose fixes"
+echo "   /audit     — full repo audit"
+echo "   /score     — quality score"
+echo "   /testgen   — generate tests"
+echo "   /gate      — CI quality gate"
+echo "   /deadcode  — dead code analysis"
+echo "   /describe  — describe the codebase"
+echo "   /plan      — implementation plan"
+echo "   /ask       — ask the codebase a question"

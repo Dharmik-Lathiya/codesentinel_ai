@@ -1,39 +1,66 @@
 import type { EngineReport } from "../engine/index.js";
 
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: "#dc2626",
+  high: "#ea580c",
+  medium: "#d97706",
+  low: "#2563eb",
+  info: "#6b7280",
+};
+
+const BOLD_FONT_WEIGHT = "700";
+const H2_COLOR = "#334155";
+const SHADOW_ALPHA = "0.08";
+const BAR_HEIGHT_PERCENT = 100;
+const SCORE_GREEN_THRESHOLD = 80;
+const SCORE_ORANGE_THRESHOLD = 60;
+const SCORE_RED_THRESHOLD = 40;
+const APOSTROPHE_ENTITY = "&#39;";
+const SCORE_RING_RADIUS_PERCENT = "50%";
+const REPORT_STYLES = `  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.25rem; margin: 1.5rem 0 0.75rem; color: ${H2_COLOR}; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.25rem; }
+    .meta { color: #64748b; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .card { background: #fff; border-radius: 8px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); }
+    .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+    .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
+    .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
+    .score-ring { width: 80px; height: 80px; border-radius: ${SCORE_RING_RADIUS_PERCENT}; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: ${BOLD_FONT_WEIGHT}; color: #fff; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
+    th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
+    td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; white-space: pre-wrap; word-break: break-word; }
+    tr:hover td { background: #f8fafc; }
+    .empty { text-align: center; color: #94a3b8; padding: 2rem; }
+    .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
+    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
+    .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
+    .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
+  </style>`;
+
 /**
  * Generate a self-contained HTML dashboard report from an EngineReport.
  * The HTML includes inline CSS and is fully portable (no external deps).
  */
-const CHART_MAX_PERCENT = 100;
-const SCORE_GREEN = 80;
-const SCORE_ORANGE = 60;
-const SCORE_RED = 40;
 export function renderHtmlReport(report: EngineReport): string {
-  const severityColors: Record<string, string> = {
-    critical: "#dc2626",
-    high: "#ea580c",
-    medium: "#d97706",
-    low: "#2563eb",
-    info: "#6b7280",
-  };
-
   const categoryCounts: Record<string, number> = {};
+  const severityCounts: Record<string, number> = {};
   for (const f of report.findings) {
     categoryCounts[f.category] = (categoryCounts[f.category] ?? 0) + 1;
+    severityCounts[f.severity] = (severityCounts[f.severity] ?? 0) + 1;
   }
-
-  const severityCounts = report.metrics.findingsBySeverity;
-  const BOLD_FONT_WEIGHT = "700";
-  const H2_COLOR = "#334155";
-  const SHADOW_ALPHA = "0.08";
 
   const findingsRows = report.findings
     .map((f) => {
-      const color = severityColors[f.severity] ?? "#6b7280";
+      const color = SEVERITY_COLORS[f.severity] ?? "#6b7280";
       return `<tr>
-        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${f.severity}</span></td>
+        <td><span style="color:${color};font-weight:${BOLD_FONT_WEIGHT}">${escapeHtml(f.severity)}</span></td>
         <td>${escapeHtml(f.category)}</td>
-        <td>${escapeHtml(f.file)}${f.line ? `:${f.line}` : ""}</td>
+        <td>${escapeHtml(f.file)}${f.line != null ? `:${f.line}` : ""}</td>
         <td>${escapeHtml(f.comment)}</td>
         <td>${f.suggestion ? escapeHtml(f.suggestion) : "—"}</td>
       </tr>`;
@@ -57,53 +84,40 @@ export function renderHtmlReport(report: EngineReport): string {
     .map((t) => `<tr><td>${escapeHtml(t.file)}</td><td>${escapeHtml(t.testFilePath)}</td></tr>`)
     .join("\n");
 
+  const severityChart = renderBarChart(
+    "Severity Distribution",
+    Object.entries(severityCounts).map(([s, c]) => ({ key: s, value: c, color: SEVERITY_COLORS[s] ?? "#6b7280" })),
+  );
+  const categoryChart = renderBarChart(
+    "Category Breakdown",
+    Object.entries(categoryCounts).map(([c, n]) => ({ key: c, value: n, color: "#6366f1" })),
+  );
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CodeSentinel — ${report.mode} Report</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; padding: 2rem; }
-    .container { max-width: 1100px; margin: 0 auto; }
-    h1 { font-size: 1.75rem; margin-bottom: 0.5rem; }
-    h2 { font-size: 1.25rem; margin: 1.5rem 0 0.75rem; color: ${H2_COLOR}; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.25rem; }
-    .meta { color: #64748b; margin-bottom: 1.5rem; font-size: 0.9rem; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-    .card { background: #fff; border-radius: 8px; padding: 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,${SHADOW_ALPHA}); }
-    .card .label { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
-    .card .value { font-size: 1.75rem; font-weight: ${BOLD_FONT_WEIGHT}; margin-top: 0.25rem; }
-    .card .sub { font-size: 0.8rem; color: #94a3b8; margin-top: 0.25rem; }
-    .score-ring { width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; color: #fff; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 1.5rem; }
-    th { background: #f1f5f9; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
-    td { padding: 0.6rem 0.75rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; }
-    tr:hover td { background: #f8fafc; }
-    .empty { text-align: center; color: #94a3b8; padding: 2rem; }
-    .bar-chart { display: flex; align-items: end; gap: 0.5rem; height: 120px; margin-top: 0.5rem; }
-    .bar { display: flex; flex-direction: column; align-items: center; flex: 1; }
-    .bar-fill { width: 100%; border-radius: 4px 4px 0 0; min-height: 2px; transition: height 0.3s; }
-    .bar-label { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; text-align: center; }
-    .bar-value { font-size: 0.75rem; font-weight: 600; margin-bottom: 0.25rem; }
-  </style>
+  <title>CodeSentinel — ${escapeHtml(report.mode)} Report</title>
+  ${REPORT_STYLES}
 </head>
 <body>
 <div class="container">
-  <h1>CodeSentinel — ${report.mode} Report</h1>
+  <h1>CodeSentinel — ${escapeHtml(report.mode)} Report</h1>
   <p class="meta">Generated in ${report.metrics.durationMs}ms &middot; ${report.metrics.filesAnalyzed} file(s) analyzed</p>
 
-${renderCards(report, severityCounts)}
+  ${renderSummaryCards(report, severityCounts)}
 
-${renderSeverityDistribution(report, severityCounts, severityColors)}
+  ${severityChart}
 
-${renderCategoryBreakdown(categoryCounts)}
+  ${categoryChart}
 
-${renderFindings(report, findingsRows)}
+  <h2>Findings</h2>
+  ${renderFindingsTable(report.findings.length, findingsRows)}
 
-${renderFixAttempts(report, fixRows)}
+  ${renderFixTable(report.fixAttempts.length, fixRows)}
 
-${renderGeneratedTests(report, testRows)}
+  ${renderTestsTable(report.generatedTests.length, testRows)}
 
   <p class="meta" style="margin-top:2rem;text-align:center">Report generated by CodeSentinel AI</p>
 </div>
@@ -111,26 +125,15 @@ ${renderGeneratedTests(report, testRows)}
 </html>`;
 }
 
-function renderCards(report: EngineReport, severityCounts: Record<string, number>): string {
-  return `  <div class="cards">
+function renderSummaryCards(report: EngineReport, severityCounts: Record<string, number>): string {
+  return `
+  <div class="cards">
     <div class="card">
       <div class="label">Findings</div>
       <div class="value">${report.findings.length}</div>
-      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${s}`).join(", ") || "none"}</div>
+      <div class="sub">${Object.entries(severityCounts).map(([s, c]) => `${c} ${escapeHtml(s)}`).join(", ") || "none"}</div>
     </div>
-    ${
-      report.score
-        ? `
-    <div class="card" style="display:flex;align-items:center;gap:1rem">
-      <div class="score-ring" style="background:${scoreColor(report.score.overall)}">${report.score.overall}</div>
-      <div>
-        <div class="label">Quality Score</div>
-        <div class="sub">Readability ${report.score.readability} &middot; Maintainability ${report.score.maintainability}</div>
-        <div class="sub">Security ${report.score.security} &middot; Coverage ${report.score.test_coverage}</div>
-      </div>
-    </div>`
-        : ""
-    }
+    ${renderScoreCard(report.score)}
     <div class="card">
       <div class="label">Fix Attempts</div>
       <div class="value">${report.fixAttempts.length}</div>
@@ -143,86 +146,66 @@ function renderCards(report: EngineReport, severityCounts: Record<string, number
   </div>`;
 }
 
-function renderSeverityDistribution(
-  report: EngineReport,
-  severityCounts: Record<string, number>,
-  severityColors: Record<string, string>,
-): string {
-  return `  ${
-    report.findings.length > 0
-      ? `<h2>Severity Distribution</h2>
+function renderScoreCard(score: NonNullable<EngineReport["score"]> | null): string {
+  if (!score) return "";
+  return `
+    <div class="card" style="display:flex;align-items:center;gap:1rem">
+      <div class="score-ring" style="background:${scoreColor(score.overall)}">${score.overall}</div>
+      <div>
+        <div class="label">Quality Score</div>
+<div class="sub">Readability ${score.readability} &middot; Maintainability ${score.maintainability} &middot; Security ${score.security} &middot; Test Coverage ${score.test_coverage}</div>
+
+      </div>
+    </div>`;
+}
+
+function renderBarChart(title: string, items: { key: string; value: number; color: string }[]): string {
+  if (items.length === 0) return "";
+  let maxCount = 0;
+  for (const it of items) maxCount = Math.max(maxCount, it.value);
+  return `<h2>${escapeHtml(title)}</h2>
   <div class="bar-chart">
-    ${Object.entries(severityCounts)
-      .map(([sev, count]) => {
-        const maxCount = Math.max(...Object.values(severityCounts));
-        const height = maxCount > 0 ? Math.round((count / maxCount) * CHART_MAX_PERCENT) : 0;
+    ${items
+      .map((item) => {
+        const height = barHeightPercent(item.value, maxCount);
         return `<div class="bar">
-        <div class="bar-value">${count}</div>
-        <div class="bar-fill" style="height:${height}%;background:${severityColors[sev] ?? "#6b7280"}"></div>
-        <div class="bar-label">${sev}</div>
+        <div class="bar-value">${item.value}</div>
+        <div class="bar-fill" style="height:${height}%;background:${item.color}"></div>
+        <div class="bar-label">${escapeHtml(item.key)}</div>
       </div>`;
       })
       .join("\n    ")}
-  </div>`
-      : ""
-  }`;
+  </div>`;
 }
 
-function renderCategoryBreakdown(categoryCounts: Record<string, number>): string {
-  return `  ${
-    Object.keys(categoryCounts).length > 0
-      ? `<h2>Category Breakdown</h2>
-  <div class="bar-chart">
-    ${Object.entries(categoryCounts)
-      .map(([cat, count]) => {
-        const maxCount = Math.max(...Object.values(categoryCounts));
-        const height = maxCount > 0 ? Math.round((count / maxCount) * CHART_MAX_PERCENT) : 0;
-        return `<div class="bar">
-        <div class="bar-value">${count}</div>
-        <div class="bar-fill" style="height:${height}%;background:#6366f1"></div>
-        <div class="bar-label">${cat}</div>
-      </div>`;
-      })
-      .join("\n    ")}
-  </div>`
-      : ""
-  }`;
+function barHeightPercent(value: number, max: number): number {
+  return max > 0 ? Math.round((value / max) * BAR_HEIGHT_PERCENT) : 0;
 }
 
-function renderFindings(report: EngineReport, findingsRows: string): string {
-  return `  <h2>Findings</h2>
-  ${
-    report.findings.length > 0
-      ? `<table>
+function renderFindingsTable(count: number, rows: string): string {
+  if (count === 0) return `<div class="empty">No findings detected.</div>`;
+  return `<table>
     <thead><tr><th>Severity</th><th>Category</th><th>File</th><th>Comment</th><th>Suggestion</th></tr></thead>
-    <tbody>${findingsRows}</tbody>
-  </table>`
-      : `<div class="empty">No findings detected.</div>`
-  }`;
+    <tbody>${rows}</tbody>
+  </table>`;
 }
 
-function renderFixAttempts(report: EngineReport, fixRows: string): string {
-  return `  ${
-    report.fixAttempts.length > 0
-      ? `<h2>Fix Attempts</h2>
+function renderFixTable(count: number, rows: string): string {
+  if (count === 0) return "";
+  return `<h2>Fix Attempts</h2>
   <table>
     <thead><tr><th>#</th><th>File</th><th>Status</th><th>Explanation</th></tr></thead>
-    <tbody>${fixRows}</tbody>
-  </table>`
-      : ""
-  }`;
+    <tbody>${rows}</tbody>
+  </table>`;
 }
 
-function renderGeneratedTests(report: EngineReport, testRows: string): string {
-  return `  ${
-    report.generatedTests.length > 0
-      ? `<h2>Generated Tests</h2>
+function renderTestsTable(count: number, rows: string): string {
+  if (count === 0) return "";
+  return `<h2>Generated Tests</h2>
   <table>
     <thead><tr><th>Source</th><th>Test File</th></tr></thead>
-    <tbody>${testRows}</tbody>
-  </table>`
-      : ""
-  }`;
+    <tbody>${rows}</tbody>
+  </table>`;
 }
 
 function escapeHtml(s: string): string {
@@ -230,12 +213,13 @@ function escapeHtml(s: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+.replace(/'/g, APOSTROPHE_ENTITY);
 }
 
 function scoreColor(score: number): string {
-  if (score >= SCORE_GREEN) return "#16a34a";
-  if (score >= SCORE_ORANGE) return "#d97706";
-  if (score >= SCORE_RED) return "#ea580c";
+  if (score >= SCORE_GREEN_THRESHOLD) return "#16a34a";
+  if (score >= SCORE_ORANGE_THRESHOLD) return "#d97706";
+  if (score >= SCORE_RED_THRESHOLD) return "#ea580c";
   return "#dc2626";
 }

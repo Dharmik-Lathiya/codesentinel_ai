@@ -50,3 +50,5 @@ export declare class TestGenerator {
 }
 /** Determine if a path's test already exists on disk. */
 export declare function testExists(root: string, srcPath: string): boolean;
+/** Guard against AI-supplied paths escaping the project root (../ traversal). */
+export declare function isWithinRoot(root: string, candidate: string): boolean;
