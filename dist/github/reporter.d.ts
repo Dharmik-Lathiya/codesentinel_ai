@@ -31,8 +31,12 @@ export declare class GitHubReporter {
         body: string;
         created_at: string;
     }>>;
-    /** Create a GitHub issue (used by audit mode). */
-    createIssue(title: string, body: string): Promise<void>;
+    /** Find an open issue whose title matches exactly (used for dedup). */
+    findOpenIssueByTitle(title: string): Promise<number | null>;
+    /** Create a GitHub issue (used by audit mode), optionally with labels. */
+    createIssue(title: string, body: string, labels?: string[]): Promise<number>;
+    /** Create an issue, or update the existing open issue with the same title (dedup). */
+    createOrUpdateIssue(title: string, body: string, labels?: string[]): Promise<number>;
     /** Create a GitHub Check Run with annotations. */
     createCheckRun(opts: {
         name: string;

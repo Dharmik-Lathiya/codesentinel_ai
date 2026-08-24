@@ -1,29 +1,35 @@
 import type { Severity, SecurityBlendStrategy } from "../config/types.js";
 import type { Finding } from "../analyzer/index.js";
 
-/** A 0-100 quality score with a weighted overall value. */
+/** A quality score from 0 to {@link MAX_SCORE} with a weighted overall value. */
 export interface ScoreBreakdown {
   readability: number;
   maintainability: number;
   security: number;
   test_coverage: number;
-  /** Weighted overall score (0-100). */
+  /** Weighted overall score (0 to {@link MAX_SCORE}). */
   overall: number;
   rationale: string;
 }
 
 /** Weights used to combine the four dimensions into the overall score. */
+const READABILITY_WEIGHT = 0.25;
+const MAINTAINABILITY_WEIGHT = 0.3;
+const SECURITY_WEIGHT = 0.25;
+const TEST_COVERAGE_WEIGHT = 0.2;
+
 export const WEIGHTS = {
-  readability: 0.25,
-  maintainability: 0.3,
-  security: 0.25,
-  test_coverage: 0.2,
+  readability: READABILITY_WEIGHT,
+  maintainability: MAINTAINABILITY_WEIGHT,
+  security: SECURITY_WEIGHT,
+  test_coverage: TEST_COVERAGE_WEIGHT,
 } as const;
 
-const clamp = (n: number): number => Math.max(0, Math.min(100, Math.round(n)));
-
-
 const MAX_SCORE = 100;
+
+const clamp = (n: number): number => Math.max(0, Math.min(MAX_SCORE, Math.round(n)));
+
+
 const HIGH_SEVERITY_PENALTY = 16;
 const CRITICAL_SEVERITY_PENALTY = 30;
 /** Severity penalty weights applied to the security dimension. */

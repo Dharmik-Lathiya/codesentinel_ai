@@ -7,7 +7,7 @@
  */
 
 /** Supported operational modes. */
-export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe" | "improve" | "plan";
+export type Mode = "review" | "fix" | "audit" | "score" | "testgen" | "chat" | "gate" | "describe" | "improve" | "plan" | "deadcode";
 
 /** Supported AI providers. */
 export type Provider = "openai" | "anthropic" | "gemini" | "opencode" | "opencode-cli";
@@ -189,6 +189,9 @@ export interface CodeSentinelConfig {
   /** Files / globs to include and ignore. */
   include: string[];
   exclude: string[];
+
+  /** Restrict audit findings to these directories (relative paths, empty = whole repo). */
+  auditTargetDirs?: string[];
 
   /** Output / side-effect configuration. */
   output: OutputConfig;

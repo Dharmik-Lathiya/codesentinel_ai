@@ -5,6 +5,7 @@ import type { CompletionRequest, CompletionResult, AIProvider, ChatMessage } fro
 import { ProviderUnavailableError } from "./provider.js";
 import type { RuntimeSecrets } from "../config/types.js";
 import { logger } from "../utils/logger.js";
+import { retry } from "../utils/retry.js";
 
 /** Default CLI timeout in minutes (mirrors opencode-ai-reviewer's runOpenCode default). */
 export const DEFAULT_CLI_TIMEOUT_MINUTES = 20;
@@ -30,6 +31,11 @@ export function messagesToPrompt(messages: ChatMessage[]): string {
  * documented CI mechanism (opencode-ai-reviewer uses the same flag).
  */
 export function buildCliArgs(model: string, prompt: string): string[] {
+  // If model is the generic "default" sentinel, omit --model so OpenCode uses
+  // its own configured default (avoids referencing retired models like deepseek-v4-flash-free).
+  if (model === "default") {
+    return ["run", "--auto", "--format", "json", prompt];
+  }
   return ["run", "--auto", "--format", "json", "--model", model, prompt];
 }
 
@@ -262,23 +268,28 @@ export class OpenCodeProvider implements AIProvider {
   }
 
   private async completeViaCli(req: CompletionRequest): Promise<CompletionResult> {
-    // Serialise on a static lock so parallel batch calls don't corrupt opencode's DB
-    return new Promise<CompletionResult>((outerResolve, outerReject) => {
-      OpenCodeProvider.cliLock = OpenCodeProvider.cliLock.then(async () => {
-        try {
-          const result = await this.#doCompleteViaCli(req);
-          outerResolve(result);
-        } catch (e) {
-          outerReject(e);
-        }
-      });
-    });
+    // Wrap with retry for transient server errors (5xx, rate limits, etc.)
+    return retry(
+      () =>
+        new Promise<CompletionResult>((outerResolve, outerReject) => {
+          OpenCodeProvider.cliLock = OpenCodeProvider.cliLock.then(async () => {
+            try {
+              const result = await this.#doCompleteViaCli(req);
+              outerResolve(result);
+            } catch (e) {
+              outerReject(e);
+            }
+          });
+        }),
+      { maxAttempts: 3, baseDelayMs: 2000 },
+    );
   }
 
   async #doCompleteViaCli(req: CompletionRequest): Promise<CompletionResult> {
-    const rawModel = req.model.model === "default" ? "deepseek-v4-flash-free" : req.model.model;
-    logger.info(`OpenCodeProvider.completeViaCli: model=${rawModel}`);
-    const cliModel = rawModel.includes("/") ? rawModel : `opencode/${rawModel}`;
+    const rawModel = req.model.model;
+    // If the model is the generic "default" sentinel, let OpenCode pick its own default.
+    const cliModel = rawModel === "default" ? "default" : (rawModel.includes("/") ? rawModel : `opencode/${rawModel}`);
+    logger.info(`OpenCodeProvider.completeViaCli: model=${cliModel}`);
     const prompt = messagesToPrompt(req.messages);
     const timeoutMs = cliTimeoutMs();
     const args = buildCliArgs(cliModel, prompt);

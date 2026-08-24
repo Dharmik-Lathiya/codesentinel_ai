@@ -1,3 +1,12 @@
+import { createRequire } from "node:module";
+const PKG_VERSION = (() => {
+    try {
+        return createRequire(import.meta.url)("../../package.json").version ?? "0.0.0";
+    }
+    catch {
+        return "0.0.0";
+    }
+})();
 const SEVERITY_MAP = {
     critical: "error",
     high: "error",
@@ -6,6 +15,7 @@ const SEVERITY_MAP = {
     info: "note",
 };
 const COMMENT_TRUNCATION_LENGTH = 40;
+const HASH_RADIX = 36;
 function simpleHash(s) {
     let hash = 0;
     for (let i = 0; i < s.length; i++) {
@@ -13,12 +23,43 @@ function simpleHash(s) {
         hash = ((hash << 5) - hash) + char;
         hash |= 0;
     }
-    return Math.abs(hash).toString(36);
+    return Math.abs(hash).toString(HASH_RADIX);
+}
+function truncateComment(text) {
+    return text.length > COMMENT_TRUNCATION_LENGTH
+        ? `${text.slice(0, COMMENT_TRUNCATION_LENGTH)}...`
+        : text;
+}
+const encodePathSegment = (segment) => encodeURIComponent(segment);
+function createRuleId(base, comment, rules) {
+    const hash = simpleHash(comment);
+    let ruleId = `${base}:${hash}`;
+    for (let n = 1; rules.has(ruleId) && rules.get(ruleId)?.shortDescription.text !== comment; n++) {
+        ruleId = `${base}:${hash}:${n}`;
+    }
+    return ruleId;
+}
+function createArtifactUri(file) {
+    const normalized = file.replace(/\\/g, "/");
+    const driveMatch = /^([A-Za-z]):\/?(.*)$/.exec(normalized);
+    const isAbsolute = normalized.startsWith("/");
+    const tail = (driveMatch ? driveMatch[2] : normalized)
+        .split("/")
+        .filter(Boolean)
+        .map(encodePathSegment)
+        .join("/");
+    if (driveMatch) {
+        return `file:///${driveMatch[1]}:${tail ? `/${tail}` : "/"}`;
+    }
+    if (isAbsolute) {
+        return `file:///${tail}`;
+    }
+    return tail;
 }
 function createSarifLocation(file, line) {
     return {
         physicalLocation: {
-            artifactLocation: { uri: file },
+            artifactLocation: { uri: createArtifactUri(file) },
             ...(line != null ? { region: { startLine: line } } : {}),
         },
     };
@@ -26,7 +67,7 @@ function createSarifLocation(file, line) {
 function createToolDriver(rules) {
     return {
         name: "CodeSentinel AI",
-        version: "0.1.6",
+        version: PKG_VERSION,
         rules: Array.from(rules.values()),
     };
 }
@@ -42,15 +83,12 @@ export function renderSarif(report) {
     const rules = new Map();
     const results = [];
     for (const f of report.findings) {
-        const ruleId = `${f.category}:${simpleHash(f.comment)}`;
+        const ruleId = createRuleId(f.category, f.comment, rules);
         if (!rules.has(ruleId)) {
             rules.set(ruleId, {
                 id: ruleId,
-                shortDescription: { text: f.comment },
+                shortDescription: { text: truncateComment(f.comment) },
             });
-        }
-        if (!SEVERITY_MAP[f.severity]) {
-            throw new Error(`Unknown severity: "${f.severity}"`);
         }
         results.push({
             ruleId,

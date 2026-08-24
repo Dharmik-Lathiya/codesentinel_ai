@@ -6,8 +6,20 @@ export interface RetryOptions {
      * Default: 1000ms (`DEFAULT_BASE_DELAY_MS`).
      */
     baseDelayMs?: number;
-    /** Optional predicate: return true to retry on this error. */
+    /** Max delay in ms for a single retry (cap on exponential backoff). Default: 32x baseDelayMs (baseDelayMs * 2^5). */
+    maxDelayMs?: number;
+    /**
+     * Optional predicate: return true to retry on this error.
+     * Note: the default predicate only matches `Error` instances; non-Error
+     * throws (strings, plain objects) are never retried.
+     */
     shouldRetry?: (err: unknown) => boolean;
+    /**
+     * Optional AbortSignal. The sleep between retries races against this signal;
+     * when it aborts, `retry` rejects with an `AbortError` so callers can
+     * distinguish cancellation from failure.
+     */
+    signal?: AbortSignal;
 }
 /**
  * Retry an async operation with exponential backoff. Only retries on transient
