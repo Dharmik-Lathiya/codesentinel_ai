@@ -1,0 +1,11 @@
+name: CodeSentinel Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+jobs:
+  review:
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.14.0
+    secrets: inherit   # pulls ORG-level OPENCODE_API_KEY — nothing to configure here
+    permissions:
+      contents: write
+      pull-requests: write
