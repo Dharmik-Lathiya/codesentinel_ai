@@ -64,7 +64,7 @@ Expected: `YAML OK`
 Run: `npm test`
 Expected: 263 passed (setup tests may assert template content — update expectations if they reference the removed line).
 
-> 2026-08-25: 248/248 runnable tests pass; `learning-store.test.ts` (15 tests) crashes the worker locally only — `better-sqlite3` has no prebuilt binary for Node 20.20.2/win32 and no MSVC toolchain to compile. Green on CI.
+> 2026-08-25 (update): RESOLVED — downgraded `better-sqlite3` 13.0.1 → 11.10.0, which ships a prebuilt binary compatible with Node 20.20.2/win32. Full suite now passes locally: 24/24 files, 263/263 tests.
 
 - [x] **Step 5: Commit**
 
