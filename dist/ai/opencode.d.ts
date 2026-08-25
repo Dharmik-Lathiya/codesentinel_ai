@@ -9,6 +9,17 @@ export declare const DEFAULT_CLI_TIMEOUT_MINUTES = 20;
  */
 export declare function messagesToPrompt(messages: ChatMessage[]): string;
 /**
+ * Free-model candidates tried in order when the requested model fails at the
+ * account/model level ("No payment method", unsupported model, 401). Zen promo
+ * windows rotate — a pinned "-free" model can start billing overnight — so the
+ * provider moves down this list instead of failing every call.
+ * Verified serving via CLI on 2026-08-25; keep ordered by context size (desc).
+ */
+export declare const OPENCODE_MODEL_FALLBACKS: string[];
+/** True when an error indicates the MODEL/ACCOUNT can't serve the request at
+ * all (as opposed to a transient server hiccup or a generic CLI failure). */
+export declare function isModelLevelFailure(err: unknown): boolean;
+/**
  * Build the `opencode run` argument list.
  * `--auto` auto-approves any permission that is not explicitly "deny" — the
  * documented CI mechanism (opencode-ai-reviewer uses the same flag).
@@ -57,5 +68,7 @@ export declare class OpenCodeProvider implements AIProvider {
      * SIGTERM, then SIGKILL after a 5s grace period (same as opencode-ai-reviewer).
      */
     private runCli;
+    /** Parse `opencode run --format json` JSONL output into text + token usage. */
+    private static parseCliOutput;
 }
 export declare function opencodeFactory(secrets: RuntimeSecrets, root?: string): AIProvider | null;

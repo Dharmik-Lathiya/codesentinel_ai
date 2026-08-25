@@ -12696,19 +12696,19 @@ const DEFAULT_CONFIG = {
     project_context: "",
     issue_title: undefined,
     issue_body: undefined,
-    // big-pickle: current Zen free-tier model. The "default" sentinel resolves
-    // server-side to a PAID model when OPENCODE_API_KEY is set, which fails on
-    // accounts without a payment method ("APIError: No payment method").
-    default_model: { provider: "opencode", model: "big-pickle" },
+    // hy3-free: Zen free-tier model (256K ctx). Promo models rotate — when one
+    // starts billing, OpenCodeProvider falls back to OPENCODE_MODEL_FALLBACKS
+    // ("No payment method" / unsupported-model errors trigger the next candidate).
+    default_model: { provider: "opencode", model: "hy3-free" },
     models: {
-        review: { provider: "opencode", model: "big-pickle" },
-        fix: { provider: "opencode", model: "big-pickle" },
-        audit: { provider: "opencode", model: "big-pickle" },
-        score: { provider: "opencode", model: "big-pickle" },
-        testgen: { provider: "opencode", model: "big-pickle" },
-        chat: { provider: "opencode", model: "big-pickle" },
-        describe: { provider: "opencode", model: "big-pickle" },
-        plan: { provider: "opencode", model: "big-pickle" },
+        review: { provider: "opencode", model: "hy3-free" },
+        fix: { provider: "opencode", model: "hy3-free" },
+        audit: { provider: "opencode", model: "hy3-free" },
+        score: { provider: "opencode", model: "hy3-free" },
+        testgen: { provider: "opencode", model: "hy3-free" },
+        chat: { provider: "opencode", model: "hy3-free" },
+        describe: { provider: "opencode", model: "hy3-free" },
+        plan: { provider: "opencode", model: "hy3-free" },
     },
     test_runner: "vitest",
     include: ["**/*.{ts,tsx,js,jsx,py,go,java,rb}"],
@@ -17245,6 +17245,20 @@ function messagesToPrompt(messages) {
         .join("\n\n");
 }
 /**
+ * Free-model candidates tried in order when the requested model fails at the
+ * account/model level ("No payment method", unsupported model, 401). Zen promo
+ * windows rotate — a pinned "-free" model can start billing overnight — so the
+ * provider moves down this list instead of failing every call.
+ * Verified serving via CLI on 2026-08-25; keep ordered by context size (desc).
+ */
+const OPENCODE_MODEL_FALLBACKS = ["hy3-free", "x-preview-f-free"];
+/** True when an error indicates the MODEL/ACCOUNT can't serve the request at
+ * all (as opposed to a transient server hiccup or a generic CLI failure). */
+function isModelLevelFailure(err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /payment method|not supported|unsupported|\b401\b|unauthorized|model_error/i.test(msg);
+}
+/**
  * Build the `opencode run` argument list.
  * `--auto` auto-approves any permission that is not explicitly "deny" — the
  * documented CI mechanism (opencode-ai-reviewer uses the same flag).
@@ -17485,18 +17499,41 @@ class OpenCodeProvider {
         return ""; // not found
     }
     async completeViaCli(req) {
-        // Wrap with retry for transient server errors (5xx, rate limits, etc.)
-        return retry(() => new Promise((outerResolve, outerReject) => {
-            OpenCodeProvider.cliLock = OpenCodeProvider.cliLock.then(async () => {
-                try {
-                    const result = await this.#doCompleteViaCli(req);
-                    outerResolve(result);
-                }
-                catch (e) {
-                    outerReject(e);
-                }
-            });
-        }), { maxAttempts: 3, baseDelayMs: 2000 });
+        // Try the requested model first; on model/account-level failures (rotating
+        // Zen promos, removed models, missing payment method) walk the fallback
+        // list. Transient errors are retried per-model by retry().
+        const primary = req.model.model;
+        const candidates = [primary, ...OPENCODE_MODEL_FALLBACKS.filter((m) => m !== primary)];
+        let lastError = new Error("no CLI attempt was made");
+        for (let i = 0; i < candidates.length; i++) {
+            const candidate = candidates[i];
+            try {
+                return await retry(() => new Promise((outerResolve, outerReject) => {
+                    OpenCodeProvider.cliLock = OpenCodeProvider.cliLock.catch(() => { }).then(async () => {
+                        try {
+                            const result = await this.#doCompleteViaCli({
+                                ...req,
+                                model: { ...req.model, model: candidate },
+                            });
+                            outerResolve(result);
+                        }
+                        catch (e) {
+                            outerReject(e);
+                        }
+                    });
+                }), { maxAttempts: 3, baseDelayMs: 2000 });
+            }
+            catch (err) {
+                lastError = err;
+                if (!isModelLevelFailure(err))
+                    throw err;
+                const next = candidates[i + 1];
+                if (next === undefined)
+                    throw err;
+                logger_logger.warn(`OpenCodeProvider: model ${candidate} not usable on this account (${err instanceof Error ? err.message.slice(0, 140) : String(err)}) — falling back to ${next}`);
+            }
+        }
+        throw lastError;
     }
     async #doCompleteViaCli(req) {
         const rawModel = req.model.model;
@@ -17606,42 +17643,62 @@ class OpenCodeProvider {
                     reject(new Error(`OpenCode CLI timed out after ${timeoutMs}ms for model ${cliModel}`));
                     return;
                 }
+                const parsed = OpenCodeProvider.parseCliOutput(stdout);
                 if (code !== 0) {
+                    const combined = `${stderr}\n${stdout}`;
+                    // The CLI occasionally emits a complete transcript yet exits 1 —
+                    // salvage that output unless the failure is model/account-level
+                    // (payment required, unsupported model), where output is untrusted.
+                    if (parsed.content && !isModelLevelFailure(combined)) {
+                        logger_logger.warn(`OpenCode CLI exited with code ${code} but produced ${parsed.content.length} chars of output — salvaging result for ${cliModel}`);
+                        settled = true;
+                        resolve({
+                            content: parsed.content,
+                            model: modelName,
+                            provider: `${this.name}-cli`,
+                            usage: { promptTokens: parsed.promptTokens, completionTokens: parsed.completionTokens },
+                        });
+                        return;
+                    }
                     settled = true;
                     const errMsg = stderr.trim() || stdout.slice(0, 200);
                     reject(new Error(`opencode CLI exited with code ${code}: ${errMsg}`));
                     return;
                 }
-                let content = "";
-                let promptTokens;
-                let completionTokens;
-                for (const line of stdout.split("\n")) {
-                    if (!line.trim())
-                        continue;
-                    try {
-                        const event = JSON.parse(line);
-                        if (event.type === "text" && event.part?.text) {
-                            content += event.part.text;
-                        }
-                        if (event.type === "step_finish" && event.part?.tokens) {
-                            promptTokens = event.part.tokens.input ?? event.part.tokens.total;
-                            completionTokens = event.part.tokens.output;
-                        }
-                    }
-                    catch { /* skip unparseable lines */ }
-                }
-                if (!content) {
+                if (!parsed.content) {
                     logger_logger.debug(`OpenCodeProvider.completeViaCli: no text found — stdout=${stdout.slice(0, 300)} stderr=${stderr.slice(0, 300)}`);
                 }
                 settled = true;
                 resolve({
-                    content,
+                    content: parsed.content,
                     model: modelName,
                     provider: `${this.name}-cli`,
-                    usage: { promptTokens, completionTokens },
+                    usage: { promptTokens: parsed.promptTokens, completionTokens: parsed.completionTokens },
                 });
             });
         });
+    }
+    /** Parse `opencode run --format json` JSONL output into text + token usage. */
+    static parseCliOutput(stdout) {
+        let content = "";
+        let promptTokens;
+        let completionTokens;
+        for (const line of stdout.split("\n")) {
+            if (!line.trim())
+                continue;
+            try {
+                const event = JSON.parse(line);
+                if (event.type === "text" && event.part?.text) {
+                    content += event.part.text;
+                }
+                if (event.type === "step_finish" && event.part?.tokens) {
+                    promptTokens = event.part.tokens.input ?? event.part.tokens.total;
+                    completionTokens = event.part.tokens.output;
+                }
+            }
+            catch { /* skip unparseable lines */ }
+        }
+        return { content, promptTokens, completionTokens };
     }
 }
 function opencodeFactory(secrets, root) {

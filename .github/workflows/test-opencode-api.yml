@@ -80,8 +80,9 @@ jobs:
 
           TARGET="$MODEL_INPUT"
           if [ -z "$TARGET" ]; then
-            # Preferred current free models first; retired ones last as fallback
-            for CAND in big-pickle mimo-v2.5-free x-preview-f-free north-mini-code-free deepseek-v4-flash-free; do
+            # Preferred current free models first (verified serving 2026-08-25);
+            # retired/rotated ones kept last as fallback probes
+            for CAND in hy3-free x-preview-f-free big-pickle mimo-v2.5-free north-mini-code-free deepseek-v4-flash-free; do
               if echo "$CATALOG" | grep -qx "$CAND"; then TARGET="$CAND"; break; fi
             done
           fi

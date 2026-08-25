@@ -127,19 +127,19 @@ export const DEFAULT_CONFIG = {
     project_context: "",
     issue_title: undefined,
     issue_body: undefined,
-    // big-pickle: current Zen free-tier model. The "default" sentinel resolves
-    // server-side to a PAID model when OPENCODE_API_KEY is set, which fails on
-    // accounts without a payment method ("APIError: No payment method").
-    default_model: { provider: "opencode", model: "big-pickle" },
+    // hy3-free: Zen free-tier model (256K ctx). Promo models rotate — when one
+    // starts billing, OpenCodeProvider falls back to OPENCODE_MODEL_FALLBACKS
+    // ("No payment method" / unsupported-model errors trigger the next candidate).
+    default_model: { provider: "opencode", model: "hy3-free" },
     models: {
-        review: { provider: "opencode", model: "big-pickle" },
-        fix: { provider: "opencode", model: "big-pickle" },
-        audit: { provider: "opencode", model: "big-pickle" },
-        score: { provider: "opencode", model: "big-pickle" },
-        testgen: { provider: "opencode", model: "big-pickle" },
-        chat: { provider: "opencode", model: "big-pickle" },
-        describe: { provider: "opencode", model: "big-pickle" },
-        plan: { provider: "opencode", model: "big-pickle" },
+        review: { provider: "opencode", model: "hy3-free" },
+        fix: { provider: "opencode", model: "hy3-free" },
+        audit: { provider: "opencode", model: "hy3-free" },
+        score: { provider: "opencode", model: "hy3-free" },
+        testgen: { provider: "opencode", model: "hy3-free" },
+        chat: { provider: "opencode", model: "hy3-free" },
+        describe: { provider: "opencode", model: "hy3-free" },
+        plan: { provider: "opencode", model: "hy3-free" },
     },
     test_runner: "vitest",
     include: ["**/*.{ts,tsx,js,jsx,py,go,java,rb}"],
