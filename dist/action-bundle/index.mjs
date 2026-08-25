@@ -21571,14 +21571,11 @@ function runLinters(root, config) {
 ;// CONCATENATED MODULE: ./dist/scanners/index.js
 
 
-const BYTES_PER_KILOBYTE = 1024;
-const ONE_KB = BYTES_PER_KILOBYTE;
+const ONE_KB = 1024;
 const ONE_MB = ONE_KB * ONE_KB;
-const MAX_BUFFER_SIZE_IN_MB = 10;
-const MAX_BUFFER_MB = MAX_BUFFER_SIZE_IN_MB;
+const MAX_BUFFER_MB = 10;
 const scanners_MAX_BUFFER = MAX_BUFFER_MB * ONE_MB;
-const SNIPPET_MAX_CHAR_LENGTH = 80;
-const SNIPPET_LENGTH = SNIPPET_MAX_CHAR_LENGTH;
+const SNIPPET_LENGTH = 80;
 function parseTrufflehogLine(line) {
     try {
         const r = JSON.parse(line);
