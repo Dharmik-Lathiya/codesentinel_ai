@@ -133,6 +133,19 @@ jobs:
             echo "No PR number in event context — comments will be skipped"
           fi
 
+      - name: Preflight — check provider credentials
+        id: preflight
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -z "$OPENCODE_API_KEY" ] && [ -z "$OPENAI_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::No AI provider key found. Set OPENCODE_API_KEY (or another provider key) as an ORG-level secret so all repos inherit it — no per-repo setup needed."
+            exit 1
+          fi
+
       - name: Run CodeSentinel
         id: cs
         uses: ./
