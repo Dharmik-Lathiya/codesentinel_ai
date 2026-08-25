@@ -81,6 +81,29 @@ Then comment on **any PR or issue**:
 /review   /fix   /audit   /score   /testgen   /gate   /deadcode   /describe   /ask <question>
 ```
 
+## Quick Start (zero per-repo secrets)
+
+One-time (org owner): Settings → Secrets and variables → Actions → New **organization** secret
+- Name: `OPENCODE_API_KEY` — value: your Zen key — Repos access: *All repositories*
+
+Per repo — create `.github/workflows/codesentinel.yml`:
+
+```yaml
+name: CodeSentinel Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+jobs:
+  review:
+    uses: Dharmik-Lathiya/CodeSentinel_AI/.github/workflows/review.yml@v0.14.0
+    secrets: inherit
+    permissions:
+      contents: write
+      pull-requests: write
+```
+
+Done. Slash commands (`/fix`, `/audit`, …) work automatically via the same inherited secret.
+
 ---
 
 ## 🎯 Modes
