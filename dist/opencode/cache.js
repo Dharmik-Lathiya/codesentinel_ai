@@ -8,6 +8,18 @@ export function buildCacheKey(filePath, pattern) {
         .digest("hex")
         .slice(0, 16);
 }
+function utcTimestamp() {
+    return new Date(Date.now()).toISOString();
+}
+function upsertLesson(entry, lesson) {
+    const idx = entry.lessons.findIndex((l) => l.pattern === lesson.pattern);
+    if (idx >= 0) {
+        entry.lessons[idx] = lesson;
+    }
+    else {
+        entry.lessons.push(lesson);
+    }
+}
 class FileSystemBackend {
     cacheDir;
     constructor(cacheDir) {
@@ -95,38 +107,33 @@ export class LearningCache {
         const entry = await this.backend.get(key);
         if (!entry)
             return [];
-        entry.lessons.forEach((l) => l.hitCount++);
+        for (const l of entry.lessons) {
+            l.hitCount++;
+        }
         await this.backend.set(key, entry);
         return entry.lessons.map((l) => ({ ...l }));
     }
     async set(key, lesson) {
         return this.withLock(key, async () => {
             const existing = await this.backend.get(key);
-            if (existing) {
-                const idx = existing.lessons.findIndex((l) => l.pattern === lesson.pattern);
-                if (idx >= 0) {
-                    existing.lessons[idx] = lesson;
-                }
-                else {
-                    existing.lessons.push(lesson);
-                }
-                existing.updatedAt = new Date().toISOString();
-                try {
-                    await this.backend.set(key, existing);
-                }
-                catch { /* ignore */ }
-            }
-            else {
+            if (!existing) {
                 const entry = {
                     key,
                     lessons: [lesson],
-                    updatedAt: new Date().toISOString(),
+                    updatedAt: utcTimestamp(),
                 };
                 try {
                     await this.backend.set(key, entry);
                 }
                 catch { /* ignore */ }
+                return;
             }
+            upsertLesson(existing, lesson);
+            existing.updatedAt = utcTimestamp();
+            try {
+                await this.backend.set(key, existing);
+            }
+            catch { /* ignore */ }
         });
     }
     async getAll() {
