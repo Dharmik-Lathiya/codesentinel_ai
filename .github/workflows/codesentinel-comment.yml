@@ -98,7 +98,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.CODESENTINEL_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          FLAGS="--provider opencode"
+          FLAGS="--provider opencode --use-opencode-cli"
           if [ "${{ steps.cmd.outputs.mode }}" = "fix" ]; then FLAGS="$FLAGS --auto-fix"; fi
           node codesentinel/dist/index.js ${{ steps.cmd.outputs.mode }} $FLAGS 2>&1 | tee /tmp/cs-out.txt; true
 
